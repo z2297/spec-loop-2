@@ -74,8 +74,8 @@ def ev(ts, scope, type_, **payload):
 # wave-collection time (11:10 for wave 1) on the agent-dispatch events, so any
 # regression that reconstructs durations from `ts` produces visibly wrong
 # numbers instead of plausible ones. Real timing lives in the payload pairs:
-#   implementer [10:12, 10:30] and task-reviewer [10:25, 10:40] OVERLAP, so the
-#   engine-active union is [10:12, 10:40] (1680s) + code-reviewer 480s = 2160s.
+#   implementer [10:12, 10:30] and reviewer [10:25, 10:40] OVERLAP, so the
+#   engine-active union is [10:12, 10:40] (1680s) + integration reviewer 480s = 2160s.
 V2_EVENT_OBJECTS = [
     ev("2026-07-30T10:00:00Z", "run", "run-created", run_id="20260730-v2"),
     ev("2026-07-30T10:00:30Z", "run", "baseline", tests="281 passed"),
@@ -103,8 +103,8 @@ V2_EVENT_OBJECTS = [
        title="Council objects to the plan", status="OPEN",
        opened="2026-07-30T10:30:00Z"),
     ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
-       agent_type="spec-loop:sdd-task-reviewer", model="sonnet", effort="medium",
-       role="task-review", dispatched_at="2026-07-30T10:25:00Z",
+       agent_type="spec-loop:pr-reviewer", model="sonnet", effort="medium",
+       role="review:tests", dispatched_at="2026-07-30T10:25:00Z",
        returned_at="2026-07-30T10:40:00Z", tokens_in=8000, tokens_out=1000),
     ev("2026-07-30T11:10:00Z", "s2", "escalation-answered",
        id="s2:council-objection", answer="Option 1",
@@ -120,8 +120,8 @@ V2_EVENT_OBJECTS = [
     ev("2026-07-30T11:05:00Z", "s2", "quality-gate", status="PASS",
        refactor_passes=0),
     ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
-       agent_type="spec-loop:code-reviewer", model="opus", effort="high",
-       role="whole-branch-review", dispatched_at="2026-07-30T11:00:00Z",
+       agent_type="spec-loop:pr-reviewer-integration", model="opus", effort="high",
+       role="review:correctness", dispatched_at="2026-07-30T11:00:00Z",
        returned_at="2026-07-30T11:08:00Z", tokens_in=5000, tokens_out=1000),
     # Untimed, tokenless dispatch: counted, never timed, never a fabricated 0.
     # (Its ts alone would have been enough to fake a duration from.)
@@ -180,7 +180,9 @@ V2_SIDECAR_S2 = {
     "branch": "spec-loop/20260730-v2/s2",
     "commits": {"base": "ac3759b", "head": None},
     "risk_tier": 2, "review_tier": 2,
-    "critique": {"verdict": "OBJECT", "concerns": 3},
+    # 6, not 3: keeps the sidecar rollup (2 + 6 = 8) distinguishable from the
+    # events total (0 + 3 folded + 2 deferred = 5) so precedence is testable.
+    "critique": {"verdict": "OBJECT", "concerns": 6},
     "quality": {"status": "SKIPPED", "detail": "no code changed"},
     "split": {"children": [{"goal": "b1", "files": [], "subsystems": [],
                             "internal_deps": []}]},
@@ -647,16 +649,17 @@ class V2SafetyTests(unittest.TestCase):
         self.assertEqual(council["verdicts"], {"ENDORSE": 1, "OBJECT": 1})
         self.assertEqual(council["object_rate"], 0.5)
         self.assertEqual(council["safety_objections"], 1)
-        self.assertEqual(council["concerns_total"], 3)
+        self.assertEqual(council["concerns_total"], 5)   # 0 + (3 folded + 2 deferred)
         self.assertEqual(council["concerns_deferred"], 2)
         self.assertEqual(council["by_member"], {"guardian": 1, "skeptic": 1})
         self.assertEqual(council["slice_verdicts"],
                          {"ENDORSE_WITH_CONCERNS": 1, "OBJECT": 1})
 
-    def test_concerns_read_from_either_spelling(self):
-        """skeptic writes `concerns: 0`, guardian writes `concerns_folded: 3`;
-        both name the same quantity, so the total is 3 and not a partial 0."""
-        self.assertEqual(self.safety["council"]["concerns_total"], 3)
+    def test_concerns_total_sums_the_disposition_split(self):
+        """skeptic writes `concerns: 0`; guardian writes the workflow split
+        `concerns_folded: 3` + 2 deferred. A deferred concern was still raised,
+        so the total is 5 — reading concerns_folded alone would report 3."""
+        self.assertEqual(self.safety["council"]["concerns_total"], 5)
 
     def test_reversibility_and_precedent_from_decision_payloads(self):
         self.assertEqual(self.safety["reversibility_mix"],
@@ -671,16 +674,42 @@ class CouncilConcernsPrecedenceTests(unittest.TestCase):
     fallback."""
 
     def test_events_win_over_the_sidecar_rollup(self):
-        # Events total 3; the two sidecar critiques total 5. Expect 3, not 8.
+        # Events total 5; the two sidecar critiques total 8. Expect 5, not 13.
         council = compute_for(v2_files())["safety"]["council"]
-        self.assertEqual(council["concerns_total"], 3)
+        self.assertEqual(council["concerns_total"], 5)
 
     def test_sidecar_is_the_fallback_when_no_verdict_carries_a_count(self):
         metrics = compute_for(v2_files(**{"events.jsonl": _events_without(
-            "concerns", "concerns_folded")}))
+            "concerns", "concerns_folded", "deferred")}))
         council = metrics["safety"]["council"]
-        self.assertEqual(council["concerns_total"], 5)   # 2 (s1) + 3 (s2)
+        self.assertEqual(council["concerns_total"], 8)   # 2 (s1) + 6 (s2)
         self.assertEqual(council["basis"], rm.BASIS_BOTH)
+
+    def council_total(self, **payload):
+        events = json.dumps(ev("2026-07-30T10:00:00Z", "intake",
+                               "council-verdict", verdict="OBJECT", **payload))
+        return compute_for({"events.jsonl": events})["safety"]["council"]
+
+    def test_folded_plus_deferred_is_the_total_raised(self):
+        self.assertEqual(self.council_total(
+            concerns_folded=3, deferred=["a", "b"])["concerns_total"], 5)
+
+    def test_folded_alone_and_deferred_alone_each_count(self):
+        self.assertEqual(
+            self.council_total(concerns_folded=4)["concerns_total"], 4)
+        self.assertEqual(
+            self.council_total(deferred=["a"])["concerns_total"], 1)
+
+    def test_complete_concerns_count_wins_over_the_split(self):
+        """`concerns` is already a total, so it is not added to the split."""
+        council = self.council_total(concerns=7, concerns_folded=3,
+                                     deferred=["a", "b"])
+        self.assertEqual(council["concerns_total"], 7)
+        self.assertEqual(council["concerns_deferred"], 2)
+
+    def test_zero_folded_with_no_deferred_is_an_honest_zero(self):
+        self.assertEqual(
+            self.council_total(concerns_folded=0)["concerns_total"], 0)
 
     def test_null_when_neither_channel_counts_concerns(self):
         events = json.dumps(ev("2026-07-30T10:00:00Z", "intake",
@@ -705,9 +734,9 @@ class DispatchAgentKeyTests(unittest.TestCase):
     def test_pinned_agent_type_groups_by_name(self):
         perf = compute_for(v2_files())["performance"]
         by_agent = perf["agents"]["by_agent"]
-        self.assertEqual(sorted(by_agent), ["spec-loop:code-reviewer",
-                                            "spec-loop:sdd-implementer",
-                                            "spec-loop:sdd-task-reviewer"])
+        self.assertEqual(sorted(by_agent), ["spec-loop:pr-reviewer",
+                                            "spec-loop:pr-reviewer-integration",
+                                            "spec-loop:sdd-implementer"])
         self.assertNotIn("(unknown)", by_agent)
 
     def test_legacy_agent_alias_still_resolves(self):
@@ -744,6 +773,52 @@ class DispatchAgentKeyTests(unittest.TestCase):
         self.assertEqual(review["reviewer_dispatches"], 1)
         self.assertEqual(review["findings_total"], 9)
         self.assertEqual(review["findings_per_reviewer_dispatch"], 9.0)
+
+    def test_re_reviewer_rounds_count_toward_the_denominator(self):
+        """`re-review:2` does not trip the role hint's word boundary, so the
+        agent family is the only signal. Missing it would divide round-2
+        findings by round-1 dispatches only, inflating findings-per-dispatch."""
+        events = "\n".join(json.dumps(e) for e in [
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent_type="spec-loop:pr-reviewer", model="opus",
+               role="review:tests"),
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent_type="spec-loop:re-reviewer", model="sonnet",
+               role="re-review:2"),
+            ev("2026-07-30T11:11:00Z", "s1", "review-summary", findings=4),
+        ])
+        review = compute_for({"events.jsonl": events})["quality"]["review"]
+        self.assertEqual(review["reviewer_dispatches"], 2)
+        self.assertEqual(review["findings_per_reviewer_dispatch"], 2.0)
+
+    def test_lane_variants_count_via_the_agent_family(self):
+        events = "\n".join(json.dumps(e) for e in [
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent_type="spec-loop:pr-reviewer-integration", model="opus",
+               role="anything"),
+            ev("2026-07-30T11:11:00Z", "s1", "review-summary", findings=1),
+        ])
+        review = compute_for({"events.jsonl": events})["quality"]["review"]
+        self.assertEqual(review["reviewer_dispatches"], 1)
+
+    def test_adjudicators_and_workers_are_not_reviewer_dispatches(self):
+        """finding-verifier adjudicates and the implementer implements; neither
+        reports findings, so neither belongs in the denominator."""
+        events = "\n".join(json.dumps(e) for e in [
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent_type="spec-loop:finding-verifier", model="sonnet",
+               role="verify-findings"),
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent_type="spec-loop:implementer", model="sonnet",
+               role="task:t1"),
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent_type="spec-loop:slice-planner", model="sonnet",
+               role="plan"),
+            ev("2026-07-30T11:11:00Z", "s1", "review-summary", findings=3),
+        ])
+        review = compute_for({"events.jsonl": events})["quality"]["review"]
+        self.assertEqual(review["reviewer_dispatches"], 0)
+        self.assertIsNone(review["findings_per_reviewer_dispatch"])
 
     def test_dispatch_with_no_agent_name_at_all_is_unknown(self):
         events = json.dumps(ev(
@@ -886,7 +961,7 @@ class V2PerformanceTests(unittest.TestCase):
                          {"count": 1, "total_s": 480.0, "median_s": 480.0})
         self.assertEqual(agents["by_role"]["task-implement"]["total_s"], 1080.0)
         self.assertEqual(
-            agents["by_agent"]["spec-loop:code-reviewer"]["median_s"], 480.0)
+            agents["by_agent"]["spec-loop:pr-reviewer-integration"]["median_s"], 480.0)
         self.assertEqual(agents["by_effort"], {"high": 2, "medium": 1})
 
     def test_engine_active_counts_overlapping_dispatches_once(self):
@@ -936,8 +1011,8 @@ class V2TokenTests(unittest.TestCase):
     def test_per_role_token_share(self):
         by_role = self.tokens["by_role"]
         self.assertEqual(by_role["task-implement"]["share"], 0.5)
-        self.assertEqual(by_role["task-review"]["share"], 0.3)
-        self.assertEqual(by_role["whole-branch-review"]["share"], 0.2)
+        self.assertEqual(by_role["review:tests"]["share"], 0.3)
+        self.assertEqual(by_role["review:correctness"]["share"], 0.2)
         self.assertAlmostEqual(sum(v["share"] for v in by_role.values()), 1.0)
 
     def test_scope_breakdown(self):

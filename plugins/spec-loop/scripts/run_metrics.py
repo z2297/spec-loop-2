@@ -57,12 +57,14 @@ differently, the dial goes null rather than wrong, and
                        id (pinned), trigger, title, status, opened, answered_at
   escalation-answered  id (pinned), answered_at
   decision             reversibility, rationale
-  council-verdict      safety (pinned bool), verdict, member, deferred (list),
-                       concerns | concerns_folded — the same quantity under the
-                       contract's and the workflow's spelling; either is read,
-                       and the sidecar's critique.concerns is the fallback only
-                       when no verdict event carried a count (never summed with
-                       them: one is per-verdict, the other a per-slice rollup)
+  council-verdict      safety (pinned bool), verdict, member,
+                       concerns | (concerns_folded + deferred[]) — concerns is
+                       a complete count; the workflow instead reports the
+                       disposition split, whose SUM is the same quantity (a
+                       deferred concern was still raised). The sidecar's
+                       critique.concerns is the fallback only when no verdict
+                       event carried a count — never summed with them: one is
+                       per-verdict, the other a per-slice rollup
   quality-gate         status | result, refactor_passes
   review-summary       findings, refuted_by_fixer, confirmed, refuted,
                        evidence_failed
@@ -131,7 +133,21 @@ BASIS_LEGACY = "legacy-v1-prose"
 
 # A dispatch counts as a reviewer dispatch when its role or agent name says so.
 # Heuristic by necessity: the contract does not enumerate role vocabulary.
-REVIEWER_HINT = re.compile(r"review|critic|council|verif", re.IGNORECASE)
+# Diff-reviewer dispatches only: the wave workflow's pinned role vocabulary is
+# review:<lane> for pr-reviewer passes (re-review:, verify-findings, critic:,
+# and verify: are the fix-loop adjudicator, batched verifier, plan critique,
+# and suite runner — none of them "find" findings, so counting them dilutes
+# findings_per_reviewer_dispatch). agent_type is the second signal for
+# dispatches that carry no role.
+REVIEWER_HINT = re.compile(r"(?:^|\s)review(?::|$|\s)|pr-reviewer", re.IGNORECASE)
+# The agents that actually PRODUCE review findings, and so form the denominator
+# of findings-per-dispatch. Exact match on the pinned agent_type, because the
+# role strings the workflow emits are free-form (`correctness`, `re-review:2`,
+# `task:s1`) and no regex over them stays correct as lanes are renamed.
+# finding-verifier and plan-critic are deliberately absent: they adjudicate and
+# challenge, they do not report findings, so counting them would inflate the
+# denominator and understate findings per reviewer.
+REVIEWER_AGENT_TYPES = ("spec-loop:pr-reviewer", "spec-loop:re-reviewer")
 
 
 # ==========================================================================
@@ -828,8 +844,23 @@ def _concerns_total(verdict_events, critiques):
 
 
 def _verdict_concerns(event):
-    value = _pcount(event, "concerns")
-    return value if value is not None else _pcount(event, "concerns_folded")
+    """One verdict's total concerns RAISED.
+
+    ``concerns`` is a complete count on its own (the sidecar critique's
+    spelling) and wins outright when present. The workflow instead reports the
+    disposition split — ``concerns_folded`` plus a ``deferred`` list — and the
+    total is their SUM: a deferred concern was still raised, it was just not
+    acted on now. Reading ``concerns_folded`` alone would quietly under-report
+    every council that deferred anything, which is precisely the run where the
+    concern count matters most."""
+    total = _pcount(event, "concerns")
+    if total is not None:
+        return total
+    folded = _pcount(event, "concerns_folded")
+    deferred = _plist_len(event, "deferred")
+    if folded is None and deferred is None:
+        return None
+    return (folded or 0) + (deferred or 0)
 
 
 def _reversibility_mix(decisions):
@@ -984,17 +1015,31 @@ def _sum_review_counters(sidecar_reviews, summaries):
 
 
 def _reviewer_dispatch_count(events):
-    """Reviewer-ish agent-dispatch events, or None when nothing was dispatched.
+    """Finding-producing dispatches, or None when nothing was dispatched.
 
-    Heuristic: the contract pins that agent-dispatch carries ``role`` and
-    ``agent`` but not their vocabulary, so classification is by name hint."""
+    Primary test is exact ``agent_type`` membership of REVIEWER_AGENT_TYPES.
+    REVIEWER_HINT over the role is kept only as a fallback for dispatches that
+    name no agent type at all (the inline slice-worker-fallback path), where a
+    name hint is the only signal there is."""
     dispatches = _of_type(events, "agent-dispatch")
     if not dispatches:
         return None
-    return sum(1 for e in dispatches
-               if REVIEWER_HINT.search(
-                   "%s %s" % (_pstr(e, "role") or "",
-                              _dispatch_key(e, "agent") or "")))
+    return sum(1 for e in dispatches if _is_reviewer_dispatch(e))
+
+
+def _is_reviewer_dispatch(event):
+    """True when a dispatch belongs to a finding-producing reviewer.
+
+    Union of two signals, deliberately never an either/or: a lane variant
+    (``pr-reviewer-integration``) is caught by the family prefix, and
+    ``re-reviewer`` — whose role reads ``re-review:2``, where REVIEWER_HINT's
+    word-boundary rule does not fire — is caught only by that prefix. The role
+    hint then catches a future reviewer this list has not learned yet."""
+    agent = (_dispatch_key(event, "agent") or "").lower()
+    if any(agent.startswith(family) for family in REVIEWER_AGENT_TYPES):
+        return True
+    return bool(REVIEWER_HINT.search("%s %s" % (_pstr(event, "role") or "",
+                                                agent)))
 
 
 def _rate_1dp(part, whole):
