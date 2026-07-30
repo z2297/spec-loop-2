@@ -1,6 +1,6 @@
 ---
 name: plan-critic
-description: The consolidated council — challenges a spec-loop request (intake) or slice plan (pre-execution) across all five mandates: premise, design, scope, risk, and codebase consistency, returning one structured verdict with a safety flag and split recommendation. Replaces v1's five-agent Iron Council at default tiers; joined by guardian (and skeptic) on Tier-3/intake/thorough panels. Read-only and advisory; never edits code.
+description: "The consolidated council — challenges a spec-loop request (intake) or slice plan (pre-execution) across all five mandates: premise, design, scope, risk, and codebase consistency, returning one structured verdict with a safety flag and split recommendation. Replaces v1's five-agent Iron Council at default tiers; joined by guardian (and skeptic) on Tier-3/intake/thorough panels. Read-only and advisory; never edits code."
 tools: Read, Grep, Glob, Bash
 model: inherit
 color: yellow

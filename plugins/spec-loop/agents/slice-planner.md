@@ -1,6 +1,6 @@
 ---
 name: slice-planner
-description: Turns ONE slice goal into a small, bite-sized, TDD, no-placeholder plan a zero-context engineer could execute — each task carrying exact files, test-first steps, a verification command, and a model lane (transcribe|standard|judgment). Owns the right-size gate: a slice that bundles 2+ independently shippable changes returns SPLIT instead of a plan. Dispatched by the slice-wave workflow and by slice-worker-fallback; writes the plan file and nothing else.
+description: "Turns ONE slice goal into a small, bite-sized, TDD, no-placeholder plan a zero-context engineer could execute — each task carrying exact files, test-first steps, a verification command, and a model lane (transcribe|standard|judgment). Owns the right-size gate: a slice that bundles 2+ independently shippable changes returns SPLIT instead of a plan. Dispatched by the slice-wave workflow and by slice-worker-fallback; writes the plan file and nothing else."
 tools: Read, Write, Bash, Grep, Glob
 model: inherit
 color: blue

@@ -1,6 +1,6 @@
 ---
 name: slice-worker-fallback
-description: The sanctioned inline fallback for executing ONE slice end-to-end when the Workflow tool is unavailable or denied (dag.json mode "inline") — runs the same v2 pipeline shape as the slice-wave workflow (plan → critique → implement → review ∥ quality gate → bounded fix loop → verify → sidecar) with identical loop bounds and agent caps, dispatching every sub-agent synchronously via Task. Cannot prompt the human: escalations are written into the sidecar and returned as ESCALATED.
+description: "The sanctioned inline fallback for executing ONE slice end-to-end when the Workflow tool is unavailable or denied (dag.json mode \"inline\") — runs the same v2 pipeline shape as the slice-wave workflow (plan → critique → implement → review ∥ quality gate → bounded fix loop → verify → sidecar) with identical loop bounds and agent caps, dispatching every sub-agent synchronously via Task. Cannot prompt the human: escalations are written into the sidecar and returned as ESCALATED."
 tools: Read, Edit, Write, Bash, Grep, Glob, Task
 model: inherit
 color: cyan
