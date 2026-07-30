@@ -39,7 +39,7 @@ const HTML_PATH = join(HERE, "index.html");
 // the two can never silently drift.
 const EXPORTS = [
   "labelClass", "verdictClass", "waveStatusClass", "outcomeClass", "metricsSourceLabel",
-  "sha7", "truncate", "dash", "groupRunsByRoot", "parseHashFrom",
+  "tokensBasisLabel", "sha7", "truncate", "dash", "groupRunsByRoot", "parseHashFrom",
   "el", "overviewCard", "rootGroupSection", "sliceRow", "__setDocument",
   "stageStrip", "councilSection", "executionSection", "finalReviewSection", "escalationsSection",
   "wavesSection", "waveTitle", "outcomesSection", "sidecarLines", "constraintsSection",
@@ -729,6 +729,41 @@ test("metricsSection tolerates absent metrics and hostile payload keys never ren
   const row = hostile.children.find((n) => /pill-row/.test(n.className));
   assert.equal(row.children.length, 12);
   for (const pillNode of row.children) assert.equal(pillNode.children.length, 0);
+});
+
+test("tokensBasisLabel names each channel and never implies attribution it lacks", () => {
+  assert.equal(mod.tokensBasisLabel("events-jsonl"), "tokens: per-dispatch");
+  // The load-bearing one: a wave aggregate is a real total but is NOT splittable
+  // by model/role/agent, so the label must say so rather than let a reader assume
+  // the number is attributable.
+  assert.match(mod.tokensBasisLabel("wave-collected-events"), /not attributable/);
+  assert.match(mod.tokensBasisLabel("events-jsonl+wave-collected-events"), /mixed/);
+  // An unknown basis surfaces verbatim rather than being silently dropped.
+  assert.equal(mod.tokensBasisLabel("something-new"), "tokens basis: something-new");
+  assert.equal(mod.tokensBasisLabel("__proto__"), "tokens basis: __proto__");
+});
+
+test("metricsSection shows the tokens basis only alongside a real token total", () => {
+  const attributed = mod.metricsSection({
+    metrics: { tokens_total: 420000, tokens_basis: "events-jsonl" },
+    metrics_source: "live",
+  });
+  assert.match(attributed.textContent, /tokens: 420000/);
+  assert.match(attributed.textContent, /tokens: per-dispatch/);
+
+  const waveBasis = mod.metricsSection({
+    metrics: { tokens_total: 420000, tokens_basis: "wave-collected-events" },
+    metrics_source: "live",
+  });
+  assert.match(waveBasis.textContent, /not attributable/);
+
+  // A basis for an absent total is noise — the pill already reads "—".
+  const noTotal = mod.metricsSection({
+    metrics: { tokens_total: null, tokens_basis: "events-jsonl" },
+    metrics_source: "live",
+  });
+  assert.match(noTotal.textContent, /tokens: —/);
+  assert.doesNotMatch(noTotal.textContent, /per-dispatch/);
 });
 
 test("metricsSection warns when the event log was truncated", () => {

@@ -1823,6 +1823,9 @@ class RealRunMetricsIntegrationTests(unittest.TestCase):
             "quality_gate_first_pass_rate", "refuted_rate",
             "evidence_failed_drop_rate", "split_rate", "integration_gate",
             "wall_clock_s", "engine_active_s", "human_wait_s", "tokens_total",
+            # Not a pill — rendered as the tokens provenance chip, but just as
+            # load-bearing: if it vanished the chip would silently never appear.
+            "tokens_basis",
         )
         for key in client_fields:
             self.assertIn(key, run["metrics"],

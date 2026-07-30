@@ -799,6 +799,21 @@
       return Object.prototype.hasOwnProperty.call(METRICS_SOURCE_LABEL, src)
         ? METRICS_SOURCE_LABEL[src] : String(src);
     }
+    // Which channel produced tokens_total. The wave-aggregate basis is a genuine
+    // run total but is NOT attributable to a model, role, or agent — run_metrics
+    // leaves those splits null rather than inventing them, so the number must not
+    // be presented as if it were per-dispatch. Raw basis strings are opaque to a
+    // reader, so each maps to a phrase; an unknown value falls back to itself
+    // rather than being hidden.
+    const TOKENS_BASIS_LABEL = {
+      "events-jsonl": "tokens: per-dispatch",
+      "wave-collected-events": "tokens: per-wave totals, not attributable",
+      "events-jsonl+wave-collected-events": "tokens: mixed per-dispatch + per-wave",
+    };
+    function tokensBasisLabel(basis) {
+      return Object.prototype.hasOwnProperty.call(TOKENS_BASIS_LABEL, basis)
+        ? TOKENS_BASIS_LABEL[basis] : "tokens basis: " + String(basis);
+    }
     function fmtDuration(secs) {
       const s = Math.max(0, Math.round(secs));
       const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
@@ -838,6 +853,14 @@
         sec.appendChild(el("span", {
           cls: "chip metrics-truncated",
           text: "event log truncated — counts may understate",
+        }));
+      }
+      // Only meaningful alongside a real token number; a basis for an absent
+      // total is noise.
+      if (m.tokens_basis != null && m.tokens_total != null) {
+        sec.appendChild(el("span", {
+          cls: "chip metrics-source",
+          text: tokensBasisLabel(m.tokens_basis),
         }));
       }
       const row = el("div", { cls: "pill-row" });
@@ -992,7 +1015,7 @@
     /* test-export */ if (typeof module !== "undefined" && module.exports) {
       module.exports = {
         labelClass, verdictClass, waveStatusClass, outcomeClass, metricsSourceLabel,
-        sha7, truncate, dash, groupRunsByRoot, parseHashFrom,
+        tokensBasisLabel, sha7, truncate, dash, groupRunsByRoot, parseHashFrom,
         el, overviewCard, rootGroupSection, sliceRow, __setDocument,
         stageStrip, councilSection, executionSection, finalReviewSection, escalationsSection,
         wavesSection, waveTitle, outcomesSection, sidecarLines, constraintsSection,
