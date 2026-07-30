@@ -24,7 +24,7 @@
 
 scripts/dag.py:676-677                   # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/dashboard_launcher.py:558-559    # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/dashboard_server.py:1558-1559    # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
+scripts/dashboard_server.py:1645-1646    # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/knowledge_graph.py:1211-1212     # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/pr_resolver.py:488-489           # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/quality_gate.py:1104-1105        # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
