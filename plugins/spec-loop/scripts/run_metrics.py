@@ -57,15 +57,35 @@ differently, the dial goes null rather than wrong, and
                        id (pinned), trigger, title, status, opened, answered_at
   escalation-answered  id (pinned), answered_at
   decision             reversibility, rationale
-  council-verdict      safety (pinned bool), verdict, concerns, member
+  council-verdict      safety (pinned bool), verdict, member, deferred (list),
+                       concerns | concerns_folded — the same quantity under the
+                       contract's and the workflow's spelling; either is read,
+                       and the sidecar's critique.concerns is the fallback only
+                       when no verdict event carried a count (never summed with
+                       them: one is per-verdict, the other a per-slice rollup)
   quality-gate         status | result, refactor_passes
   review-summary       findings, refuted_by_fixer, confirmed, refuted,
                        evidence_failed
   integration-check    status | result
   phase5-gate          status | result
   slice-merged         sha | merge_commit
-  agent-dispatch       agent, model, effort, role, dispatched_at, returned_at,
+  wave-collected       index, agent_count, subagent_tokens, duration_ms
+                       (pinned, all optional)
+  agent-dispatch       agent_type (pinned; bare `agent` read as a legacy
+                       alias), model, effort, role, dispatched_at, returned_at,
                        tokens_in, tokens_out   (pinned, all optional)
+
+TOKEN ATTRIBUTION, TODAY vs LATER. Workflow journal keys are opaque digests, so
+the controller cannot match a journal entry to the dispatch that produced it:
+in the current harness ``agent-dispatch`` carries no stamps and no tokens, and
+every per-dispatch dial here is null on real runs. The live channel is the
+workflow completion notification, which yields exact PER-WAVE aggregates
+(``wave-collected``). Those are reported under ``tokens.wave_totals`` with
+basis ``wave-collected-events``, and the per-model/per-role/per-agent
+breakdowns stay null because a wave total genuinely is not attributable to a
+role — splitting it would be invention. The per-dispatch paths are kept intact
+and tested for the harness that can populate them later; when both channels are
+present the section reports both side by side rather than reconciling them.
 
 LEGACY. v1 run dirs (no ``schema_version`` in ``dag.json``, no
 ``events.jsonl``) are still summarizable by ``trend`` through the clearly-walled
@@ -103,6 +123,7 @@ GATE_RESULTS = ("PASS", "FAIL", "SKIPPED")
 REVIEW_COUNTER_KEYS = ("confirmed", "refuted", "evidence_failed", "fix_rounds")
 
 BASIS_EVENTS = "events-jsonl"
+BASIS_WAVE_EVENTS = "wave-collected-events"
 BASIS_SIDECAR = "sidecar-v2"
 BASIS_BOTH = "events-jsonl+sidecar-v2"
 BASIS_RUNBOOK = "runbook-table"
@@ -295,6 +316,24 @@ def _pcount(event, key):
     """A non-negative integer payload field, else None."""
     value = event["payload"].get(key)
     return value if _is_count(value) else None
+
+
+def _dispatch_key(event, field):
+    """The grouping key for one dispatch dimension.
+
+    ``agent`` resolves the pinned payload key ``agent_type``, accepting bare
+    ``agent`` as a legacy alias — either spelling yields the real agent name,
+    so this can never silently produce "(unknown)" for a well-formed event."""
+    if field == "agent":
+        return _pstr(event, "agent_type") or _pstr(event, "agent")
+    return _pstr(event, field)
+
+
+def _plist_len(event, key):
+    """The length of a list-valued payload field, else None (absent stays
+    absent — an unreported list is not an empty one)."""
+    value = event["payload"].get(key)
+    return len(value) if isinstance(value, list) else None
 
 
 def _pstamp(event, key):
@@ -744,28 +783,53 @@ def _council_stats(parsed):
     carries a ``safety`` flag: "no payload said safety" is not evidence that no
     SAFETY objection was raised."""
     verdict_events = _of_type(parsed["events"], "council-verdict")
-    sidecar_verdicts = [sc["critique"]["verdict"] for sc in parsed["sidecars"]
-                        if sc["critique"] and sc["critique"]["verdict"]]
-    if not verdict_events and not sidecar_verdicts:
+    critiques = [sc["critique"] for sc in parsed["sidecars"] if sc["critique"]]
+    sidecar_verdicts = [c["verdict"] for c in critiques if c["verdict"]]
+    if not verdict_events and not critiques:
         return {"basis": None, "verdicts": None, "object_rate": None,
                 "safety_objections": None, "concerns_total": None,
-                "by_member": None, "slice_verdicts": None}
+                "concerns_deferred": None, "by_member": None,
+                "slice_verdicts": None}
     verdicts = [_pstr(e, "verdict") for e in verdict_events]
     verdicts = [v.upper() for v in verdicts if v and v.upper() in COUNCIL_VERDICTS]
     safety_flagged = [e for e in verdict_events
                       if isinstance(e["payload"].get("safety"), bool)]
     return {
-        "basis": _basis(bool(verdict_events), bool(sidecar_verdicts)),
+        "basis": _basis(bool(verdict_events), bool(critiques)),
         "verdicts": _tally(verdicts) if verdict_events else None,
         "object_rate": _ratio(verdicts.count("OBJECT"), len(verdicts)),
         "safety_objections": sum(1 for e in safety_flagged
                                  if e["payload"]["safety"]) if safety_flagged
                              else None,
-        "concerns_total": _sum_optional(_pcount(e, "concerns")
-                                        for e in verdict_events),
+        "concerns_total": _concerns_total(verdict_events, critiques),
+        "concerns_deferred": _sum_optional(_plist_len(e, "deferred")
+                                           for e in verdict_events),
         "by_member": _tally(_pstr(e, "member") for e in verdict_events) or None,
         "slice_verdicts": _tally(sidecar_verdicts) or None,
     }
+
+
+def _concerns_total(verdict_events, critiques):
+    """Concerns raised across the council.
+
+    Events win over sidecars: there is one ``council-verdict`` event per
+    verdict, so summing them counts every member's concerns, whereas the
+    sidecar's ``critique.concerns`` is one already-rolled-up number per slice —
+    mixing the two would double-count. The sidecar is the fallback for a run
+    where no verdict event carried a count at all.
+
+    Within an event, ``concerns`` and ``concerns_folded`` name the same
+    quantity (the contract's sidecar spelling and the workflow's spelling
+    respectively), so either is accepted."""
+    from_events = _sum_optional(_verdict_concerns(e) for e in verdict_events)
+    if from_events is not None:
+        return from_events
+    return _sum_optional(c["concerns"] for c in critiques)
+
+
+def _verdict_concerns(event):
+    value = _pcount(event, "concerns")
+    return value if value is not None else _pcount(event, "concerns_folded")
 
 
 def _reversibility_mix(decisions):
@@ -928,8 +992,9 @@ def _reviewer_dispatch_count(events):
     if not dispatches:
         return None
     return sum(1 for e in dispatches
-               if REVIEWER_HINT.search("%s %s" % (_pstr(e, "role") or "",
-                                                  _pstr(e, "agent") or "")))
+               if REVIEWER_HINT.search(
+                   "%s %s" % (_pstr(e, "role") or "",
+                              _dispatch_key(e, "agent") or "")))
 
 
 def _rate_1dp(part, whole):
@@ -1115,7 +1180,8 @@ def _dispatch_seconds(event):
 def _duration_group(timed, field):
     grouped = {}
     for event, secs in timed:
-        grouped.setdefault(_pstr(event, field) or "(unknown)", []).append(secs)
+        grouped.setdefault(_dispatch_key(event, field) or "(unknown)",
+                           []).append(secs)
     return {
         key: {"count": len(vals), "total_s": round(sum(vals), 1),
               "median_s": round(_median(vals), 1)}
@@ -1133,12 +1199,20 @@ def _slice_durations(sidecars):
 
 
 def _wave_stats(parsed):
-    """Per-wave parallelism: what the DAG dispatched, and how much of it was
-    genuinely concurrent according to the sidecar intervals."""
+    """Per-wave shape: what the DAG dispatched, how much of it was genuinely
+    concurrent according to the sidecar intervals, and what the workflow
+    itself reported on completion.
+
+    ``span_s`` is derived here from sidecar intervals; ``workflow_duration_s``
+    is the workflow's own measurement from the ``wave-collected`` payload. They
+    are reported separately and never reconciled — a gap between them is a real
+    signal (dispatch and collection overhead outside the slices' own spans),
+    not a discrepancy to average away."""
     waves = (parsed["dag"] or {}).get("waves")
     if not waves:
         return None
     by_id = {sc["id"]: sc for sc in parsed["sidecars"] if sc["id"]}
+    collected = _wave_collected_by_index(parsed["events"])
     out = []
     for wave in waves:
         intervals = []
@@ -1149,26 +1223,69 @@ def _wave_stats(parsed):
             start, end = parse_iso(sc["started_at"]), parse_iso(sc["finished_at"])
             if start and end and end >= start:
                 intervals.append((start, end))
+        event = collected.get(wave["index"])
         out.append({
             "wave": wave["index"],
             "slices": wave["slices"],
             "status": wave["status"],
             "dispatched_via_workflow": wave["workflow_run_id"] is not None,
+            "agent_count": _pcount(event, "agent_count") if event else None,
             "max_parallelism": _max_overlap(intervals) if intervals else None,
             "span_s": _interval_union_seconds(intervals),
+            "workflow_duration_s": _ms_to_s(_pcount(event, "duration_ms"))
+                                   if event else None,
         })
     return out
+
+
+def _wave_collected_by_index(events):
+    """``wave-collected`` events keyed by payload ``index``.
+
+    Last write wins: a resumed run can re-collect a wave, and the later
+    notification is the one that describes what finally happened."""
+    out = {}
+    for event in _of_type(events, "wave-collected"):
+        index = _pcount(event, "index")
+        if index is not None:
+            out[index] = event
+    return out
+
+
+def _ms_to_s(milliseconds):
+    return round(milliseconds / 1000.0, 1) if milliseconds is not None else None
 
 
 # --- tokens ---------------------------------------------------------------
 
 def _token_metrics(parsed):
-    """Token accounting from agent-dispatch payloads.
+    """Token accounting from the two independent channels.
 
-    Null when no dispatch reports tokens — the whole section, not a zero. When
-    only some dispatches report them, ``coverage_rate`` says how much of the
-    run the totals actually cover, so a partial number is never read as whole."""
-    dispatches = _of_type(parsed["events"], "agent-dispatch")
+    Per-dispatch (``agent-dispatch`` payloads) is the attributable channel but
+    is empty in the current harness; per-wave (``wave-collected`` payloads) is
+    what the workflow can actually report today. Null only when NEITHER channel
+    has anything — never a fabricated zero. When both are present both are
+    reported, side by side and unreconciled."""
+    dispatch = _dispatch_token_metrics(parsed["events"])
+    waves = _wave_token_totals(parsed["events"])
+    if dispatch is None and waves is None:
+        return None
+    fields = dispatch if dispatch is not None \
+        else _unattributed_token_fields(parsed["events"])
+    return {"basis": _token_basis(dispatch is not None, waves is not None),
+            **fields, "wave_totals": waves}
+
+
+def _token_basis(has_dispatch, has_waves):
+    if has_dispatch and has_waves:
+        return "%s+%s" % (BASIS_EVENTS, BASIS_WAVE_EVENTS)
+    return BASIS_EVENTS if has_dispatch else BASIS_WAVE_EVENTS
+
+
+def _dispatch_token_metrics(events):
+    """Per-dispatch token totals and breakdowns, or None when no dispatch
+    reports tokens. ``coverage_rate`` says how much of the run the totals
+    cover, so a partial number is never read as a whole one."""
+    dispatches = _of_type(events, "agent-dispatch")
     rows = []
     for event in dispatches:
         tin, tout = _pcount(event, "tokens_in"), _pcount(event, "tokens_out")
@@ -1179,7 +1296,6 @@ def _token_metrics(parsed):
         return None
     grand = sum(row["in"] + row["out"] for row in rows)
     return {
-        "basis": BASIS_EVENTS,
         "totals": {"in": sum(row["in"] for row in rows),
                    "out": sum(row["out"] for row in rows),
                    "total": grand},
@@ -1193,10 +1309,55 @@ def _token_metrics(parsed):
     }
 
 
+def _unattributed_token_fields(events):
+    """The per-dispatch fields for a run whose only token channel is the wave
+    aggregate: every breakdown null, because a wave total is not attributable
+    to a model or role and splitting it would be invention.
+
+    ``dispatches`` and ``dispatches_with_tokens`` remain real observations —
+    they say how many dispatches happened and that none of them reported
+    tokens, which is exactly the current-harness situation and worth seeing."""
+    dispatches = _of_type(events, "agent-dispatch")
+    return {
+        "totals": None,
+        "dispatches": len(dispatches),
+        "dispatches_with_tokens": 0,
+        "coverage_rate": _ratio(0, len(dispatches)),
+        "by_model": None,
+        "by_role": None,
+        "by_agent": None,
+        "by_scope": None,
+    }
+
+
+def _wave_token_totals(events):
+    """Per-wave and run-total subagent tokens from ``wave-collected`` payloads.
+
+    ``waves_reporting``/``waves_total`` mark partial coverage: when only some
+    waves reported, ``total`` is a partial sum and must not be read as the
+    run's whole spend. None when no wave reported tokens at all."""
+    collected = _of_type(events, "wave-collected")
+    if not collected:
+        return None
+    rows = [{"wave": _pcount(event, "index"),
+             "subagent_tokens": _pcount(event, "subagent_tokens")}
+            for event in collected]
+    reporting = [r for r in rows if r["subagent_tokens"] is not None]
+    if not reporting:
+        return None
+    return {
+        "basis": BASIS_WAVE_EVENTS,
+        "total": sum(r["subagent_tokens"] for r in reporting),
+        "waves": rows,
+        "waves_reporting": len(reporting),
+        "waves_total": len(rows),
+    }
+
+
 def _token_group(rows, field, grand):
     grouped = {}
     for row in rows:
-        key = _pstr(row["event"], field) or "(unknown)"
+        key = _dispatch_key(row["event"], field) or "(unknown)"
         grouped.setdefault(key, []).append(row)
     return _token_group_totals(grouped, grand)
 
@@ -1483,6 +1644,7 @@ def _legacy_safety(events, escalations, decisions, observed):
             "object_rate": _ratio(verdicts.count("OBJECT"), len(council)),
             "safety_objections": safety_objections if council else None,
             "concerns_total": None,
+            "concerns_deferred": None,
             "by_member": None,
             "slice_verdicts": None,
         },
@@ -1685,6 +1847,12 @@ def summary_row(metrics):
     perf = metrics.get("performance") or {}
     review = quality.get("review") or {}
     tokens = metrics.get("tokens") or {}
+    # "What did this run burn" is answered by either channel; the difference
+    # between them is attributability, not what is being counted. Prefer the
+    # per-dispatch total, fall back to the wave aggregate, never sum the two —
+    # and carry `tokens_basis` so a consumer can see which one it got.
+    dispatch_total = (tokens.get("totals") or {}).get("total")
+    wave_total = (tokens.get("wave_totals") or {}).get("total")
     return {
         "run_id": metrics.get("run_id"),
         "run_schema": metrics.get("run_schema_detected"),
@@ -1701,7 +1869,9 @@ def summary_row(metrics):
         "wall_clock_s": perf.get("run_wall_clock_s"),
         "engine_active_s": perf.get("engine_active_s"),
         "human_wait_s": perf.get("human_wait_s"),
-        "tokens_total": (tokens.get("totals") or {}).get("total"),
+        "tokens_total": dispatch_total if dispatch_total is not None
+                        else wave_total,
+        "tokens_basis": tokens.get("basis"),
     }
 
 

@@ -82,7 +82,8 @@ V2_EVENT_OBJECTS = [
     ev("2026-07-30T10:01:00Z", "intake", "council-verdict",
        member="skeptic", verdict="ENDORSE", concerns=0, safety=False),
     ev("2026-07-30T10:01:30Z", "intake", "council-verdict",
-       member="guardian", verdict="OBJECT", concerns=3, safety=True),
+       member="guardian", verdict="OBJECT", concerns_folded=3, safety=True,
+       deferred=["P2: rename later", "P2: widen the fixture"]),
     ev("2026-07-30T10:02:00Z", "intake", "decision",
        title="reuse the existing helper",
        rationale="precedent — run 20260630-full-coverage answered this",
@@ -94,7 +95,7 @@ V2_EVENT_OBJECTS = [
     ev("2026-07-30T10:05:00Z", "wave1", "wave-dispatched",
        index=1, slice_ids=["s1", "s2"]),
     ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
-       agent="spec-loop:sdd-implementer", model="sonnet", effort="high",
+       agent_type="spec-loop:sdd-implementer", model="sonnet", effort="high",
        role="task-implement", dispatched_at="2026-07-30T10:12:00Z",
        returned_at="2026-07-30T10:30:00Z", tokens_in=12000, tokens_out=3000),
     ev("2026-07-30T11:10:00Z", "s2", "escalation-opened",
@@ -102,7 +103,7 @@ V2_EVENT_OBJECTS = [
        title="Council objects to the plan", status="OPEN",
        opened="2026-07-30T10:30:00Z"),
     ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
-       agent="spec-loop:sdd-task-reviewer", model="sonnet", effort="medium",
+       agent_type="spec-loop:sdd-task-reviewer", model="sonnet", effort="medium",
        role="task-review", dispatched_at="2026-07-30T10:25:00Z",
        returned_at="2026-07-30T10:40:00Z", tokens_in=8000, tokens_out=1000),
     ev("2026-07-30T11:10:00Z", "s2", "escalation-answered",
@@ -119,21 +120,28 @@ V2_EVENT_OBJECTS = [
     ev("2026-07-30T11:05:00Z", "s2", "quality-gate", status="PASS",
        refactor_passes=0),
     ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
-       agent="spec-loop:code-reviewer", model="opus", effort="high",
+       agent_type="spec-loop:code-reviewer", model="opus", effort="high",
        role="whole-branch-review", dispatched_at="2026-07-30T11:00:00Z",
        returned_at="2026-07-30T11:08:00Z", tokens_in=5000, tokens_out=1000),
     # Untimed, tokenless dispatch: counted, never timed, never a fabricated 0.
     # (Its ts alone would have been enough to fake a duration from.)
+    # Deliberately spelled with the LEGACY `agent` key while the three above
+    # use the pinned `agent_type` — both must resolve, neither "(unknown)".
     ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
        agent="spec-loop:slice-planner", model="sonnet", role="plan"),
     ev("2026-07-30T11:09:30Z", "s1", "review-summary",
        round=2, findings=2, refuted_by_fixer=0),
-    ev("2026-07-30T11:10:00Z", "wave1", "wave-collected", index=1),
+    ev("2026-07-30T11:10:00Z", "wave1", "wave-collected", index=1,
+       agent_count=17, subagent_tokens=420000, duration_ms=3_720_000),
     ev("2026-07-30T11:11:00Z", "s1", "slice-merged", sha="f5c84ef"),
     ev("2026-07-30T11:12:00Z", "wave1", "integration-check", status="PASS"),
     ev("2026-07-30T11:15:00Z", "s1", "escalation-opened",
        id="s1:review-block", trigger="review-block", title="Reviewer BLOCK",
        status="OPEN", opened="2026-07-30T11:15:00Z"),
+    # Wave 2 collected with NO aggregates: every payload field is optional, so
+    # its tokens must stay null rather than 0, and the run total must announce
+    # itself as partial (waves_reporting 1 of 2).
+    ev("2026-07-30T11:20:00Z", "wave2", "wave-collected", index=2),
     ev("2026-07-30T11:20:00Z", "wave2", "integration-check", result="FAIL"),
     ev("2026-07-30T11:25:00Z", "r1", "slice-merged", merge_commit="fb1a744"),
     ev("2026-07-30T11:30:00Z", "phase5", "phase5-gate", status="PASS"),
@@ -302,6 +310,16 @@ def compute_for(files, run_id="fixture-run"):
 
 def v2_events():
     return rm.parse_events(V2_EVENTS)["events"]
+
+
+def _events_without(*payload_keys):
+    """The v2 event log with the named payload keys stripped — used to model
+    the channels a given harness generation cannot populate."""
+    dropped = set(payload_keys)
+    return "\n".join(json.dumps(
+        dict(obj, payload={k: v for k, v in obj["payload"].items()
+                           if k not in dropped}))
+        for obj in V2_EVENT_OBJECTS)
 
 
 # ---------------------------------------------------------------------------
@@ -630,15 +648,111 @@ class V2SafetyTests(unittest.TestCase):
         self.assertEqual(council["object_rate"], 0.5)
         self.assertEqual(council["safety_objections"], 1)
         self.assertEqual(council["concerns_total"], 3)
+        self.assertEqual(council["concerns_deferred"], 2)
         self.assertEqual(council["by_member"], {"guardian": 1, "skeptic": 1})
         self.assertEqual(council["slice_verdicts"],
                          {"ENDORSE_WITH_CONCERNS": 1, "OBJECT": 1})
+
+    def test_concerns_read_from_either_spelling(self):
+        """skeptic writes `concerns: 0`, guardian writes `concerns_folded: 3`;
+        both name the same quantity, so the total is 3 and not a partial 0."""
+        self.assertEqual(self.safety["council"]["concerns_total"], 3)
 
     def test_reversibility_and_precedent_from_decision_payloads(self):
         self.assertEqual(self.safety["reversibility_mix"],
                          {"moderate": 1, "trivial": 1})
         self.assertEqual(self.safety["precedent_reuse"],
                          {"count": 1, "rate": 0.5})
+
+
+class CouncilConcernsPrecedenceTests(unittest.TestCase):
+    """Events are per-verdict; the sidecar critique is a per-slice rollup.
+    Summing both would double-count, so events win and the sidecar is only a
+    fallback."""
+
+    def test_events_win_over_the_sidecar_rollup(self):
+        # Events total 3; the two sidecar critiques total 5. Expect 3, not 8.
+        council = compute_for(v2_files())["safety"]["council"]
+        self.assertEqual(council["concerns_total"], 3)
+
+    def test_sidecar_is_the_fallback_when_no_verdict_carries_a_count(self):
+        metrics = compute_for(v2_files(**{"events.jsonl": _events_without(
+            "concerns", "concerns_folded")}))
+        council = metrics["safety"]["council"]
+        self.assertEqual(council["concerns_total"], 5)   # 2 (s1) + 3 (s2)
+        self.assertEqual(council["basis"], rm.BASIS_BOTH)
+
+    def test_null_when_neither_channel_counts_concerns(self):
+        events = json.dumps(ev("2026-07-30T10:00:00Z", "intake",
+                               "council-verdict", verdict="ENDORSE"))
+        council = compute_for({"events.jsonl": events})["safety"]["council"]
+        self.assertIsNone(council["concerns_total"])
+        self.assertIsNone(council["concerns_deferred"])
+
+    def test_critique_with_only_concerns_still_reaches_the_document(self):
+        metrics = compute_for({"slice-s1-status.json": {
+            "schema_version": 2, "id": "s1", "status": "DONE",
+            "critique": {"concerns": 4}}})
+        council = metrics["safety"]["council"]
+        self.assertEqual(council["concerns_total"], 4)
+        self.assertIsNone(council["verdicts"])
+
+
+class DispatchAgentKeyTests(unittest.TestCase):
+    """`agent_type` is the pinned payload key; bare `agent` is a legacy alias.
+    Neither spelling may ever land in the "(unknown)" bucket."""
+
+    def test_pinned_agent_type_groups_by_name(self):
+        perf = compute_for(v2_files())["performance"]
+        by_agent = perf["agents"]["by_agent"]
+        self.assertEqual(sorted(by_agent), ["spec-loop:code-reviewer",
+                                            "spec-loop:sdd-implementer",
+                                            "spec-loop:sdd-task-reviewer"])
+        self.assertNotIn("(unknown)", by_agent)
+
+    def test_legacy_agent_alias_still_resolves(self):
+        events = "\n".join(json.dumps(e) for e in [
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent="legacy-name", model="sonnet", role="plan",
+               dispatched_at="2026-07-30T10:00:00Z",
+               returned_at="2026-07-30T10:10:00Z", tokens_in=10, tokens_out=5),
+        ])
+        metrics = compute_for({"events.jsonl": events})
+        self.assertIn("legacy-name",
+                      metrics["performance"]["agents"]["by_agent"])
+        self.assertIn("legacy-name", metrics["tokens"]["by_agent"])
+
+    def test_agent_type_wins_when_both_spellings_are_present(self):
+        events = json.dumps(ev(
+            "2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+            agent_type="pinned-name", agent="legacy-name", model="sonnet",
+            role="plan", dispatched_at="2026-07-30T10:00:00Z",
+            returned_at="2026-07-30T10:10:00Z"))
+        by_agent = compute_for({"events.jsonl": events})[
+            "performance"]["agents"]["by_agent"]
+        self.assertEqual(list(by_agent), ["pinned-name"])
+
+    def test_reviewer_dispatch_count_sees_agent_type(self):
+        """A reviewer identifiable only by agent_type must still be counted —
+        the path that silently under-counted before the fix."""
+        events = "\n".join(json.dumps(e) for e in [
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent_type="spec-loop:pr-reviewer", model="opus", role="aspect"),
+            ev("2026-07-30T11:10:00Z", "s1", "review-summary", findings=9),
+        ])
+        review = compute_for({"events.jsonl": events})["quality"]["review"]
+        self.assertEqual(review["reviewer_dispatches"], 1)
+        self.assertEqual(review["findings_total"], 9)
+        self.assertEqual(review["findings_per_reviewer_dispatch"], 9.0)
+
+    def test_dispatch_with_no_agent_name_at_all_is_unknown(self):
+        events = json.dumps(ev(
+            "2026-07-30T11:10:00Z", "s1", "agent-dispatch", model="sonnet",
+            role="plan", dispatched_at="2026-07-30T10:00:00Z",
+            returned_at="2026-07-30T10:10:00Z"))
+        by_agent = compute_for({"events.jsonl": events})[
+            "performance"]["agents"]["by_agent"]
+        self.assertEqual(list(by_agent), ["(unknown)"])
 
 
 class V2QualityTests(unittest.TestCase):
@@ -741,10 +855,25 @@ class V2PerformanceTests(unittest.TestCase):
         self.assertEqual(waves[0], {"wave": 1, "slices": 2,
                                     "status": "collected",
                                     "dispatched_via_workflow": True,
-                                    "max_parallelism": 2, "span_s": 3600.0})
+                                    "agent_count": 17,
+                                    "max_parallelism": 2, "span_s": 3600.0,
+                                    "workflow_duration_s": 3720.0})
         self.assertEqual(waves[1]["dispatched_via_workflow"], False)
         self.assertIsNone(waves[1]["max_parallelism"])
         self.assertIsNone(waves[1]["span_s"])
+
+    def test_workflow_reported_duration_is_separate_from_sidecar_span(self):
+        """span_s (3600) is the slices' own union; workflow_duration_s (3720)
+        is the workflow's measurement including dispatch/collect overhead.
+        Both are reported; neither overwrites the other."""
+        wave1 = self.perf["waves"][0]
+        self.assertEqual(wave1["span_s"], 3600.0)
+        self.assertEqual(wave1["workflow_duration_s"], 3720.0)
+
+    def test_wave_aggregates_absent_stay_null(self):
+        wave2 = self.perf["waves"][1]
+        self.assertIsNone(wave2["agent_count"])
+        self.assertIsNone(wave2["workflow_duration_s"])
 
     def test_agent_profile_by_agent_model_role(self):
         agents = self.perf["agents"]
@@ -772,8 +901,26 @@ class V2TokenTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tokens = compute_for(v2_files(), run_id="20260730-v2")["tokens"]
 
+    def test_both_channels_reported_side_by_side(self):
+        self.assertEqual(self.tokens["basis"],
+                         "events-jsonl+wave-collected-events")
+        self.assertEqual(self.tokens["totals"]["total"], 30000)
+        self.assertEqual(self.tokens["wave_totals"]["total"], 420000)
+
+    def test_wave_totals_per_wave_and_run_total(self):
+        wave_totals = self.tokens["wave_totals"]
+        self.assertEqual(wave_totals["basis"], rm.BASIS_WAVE_EVENTS)
+        self.assertEqual(wave_totals["waves"],
+                         [{"wave": 1, "subagent_tokens": 420000},
+                          {"wave": 2, "subagent_tokens": None}])
+        self.assertEqual(wave_totals["total"], 420000)
+
+    def test_partial_wave_coverage_is_announced(self):
+        wave_totals = self.tokens["wave_totals"]
+        self.assertEqual(wave_totals["waves_reporting"], 1)
+        self.assertEqual(wave_totals["waves_total"], 2)
+
     def test_totals_and_coverage(self):
-        self.assertEqual(self.tokens["basis"], rm.BASIS_EVENTS)
         self.assertEqual(self.tokens["totals"],
                          {"in": 25000, "out": 5000, "total": 30000})
         self.assertEqual(self.tokens["dispatches"], 4)
@@ -796,14 +943,36 @@ class V2TokenTests(unittest.TestCase):
     def test_scope_breakdown(self):
         self.assertEqual(self.tokens["by_scope"]["s1"]["total"], 30000)
 
-    def test_tokens_null_when_no_payload_reports_them(self):
-        stripped = [dict(obj, payload={k: v for k, v in obj["payload"].items()
-                                       if k not in ("tokens_in", "tokens_out")})
-                    for obj in V2_EVENT_OBJECTS]
-        metrics = compute_for(v2_files(
-            **{"events.jsonl": "\n".join(json.dumps(o) for o in stripped)}))
+    def test_current_harness_shape_wave_aggregate_only(self):
+        """The live case: journal keys are opaque digests, so no dispatch
+        reports tokens and only the wave aggregate exists. The section must
+        still report the wave total, with every attribution null."""
+        metrics = compute_for(v2_files(**{"events.jsonl": _events_without(
+            "tokens_in", "tokens_out")}))
+        tokens = metrics["tokens"]
+        self.assertEqual(tokens["basis"], rm.BASIS_WAVE_EVENTS)
+        self.assertEqual(tokens["wave_totals"]["total"], 420000)
+        self.assertIsNone(tokens["totals"])
+        for key in ("by_model", "by_role", "by_agent", "by_scope"):
+            self.assertIsNone(tokens[key], key)
+        # The dispatches themselves are still counted — 4 happened, 0 reported.
+        self.assertEqual(tokens["dispatches"], 4)
+        self.assertEqual(tokens["dispatches_with_tokens"], 0)
+        self.assertEqual(tokens["coverage_rate"], 0.0)
+        self.assertEqual(metrics["performance"]["agents"]["count"], 4)
+
+    def test_tokens_null_only_when_neither_channel_reports(self):
+        metrics = compute_for(v2_files(**{"events.jsonl": _events_without(
+            "tokens_in", "tokens_out", "subagent_tokens")}))
         self.assertIsNone(metrics["tokens"])
         self.assertEqual(metrics["performance"]["agents"]["count"], 4)
+
+    def test_wave_totals_null_when_only_dispatches_report(self):
+        metrics = compute_for(v2_files(**{"events.jsonl": _events_without(
+            "subagent_tokens")}))
+        self.assertEqual(metrics["tokens"]["basis"], rm.BASIS_EVENTS)
+        self.assertIsNone(metrics["tokens"]["wave_totals"])
+        self.assertEqual(metrics["tokens"]["totals"]["total"], 30000)
 
 
 # ---------------------------------------------------------------------------
@@ -1172,6 +1341,21 @@ class TrendTests(unittest.TestCase):
         self.assertIn("1h31m", table)       # wall clock 5460s
         self.assertIn("—", table)
         self.assertNotIn("None", table)
+
+    def test_tokens_total_falls_back_to_the_wave_aggregate(self):
+        """Without this the trend Tokens column is blank on every real run,
+        since no dispatch can report tokens in the current harness."""
+        wave_only = compute_for(v2_files(**{"events.jsonl": _events_without(
+            "tokens_in", "tokens_out")}))
+        row = rm.summary_row(wave_only)
+        self.assertEqual(row["tokens_total"], 420000)
+        self.assertEqual(row["tokens_basis"], rm.BASIS_WAVE_EVENTS)
+
+    def test_tokens_total_prefers_the_attributable_channel_never_sums(self):
+        row = rm.summary_row(compute_for(v2_files()))
+        self.assertEqual(row["tokens_total"], 30000)
+        self.assertEqual(row["tokens_basis"],
+                         "events-jsonl+wave-collected-events")
 
     def test_summary_row_tolerates_a_partial_document(self):
         row = rm.summary_row({"run_id": "x"})
