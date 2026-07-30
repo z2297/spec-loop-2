@@ -117,7 +117,10 @@ def _push_targets_run(command, run):
         args = [a for a in tail.split() if not a.startswith("-")]
         if len(args) <= 1:  # bare `git push` or remote-only
             return True
-        if "spec-loop/" in tail:
+        # Slice branches (spec-loop/<run>/<slice>) and the default integration
+        # namespace (spec-loop-run/<run>) both belong to the run even when
+        # dag.json is unreadable and base_ref is unknown.
+        if "spec-loop/" in tail or "spec-loop-run/" in tail:
             return True
         if run["base_ref"] and re.search(r"\b%s\b" % re.escape(run["base_ref"]), tail):
             return True

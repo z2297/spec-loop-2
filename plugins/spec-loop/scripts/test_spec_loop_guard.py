@@ -78,6 +78,15 @@ class PushRuleTests(GuardTestCase):
             guard.evaluate(self.bash("git push origin spec-loop/20260707-demo/s1"))
         )
 
+    def test_push_of_integration_namespace_denied_without_dag(self):
+        # dag.json unreadable → base_ref unknown → the spec-loop-run/ default
+        # integration namespace must still be recognized as run-owned.
+        run_dir = self.make_run()
+        os.unlink(os.path.join(run_dir, "dag.json"))
+        self.assertIsNotNone(
+            guard.evaluate(self.bash("git push origin spec-loop-run/20260707-demo"))
+        )
+
     def test_push_of_unrelated_branch_allowed(self):
         self.make_run(base_ref="csv-export")
         self.assertIsNone(guard.evaluate(self.bash("git push origin hotfix-typo")))
