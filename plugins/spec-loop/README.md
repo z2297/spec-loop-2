@@ -1,0 +1,135 @@
+# spec-loop 2
+
+Spec-driven autonomous development loop for Claude Code, Opus 5-native.
+
+Give `/spec-loop` one request. It decomposes the work into small vertical
+slices, then runs each **wave** of independent slices as a deterministic
+Workflow script: every slice gets a plan, a plan critique, test-first
+implementation, a consolidated PR review running in parallel with a scripted
+quality gate, a bounded auto-fix loop, and full verification — in an isolated
+git worktree on its own branch. The controller merges verified slices
+serially into one integration branch, batches every open question into a
+single prompt per wave boundary, and finishes with a committed runbook and a
+publish choice. It never pushes until you choose how.
+
+## Requirements
+
+- Claude Code ≥ 2.1.154 with the Workflow tool (invoking `/spec-loop` is the
+  opt-in; when Workflow is unavailable the loop falls back to inline
+  background agents — same pipeline, slower, recorded as `mode: "inline"`).
+- `git`, `python3`. All bundled scripts are stdlib-only; `lizard` or `radon`
+  are used for quality metrics when already installed, never installed.
+
+## Usage
+
+```
+/spec-loop add CSV export with per-column filters to the reports page
+/spec-loop --from-plan                  # execute the most recent plan-mode plan
+/spec-loop --thorough <request>         # promote every slice's review one tier
+/spec-loop --resume 20260730-csv-export
+```
+
+Flags: `--branch <name>` `--base-branch <name>` `--max-parallel N` (default 5)
+`--risk-floor 1|2|3` `--thorough` `--per-slice-pr` `--from-plan [path]`
+`--resume <run-id>`.
+
+Other commands: `/spec-loop:review-pr` (one consolidated review of any diff),
+`/spec-loop:peer-review` (read-only review of a real PR against business
+requirements), `/spec-loop:quality-gate` and `/spec-loop:knowledge-graph`
+(config), `/spec-loop:dashboard` (terminal) and `/spec-loop:dashboard-serve`
+(web, Docker-preferred singleton on port 8787).
+
+## The pipeline
+
+One Workflow invocation per wave (`workflows/slice-wave.workflow.js`). Per
+slice, in deterministic JS:
+
+| Stage | Who | Model / effort |
+|---|---|---|
+| Plan (+ right-size gate) | `slice-planner` | session / low |
+| Critique — Tier 2 | `plan-critic` (all five council mandates) | session / low |
+| Critique — Tier 3 | + `guardian` (risk-only SAFETY veto); `--thorough` adds `skeptic` | session / high |
+| Implement (sequential per task) | `implementer` | haiku / sonnet / session by task lane |
+| Review ∥ quality gate | `pr-reviewer` (two lanes at Tier 3) ∥ `verifier` running `quality_gate.py` | tier-scaled ∥ haiku |
+| Verify findings (Tier 3) | `finding-verifier` — ONE batched pass, CONFIRMED-by-default | sonnet / low |
+| Fix loop (≤2 rounds) | `implementer` in fix mode (refutation right) + `re-reviewer` | sonnet → session |
+| Simplify (Tier 3 only) | `simplifier`, non-blocking | sonnet / low |
+| Verify | `verifier` — full suite + gate re-check, ≤1 debug-fix | haiku / low |
+
+Loop bounds and per-tier agent caps (10/18/32) are workflow constants;
+exceeding one is an escalation, never a silent truncation. Cost lands around
+**2 agents for a Tier-1 slice, ~7 for a typical Tier-2, ~25–30 worst case** —
+versus roughly 7 / 25 / 90 in v1.
+
+Risk tiers are assigned at decomposition (`references/risk-tiers.md`) and
+promoted deterministically when the implementation touches a `tier3_surfaces`
+glob (auth, migrations, security paths — configurable). An answered
+escalation re-invokes the same wave with the journal cache: completed stages
+replay free; only the answered stage runs live.
+
+## Escalations
+
+The loop surfaces a question only on the escalation-gate's five triggers:
+genuine ambiguity, a material assumption, an unfixable review block, a
+council objection, or an unfixable quality-gate block — after checking prior
+runs for a precedent that already answers it. Everything else proceeds and is
+logged as a decision event with rationale and reversibility. All open
+escalations arrive as ONE question round per wave boundary, recommended
+default first.
+
+## Quality gate
+
+`scripts/quality_gate.py` measures the slice diff (cyclomatic/cognitive
+complexity, method/class length, parameters, nesting, CRAP with coverage) —
+deterministic, script-first, agents cannot weaken it: a PreToolUse guard
+denies writes to the config while a run is active. Global config
+`~/.claude/spec-loop-2/quality-gate.json` (first run offers presets or import
+from v1); a committed per-repo overlay `.spec-loop/quality-gate.json`
+deep-merges over it and hosts `tier3_surfaces`. Gate violations join review
+findings in the same fix loop as behavior-preserving refactors.
+
+## Knowledge graph (optional)
+
+Opt-in Obsidian integration (`~/.claude/spec-loop-2/knowledge-graph.json`):
+the controller upserts decision/pattern/system/domain nodes at wave
+boundaries and the runbook, reads context once per wave, and injects ≤120
+words of prior knowledge per slice. Idempotent by `(type, id)` — v2 runs
+accrete onto v1 vault nodes. Workers never touch the graph. Secrets are
+redacted by a deterministic floor; writes never leave the configured
+subfolder.
+
+## Run state & guard
+
+Everything durable lives under `docs/spec-loop/<run-id>/` —
+`dag.json` (structure + recorded waves), per-slice sidecars, `events.jsonl`
+(the machine channel `run_metrics.py` reads), rendered prose logs, and the
+committed `runbook.md`. Contract: `references/run-state-v2.md`. While a run's
+`.active` marker exists, `scripts/spec_loop_guard.py` (PreToolUse hook)
+blocks pushes, broad staging (`git add -A`), commits/merges on
+`main`/`master`, and quality-gate config edits. Markers, not vibes: the run
+ends when the human's publish choice is recorded.
+
+## Components
+
+- **Commands (7)**: spec-loop, review-pr, peer-review, quality-gate,
+  knowledge-graph, dashboard, dashboard-serve.
+- **Workflow (1)**: slice-wave.
+- **Agents (13)**: slice-planner, plan-critic, guardian, skeptic,
+  implementer, pr-reviewer, finding-verifier, re-reviewer, simplifier,
+  verifier, runbook-writer, peer-reviewer, slice-worker-fallback.
+- **Skills (5)**: escalation-gate, using-spec-loop, test-driven-development,
+  systematic-debugging, verification-before-completion.
+- **Scripts (12 + tests)**: dag, worktrees, run_state, review_package,
+  quality_gate, knowledge_graph, run_metrics, pr_resolver, spec_loop_guard,
+  dashboard_server, dashboard_launcher (+ dashboard_assets).
+
+## Migrating from v1
+
+Read `references/migration-from-v1.md`. Short version: theology unchanged,
+internals rebuilt; config namespace moved (first run offers import); v1 run
+dirs stay readable in `trend` and the dashboard; finish in-flight v1 runs on
+v1.
+
+## License
+
+MIT
