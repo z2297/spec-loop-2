@@ -1,0 +1,21 @@
+{
+  "name": "spec-loop",
+  "description": "Spec-driven autonomous loop, Opus 5-native — decompose one request into small targeted slices, then plan→critique→execute→review→fix each inside a deterministic Workflow wave, surfacing to the human only on genuine ambiguity, material assumptions, or unfixable review blocks",
+  "author": {
+    "name": "Zach McMurry"
+  },
+  "version": "2.0.0",
+  "license": "MIT",
+  "homepage": "https://github.com/z2297/spec-loop-2",
+  "repository": "https://github.com/z2297/spec-loop-2",
+  "keywords": [
+    "automation",
+    "autonomous",
+    "spec-driven",
+    "workflow",
+    "code-review",
+    "worktrees",
+    "opus5"
+  ],
+  "workflows": "./workflows/"
+}

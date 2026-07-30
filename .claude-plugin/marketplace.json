@@ -1,0 +1,17 @@
+{
+  "name": "spec-loop",
+  "owner": {
+    "name": "Zach McMurry"
+  },
+  "metadata": {
+    "description": "Marketplace for the spec-loop plugin (2.x, Opus 5-native)",
+    "version": "2.0.0"
+  },
+  "plugins": [
+    {
+      "name": "spec-loop",
+      "source": "./plugins/spec-loop",
+      "description": "Spec-driven autonomous loop, Opus 5-native — Workflow-orchestrated slices with consolidated review, scripted quality gates, and knowledge-graph integration"
+    }
+  ]
+}
