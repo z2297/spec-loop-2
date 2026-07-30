@@ -83,7 +83,9 @@ deadlock is itself an escalation):
    subsystems, risk_tier, depth, worktree, branch, base_sha, kg_snippet}],
    answers: {}}` — then invoke
    the Workflow named `spec-loop:slice-wave` (fallback: `scriptPath:
-   "${CLAUDE_PLUGIN_ROOT}/workflows/slice-wave.workflow.js"`). Record the wave:
+   "${CLAUDE_PLUGIN_ROOT}/workflows/slice-wave.workflow.js"`). Pass `args` as a real
+   JSON object in the tool call, never a JSON-encoded string — a stringified object
+   reaches the script as one string and the wave dies instantly on `args.slices`. Record the wave:
    `dag.py record-wave --index N --slice-ids <ids> --workflow-run-id <wf_id>`; append a
    `wave-dispatched` event. If the Workflow tool is unavailable or denied → **inline mode**:
    set `dag.json` `mode: "inline"`, dispatch one `spec-loop:slice-worker-fallback` agent per

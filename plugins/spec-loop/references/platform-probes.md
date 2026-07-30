@@ -19,3 +19,14 @@ fact changes.
 Probe agents' cwd being the primary checkout (not a worktree) is load-bearing:
 every dispatch prompt that expects work inside a slice worktree must state the
 absolute worktree path as its first instruction.
+
+Two more facts verified 2026-07-30 by the E2E dry run:
+
+- **Workflow `args` must be a real JSON object in the tool call.** A
+  JSON-encoded string reaches the script as one string; the wave dies
+  instantly on `args.slices` (`undefined is not an object`). The failure is
+  cheap (0 agents) but total.
+- **The integration branch name must not prefix the slice-branch namespace**:
+  git rejects creating `spec-loop/<run-id>/<slice-id>` when a branch
+  `spec-loop/<run-id>` exists (ref-directory collision). Hence the
+  `spec-loop-run/<run-id>` default.

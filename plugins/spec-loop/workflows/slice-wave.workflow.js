@@ -23,7 +23,9 @@ export const meta = {
 // this script has no clock and no filesystem, by design.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const A = args
+// Tolerate stringified args: some harness paths deliver the args value
+// JSON-encoded even when the caller passed an object (verified 2026-07-30).
+const A = typeof args === 'string' ? JSON.parse(args) : args
 const CTX = A.ctx // {run_dir, plugin_root, base_ref, test_command, conventions_path, shared_constraints[], tier3_surfaces[], quality_gate_cmd, models{reviewer}, thorough, polish}
 
 const CAPS = { 1: 10, 2: 18, 3: 32 }
