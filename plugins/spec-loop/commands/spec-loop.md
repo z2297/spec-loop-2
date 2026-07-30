@@ -51,8 +51,9 @@ artifact you hand an agent is a file path, never pasted content.
 
 1. `run-id` = `<yyyymmdd>-<short-slug>` (suffix `-2`, `-3` on collision).
 2. Integration branch: refresh `<base-branch>` (default: repo default branch) if it has an
-   upstream, then `git checkout -b <branch>` (default `spec-loop/<run-id>`). A dirty tree =
-   escalate before touching anything.
+   upstream, then `git checkout -b <branch>` (default `spec-loop-run/<run-id>` — never
+   `spec-loop/<run-id>`, which git rejects as a ref-directory prefix of the slice branches
+   `spec-loop/<run-id>/<slice-id>`). A dirty tree = escalate before touching anything.
 3. Baseline: run the full suite once on the new branch; record a `baseline` event with
    `{tree_sha, command, result}`. Red baseline → escalate before any slice.
 4. Create `docs/spec-loop/<run-id>/` with `.active`, `request.md`, `conventions.md`,
