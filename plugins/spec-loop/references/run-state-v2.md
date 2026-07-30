@@ -124,11 +124,16 @@ best-effort):
   appends a wave's events in one batch at collection, so their `ts` values
   cluster — deriving durations or interval unions from `ts` is forbidden.
 - **`agent-dispatch`** payload: `{role, model, effort, agent_type}` from the
-  workflow, plus `dispatched_at`/`returned_at`/`tokens_in`/`tokens_out` when
-  the controller can extract them from the workflow journal at collection —
-  all optional and null-honest. `engine_active_s` derives ONLY from
-  `dispatched_at`/`returned_at` pairs; when absent it is `null`, never a
-  `ts`-based guess.
+  workflow, plus `dispatched_at`/`returned_at`/`tokens_in`/`tokens_out` when a
+  future harness exposes per-dispatch identity — all optional and null-honest.
+  (Verified 2026-07-30: workflow journal keys are opaque digests, so
+  per-dispatch timing/tokens are NOT extractable today.) `engine_active_s`
+  derives ONLY from `dispatched_at`/`returned_at` pairs; when absent it is
+  `null`, never a `ts`-based guess.
+- **`wave-collected`** payload carries the per-wave aggregates the workflow
+  completion notification reports: `{index, agent_count, subagent_tokens,
+  duration_ms}` — the honest wave-level token/duration channel while
+  per-dispatch stamps are unavailable. Optional, null-honest.
 - **`council-verdict`** payload carries `safety: bool` — whether the verdict
   involved a SAFETY flag (the one objection that halts alone).
 - **`escalation-opened`** payload is the full EscalationRecord, including its
