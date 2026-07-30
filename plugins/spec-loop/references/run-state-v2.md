@@ -74,7 +74,8 @@ prose about the slice.
   "tests": { "command": "...", "result": "...", "scope": "full", "tree_sha": "<sha>" },
   "quality": { "status": "PASS | FAIL | SKIPPED", "detail": "..." },
   "split": { "children": [{ "goal": "...", "files": [], "subsystems": [],
-                            "internal_deps": [] }] },   // SPLIT only; 1-based sibling indices
+                            "internal_deps": [] }] },   // SPLIT only; ≥2 children (a 1-child
+                                                        // split is not a split); 1-based sibling indices
   "escalations": [ /* EscalationRecord, below */ ],      // ESCALATED only
   "agents_used": 12,
   "wave": 1,
