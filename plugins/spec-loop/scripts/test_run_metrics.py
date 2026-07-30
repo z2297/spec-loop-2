@@ -70,8 +70,10 @@ def ev(ts, scope, type_, **payload):
     return {"ts": ts, "scope": scope, "type": type_, "payload": payload}
 
 
-# Timed agent dispatches. `ts` is when the controller appended the event (i.e.
-# on return), so each spans [ts - duration_s, ts]:
+# `ts` on every event below is a batch COLLECTION stamp — deliberately set to
+# wave-collection time (11:10 for wave 1) on the agent-dispatch events, so any
+# regression that reconstructs durations from `ts` produces visibly wrong
+# numbers instead of plausible ones. Real timing lives in the payload pairs:
 #   implementer [10:12, 10:30] and task-reviewer [10:25, 10:40] OVERLAP, so the
 #   engine-active union is [10:12, 10:40] (1680s) + code-reviewer 480s = 2160s.
 V2_EVENT_OBJECTS = [
@@ -91,17 +93,21 @@ V2_EVENT_OBJECTS = [
     ev("2026-07-30T10:04:00Z", "s1", "deferred", title="dashboard charts"),
     ev("2026-07-30T10:05:00Z", "wave1", "wave-dispatched",
        index=1, slice_ids=["s1", "s2"]),
-    ev("2026-07-30T10:30:00Z", "s1", "agent-dispatch",
+    ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
        agent="spec-loop:sdd-implementer", model="sonnet", effort="high",
-       role="task-implement", duration_s=1080, tokens_in=12000, tokens_out=3000),
-    ev("2026-07-30T10:30:00Z", "s2", "escalation-opened",
+       role="task-implement", dispatched_at="2026-07-30T10:12:00Z",
+       returned_at="2026-07-30T10:30:00Z", tokens_in=12000, tokens_out=3000),
+    ev("2026-07-30T11:10:00Z", "s2", "escalation-opened",
        id="s2:council-objection", trigger="council-objection",
-       title="Council objects to the plan"),
-    ev("2026-07-30T10:40:00Z", "s1", "agent-dispatch",
+       title="Council objects to the plan", status="OPEN",
+       opened="2026-07-30T10:30:00Z"),
+    ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
        agent="spec-loop:sdd-task-reviewer", model="sonnet", effort="medium",
-       role="task-review", duration_s=900, tokens_in=8000, tokens_out=1000),
-    ev("2026-07-30T10:40:00Z", "s2", "escalation-answered",
-       id="s2:council-objection", answer="Option 1"),
+       role="task-review", dispatched_at="2026-07-30T10:25:00Z",
+       returned_at="2026-07-30T10:40:00Z", tokens_in=8000, tokens_out=1000),
+    ev("2026-07-30T11:10:00Z", "s2", "escalation-answered",
+       id="s2:council-objection", answer="Option 1",
+       answered_at="2026-07-30T10:40:00Z"),
     ev("2026-07-30T10:41:00Z", "s1", "review-summary",
        round=1, findings=6, confirmed=2, refuted=1, evidence_failed=1,
        refuted_by_fixer=1),
@@ -112,12 +118,13 @@ V2_EVENT_OBJECTS = [
     ev("2026-07-30T11:02:00Z", "s2", "split-ingested", parent="s2", children=1),
     ev("2026-07-30T11:05:00Z", "s2", "quality-gate", status="PASS",
        refactor_passes=0),
-    ev("2026-07-30T11:08:00Z", "s1", "agent-dispatch",
+    ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
        agent="spec-loop:code-reviewer", model="opus", effort="high",
-       role="whole-branch-review", duration_s=480, tokens_in=5000,
-       tokens_out=1000),
+       role="whole-branch-review", dispatched_at="2026-07-30T11:00:00Z",
+       returned_at="2026-07-30T11:08:00Z", tokens_in=5000, tokens_out=1000),
     # Untimed, tokenless dispatch: counted, never timed, never a fabricated 0.
-    ev("2026-07-30T11:09:00Z", "s1", "agent-dispatch",
+    # (Its ts alone would have been enough to fake a duration from.)
+    ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
        agent="spec-loop:slice-planner", model="sonnet", role="plan"),
     ev("2026-07-30T11:09:30Z", "s1", "review-summary",
        round=2, findings=2, refuted_by_fixer=0),
@@ -125,7 +132,8 @@ V2_EVENT_OBJECTS = [
     ev("2026-07-30T11:11:00Z", "s1", "slice-merged", sha="f5c84ef"),
     ev("2026-07-30T11:12:00Z", "wave1", "integration-check", status="PASS"),
     ev("2026-07-30T11:15:00Z", "s1", "escalation-opened",
-       id="s1:review-block", trigger="review-block", title="Reviewer BLOCK"),
+       id="s1:review-block", trigger="review-block", title="Reviewer BLOCK",
+       status="OPEN", opened="2026-07-30T11:15:00Z"),
     ev("2026-07-30T11:20:00Z", "wave2", "integration-check", result="FAIL"),
     ev("2026-07-30T11:25:00Z", "r1", "slice-merged", merge_commit="fb1a744"),
     ev("2026-07-30T11:30:00Z", "phase5", "phase5-gate", status="PASS"),
@@ -335,10 +343,15 @@ class EventsParseTests(unittest.TestCase):
 
 
 class EscalationPairingTests(unittest.TestCase):
+    def records_for(self, *events_json):
+        parsed = rm.parse_events("\n".join(events_json))["events"]
+        return rm.escalations_from_events(parsed)
+
     def test_paired_by_payload_id(self):
-        records = rm.escalations_from_events(v2_events())
-        by_id = {r["id"]: r for r in records}
+        result = rm.escalations_from_events(v2_events())
+        by_id = {r["id"]: r for r in result["records"]}
         self.assertEqual(set(by_id), {"s2:council-objection", "s1:review-block"})
+        self.assertEqual(result["unkeyed"], 0)
         answered = by_id["s2:council-objection"]
         self.assertEqual(answered["status"], "ANSWERED")
         self.assertEqual(answered["opened"], "2026-07-30T10:30:00Z")
@@ -346,34 +359,77 @@ class EscalationPairingTests(unittest.TestCase):
         self.assertEqual(by_id["s1:review-block"]["status"], "OPEN")
         self.assertIsNone(by_id["s1:review-block"]["answered_at"])
 
-    def test_scope_is_the_fallback_key_when_id_omitted(self):
-        events = rm.parse_events("\n".join([
-            json.dumps(ev("2026-07-30T10:00:00Z", "s9", "escalation-opened",
+    def test_timing_comes_from_the_record_never_from_the_collection_stamp(self):
+        # ts is 11:10 (wave collection) while the record opened at 10:30.
+        record = rm.escalations_from_events(v2_events())["records"][0]
+        self.assertEqual(record["opened"], "2026-07-30T10:30:00Z")
+        self.assertNotEqual(record["opened"], "2026-07-30T11:10:00Z")
+
+    def test_open_without_record_timestamps_has_null_timing(self):
+        result = self.records_for(json.dumps(
+            ev("2026-07-30T11:10:00Z", "s9", "escalation-opened",
+               id="s9:ambiguity", trigger="ambiguity")))
+        record = result["records"][0]
+        self.assertEqual(record["status"], "OPEN")
+        self.assertIsNone(record["opened"])
+
+    def test_same_scope_twice_stays_two_escalations(self):
+        result = self.records_for(
+            json.dumps(ev("2026-07-30T11:10:00Z", "s9", "escalation-opened",
+                          id="s9:ambiguity", trigger="ambiguity",
+                          opened="2026-07-30T10:00:00Z")),
+            json.dumps(ev("2026-07-30T11:10:00Z", "s9", "escalation-opened",
+                          id="s9:review-block", trigger="review-block",
+                          opened="2026-07-30T10:30:00Z")))
+        self.assertEqual(len(result["records"]), 2)
+        self.assertEqual([r["trigger"] for r in result["records"]],
+                         ["ambiguity", "review-block"])
+
+    def test_id_less_events_never_pair_and_are_counted(self):
+        result = self.records_for(
+            json.dumps(ev("2026-07-30T11:10:00Z", "s9", "escalation-opened",
                           trigger="ambiguity")),
-            json.dumps(ev("2026-07-30T10:05:00Z", "s9", "escalation-answered")),
-        ]))["events"]
-        records = rm.escalations_from_events(events)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["id"], "s9")
-        self.assertEqual(records[0]["status"], "ANSWERED")
+            json.dumps(ev("2026-07-30T11:10:00Z", "s9", "escalation-answered")))
+        self.assertEqual(result["unkeyed"], 2)
+        self.assertEqual(len(result["records"]), 2)
+        self.assertEqual([r["status"] for r in result["records"]],
+                         ["OPEN", "ANSWERED"])
+
+    def test_unkeyed_count_surfaces_in_the_document(self):
+        metrics = compute_for({"events.jsonl": json.dumps(
+            ev("2026-07-30T11:10:00Z", "s9", "escalation-opened",
+               trigger="ambiguity"))})
+        self.assertEqual(
+            metrics["safety"]["escalations"]["unkeyed_events"], 1)
+        self.assertEqual(
+            compute_for(v2_files())["safety"]["escalations"]["unkeyed_events"],
+            0)
 
     def test_answer_without_open_is_kept_with_null_opened(self):
-        events = rm.parse_events(json.dumps(
-            ev("2026-07-30T10:05:00Z", "s9", "escalation-answered",
-               id="s9:ambiguity")))["events"]
-        records = rm.escalations_from_events(events)
-        self.assertEqual(records[0]["status"], "ANSWERED")
-        self.assertIsNone(records[0]["opened"])
+        result = self.records_for(json.dumps(
+            ev("2026-07-30T11:10:00Z", "s9", "escalation-answered",
+               id="s9:ambiguity", answered_at="2026-07-30T10:05:00Z")))
+        self.assertEqual(result["records"][0]["status"], "ANSWERED")
+        self.assertIsNone(result["records"][0]["opened"])
+        self.assertEqual(result["records"][0]["answered_at"],
+                         "2026-07-30T10:05:00Z")
+
+    def test_answered_at_in_an_opened_record_marks_it_answered(self):
+        result = self.records_for(json.dumps(
+            ev("2026-07-30T11:10:00Z", "s9", "escalation-opened",
+               id="s9:x", trigger="ambiguity", status="ANSWERED",
+               opened="2026-07-30T10:00:00Z",
+               answered_at="2026-07-30T10:05:00Z")))
+        self.assertEqual(result["records"][0]["status"], "ANSWERED")
 
     def test_unknown_trigger_becomes_other_absent_stays_null(self):
-        events = rm.parse_events("\n".join([
+        result = self.records_for(
             json.dumps(ev("2026-07-30T10:00:00Z", "a", "escalation-opened",
                           id="a:x", trigger="cosmic rays")),
             json.dumps(ev("2026-07-30T10:00:00Z", "b", "escalation-opened",
-                          id="b:x")),
-        ]))["events"]
-        triggers = [r["trigger"] for r in rm.escalations_from_events(events)]
-        self.assertEqual(triggers, ["other", None])
+                          id="b:x")))
+        self.assertEqual([r["trigger"] for r in result["records"]],
+                         ["other", None])
 
     def test_union_counts_a_duplicated_record_once(self):
         metrics = compute_for(v2_files(), run_id="20260730-v2")
@@ -850,6 +906,40 @@ class NullHonestyTests(unittest.TestCase):
         self.assertIsNone(perf["agents"]["total_s"])
         self.assertIsNone(perf["agents"]["by_model"])
         self.assertIsNone(perf["engine_active_s"])
+
+    def test_collection_stamp_is_never_used_as_a_dispatch_clock(self):
+        """ts is a batch collection stamp: a dispatch with only a ts, or with a
+        legacy duration_s and no stamp pair, is untimed — not reconstructed."""
+        events = "\n".join(json.dumps(e) for e in [
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent="a", model="sonnet", role="plan"),
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent="b", model="sonnet", role="plan", duration_s=1800),
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent="c", model="sonnet", role="plan",
+               dispatched_at="2026-07-30T10:00:00Z"),
+        ])
+        perf = compute_for({"events.jsonl": events})["performance"]
+        self.assertEqual(perf["agents"]["count"], 3)
+        self.assertEqual(perf["agents"]["timed"], 0)
+        self.assertIsNone(perf["engine_active_s"])
+
+    def test_only_paired_stamps_produce_a_duration(self):
+        events = "\n".join(json.dumps(e) for e in [
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent="a", model="sonnet", role="plan",
+               dispatched_at="2026-07-30T10:00:00Z",
+               returned_at="2026-07-30T10:10:00Z"),
+            ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
+               agent="b", model="sonnet", role="plan",
+               dispatched_at="2026-07-30T10:00:00Z",
+               returned_at="not-a-date"),
+        ])
+        perf = compute_for({"events.jsonl": events})["performance"]
+        self.assertEqual(perf["agents"]["count"], 2)
+        self.assertEqual(perf["agents"]["timed"], 1)
+        self.assertEqual(perf["agents"]["total_s"], 600.0)
+        self.assertEqual(perf["engine_active_s"], 600.0)
 
 
 class ProseIsNotAFallbackTests(unittest.TestCase):

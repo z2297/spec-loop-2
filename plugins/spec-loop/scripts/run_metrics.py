@@ -37,25 +37,35 @@ Claude Code transcript scraping are all gone. ``runbook.md``'s requirement
 traceability table is still parsed (a table, not a line grammar) and is marked
 ``basis: "runbook-table"`` so its softness is visible.
 
-ASSUMED EVENT PAYLOAD KEYS. run-state-v2.md pins the payload of
-``agent-dispatch`` only; the keys below are what this harness reads from the
-other types. Every one is optional — absent means the dial it feeds is
-``null``, never 0. If a producer names a field differently, the dial goes null
-rather than wrong, and ``sources.events_skipped`` / ``sources.event_types``
-make the drift visible.
+TIMESTAMPS — an event's ``ts`` is a BATCH COLLECTION STAMP. The controller
+appends events when a wave is collected, not when the thing happened, so
+deriving any duration from ``ts`` is forbidden by the contract. Every interval
+here comes from an explicit pair of stamps carried in the data —
+``agent-dispatch``'s ``dispatched_at``/``returned_at``, the EscalationRecord's
+``opened``/``answered_at``, the sidecar's ``started_at``/``finished_at`` — and
+is ``null`` when its pair is absent. ``ts`` is used for exactly one thing: the
+coarse end bound of the run window, where it is not a duration but a real
+moment the run had demonstrably already reached.
 
-  escalation-opened    id, trigger, title
-  escalation-answered  id
+EVENT PAYLOAD KEYS. Keys marked (pinned) are fixed by run-state-v2.md; the rest
+are what this harness reads by convention. Every one is optional — absent means
+the dial it feeds is ``null``, never 0. If a producer names a field
+differently, the dial goes null rather than wrong, and
+``sources.events_skipped`` / ``sources.event_types`` make the drift visible.
+
+  escalation-opened    the full EscalationRecord (pinned), of which this reads
+                       id (pinned), trigger, title, status, opened, answered_at
+  escalation-answered  id (pinned), answered_at
   decision             reversibility, rationale
-  council-verdict      verdict, concerns, safety, member
+  council-verdict      safety (pinned bool), verdict, concerns, member
   quality-gate         status | result, refactor_passes
   review-summary       findings, refuted_by_fixer, confirmed, refuted,
                        evidence_failed
   integration-check    status | result
   phase5-gate          status | result
   slice-merged         sha | merge_commit
-  agent-dispatch       agent, model, effort, role, duration_s, tokens_in,
-                       tokens_out   (pinned by the contract)
+  agent-dispatch       agent, model, effort, role, dispatched_at, returned_at,
+                       tokens_in, tokens_out   (pinned, all optional)
 
 LEGACY. v1 run dirs (no ``schema_version`` in ``dag.json``, no
 ``events.jsonl``) are still summarizable by ``trend`` through the clearly-walled
@@ -71,7 +81,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_VERSION = 2
@@ -163,11 +173,6 @@ def _iso_or_none(value):
 
 def _is_count(value):
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
-
-
-def _is_number(value):
-    return (isinstance(value, (int, float))
-            and not isinstance(value, bool))
 
 
 def _ratio(part, whole):
@@ -292,10 +297,12 @@ def _pcount(event, key):
     return value if _is_count(value) else None
 
 
-def _pnumber(event, key):
-    """A numeric payload field, else None."""
-    value = event["payload"].get(key)
-    return float(value) if _is_number(value) else None
+def _pstamp(event, key):
+    """An ISO-8601 payload timestamp, else None.
+
+    All timing in this module flows through here rather than through the
+    event's ``ts``, which is a batch collection stamp (see module docstring)."""
+    return _iso_or_none(event["payload"].get(key))
 
 
 def _presult(event):
@@ -330,39 +337,48 @@ def _sum_optional(values):
 # --- escalations ----------------------------------------------------------
 
 def escalations_from_events(events):
-    """Normalized escalation records paired from escalation-opened/answered.
+    """``{records, unkeyed}`` — escalation records paired from the event channel.
 
-    Paired on ``payload.id`` (stable across resumes per the contract), falling
-    back to the event ``scope`` when a producer omitted it. An answered event
-    with no matching open is kept with ``opened: null`` — a real answer we can
-    time-bound on one side only, not a reason to drop the escalation."""
-    order, records = [], {}
+    ``escalation-opened`` carries the full EscalationRecord, so the record's own
+    ``opened``/``answered_at`` fields are the clock. The event ``ts`` is a batch
+    collection stamp and is never read here.
 
-    def slot(event):
-        key = _pstr(event, "id") or event["scope"] or "(unscoped)"
-        if key not in records:
-            order.append(key)
-            records[key] = {
-                "id": _pstr(event, "id") or key,
-                "scope": event["scope"],
-                "trigger": _normalize_trigger(_pstr(event, "trigger")),
-                "title": _pstr(event, "title"),
-                "status": "OPEN",
-                "opened": None,
-                "answered_at": None,
+    Paired on ``payload.id`` alone — never on ``scope``, which would merge two
+    escalations raised by the same slice into one (the pinned id format
+    ``<slice-id>:<trigger>[:<round>]`` exists precisely because that happens).
+    The contract pins the id, so an event without one is contract-violating
+    data: it still becomes a record (a producer bug must not erase an
+    escalation that really happened) but under a key that can never pair, and
+    it is counted in ``unkeyed`` so the drift is loud rather than silently
+    merging or inflating escalations."""
+    order, records, unkeyed = [], {}, 0
+    for index, event in enumerate(_of_type(events, "escalation-opened",
+                                           "escalation-answered")):
+        ident = _pstr(event, "id")
+        if ident is None:
+            unkeyed += 1
+            ident = "(unkeyed:%d)" % index
+        if ident not in records:
+            order.append(ident)
+            records[ident] = {
+                "id": ident, "scope": event["scope"], "trigger": None,
+                "title": None, "status": "OPEN",
+                "opened": None, "answered_at": None,
             }
-        return records[key]
+        _fold_escalation_event(records[ident], event)
+    return {"records": [records[key] for key in order], "unkeyed": unkeyed}
 
-    for event in _of_type(events, "escalation-opened"):
-        record = slot(event)
-        record["opened"] = record["opened"] or event["ts"]
-        record["trigger"] = record["trigger"] or \
-            _normalize_trigger(_pstr(event, "trigger"))
-    for event in _of_type(events, "escalation-answered"):
-        record = slot(event)
+
+def _fold_escalation_event(record, event):
+    """Fold one escalation event into its record, first non-null winning."""
+    for field, value in (("trigger", _normalize_trigger(_pstr(event, "trigger"))),
+                         ("title", _pstr(event, "title")),
+                         ("opened", _pstamp(event, "opened")),
+                         ("answered_at", _pstamp(event, "answered_at"))):
+        record[field] = record[field] or value
+    if event["type"] == "escalation-answered" or record["answered_at"] \
+            or (_pstr(event, "status") or "").upper() == "ANSWERED":
         record["status"] = "ANSWERED"
-        record["answered_at"] = record["answered_at"] or event["ts"]
-    return [records[key] for key in order]
 
 
 def _normalize_trigger(value):
@@ -634,9 +650,10 @@ def compute_metrics(artifacts):
         "dag": parse_dag(artifacts.get("dag")),
         "sidecars": sidecars,
         "runbook": parse_runbook_traceability(artifacts.get("runbook_text") or ""),
-        "escalations": merge_escalation_records(event_escalations,
+        "escalations": merge_escalation_records(event_escalations["records"],
                                                sidecar_escalations),
-        "escalation_basis": _basis(bool(event_escalations),
+        "escalation_unkeyed": event_escalations["unkeyed"],
+        "escalation_basis": _basis(bool(event_escalations["records"]),
                                    bool(sidecar_escalations)),
     }
     return {
@@ -680,7 +697,8 @@ def _safety_metrics(parsed):
     return {
         "basis": _basis(parsed["has_events"], bool(parsed["sidecars"])),
         "escalations": _escalation_stats(escalations, observed,
-                                        parsed["escalation_basis"]),
+                                        parsed["escalation_basis"],
+                                        parsed["escalation_unkeyed"]),
         "decisions_total": decisions_total,
         "deferrals_total": len(deferrals) if parsed["has_events"] else None,
         "autonomy_ratio": _autonomy_ratio(decisions_total, escalations, observed),
@@ -691,10 +709,13 @@ def _safety_metrics(parsed):
     }
 
 
-def _escalation_stats(escalations, observed, basis):
+def _escalation_stats(escalations, observed, basis, unkeyed):
+    """``unkeyed_events`` is the count of escalation events that arrived
+    without the pinned ``payload.id``; non-zero means ``total`` may be
+    inflated by events that could not be paired."""
     if not observed:
         return {"basis": None, "total": None, "open": None, "answered": None,
-                "by_trigger": None, "per_scope": None}
+                "by_trigger": None, "per_scope": None, "unkeyed_events": None}
     return {
         "basis": basis,
         "total": len(escalations),
@@ -702,6 +723,7 @@ def _escalation_stats(escalations, observed, basis):
         "answered": sum(1 for e in escalations if e["status"] == "ANSWERED"),
         "by_trigger": _tally(e["trigger"] for e in escalations),
         "per_scope": _tally(e["scope"] for e in escalations),
+        "unkeyed_events": unkeyed,
     }
 
 
@@ -1012,9 +1034,12 @@ def _performance_metrics(parsed):
 def _run_window(parsed):
     """The run's ``[start, end]``.
 
-    Canonically ``dag.created_at`` → last event ts. When the DAG has no
-    ``created_at`` (or no DAG at all) the earliest observed stamp stands in,
-    and the basis records that the start is inferred rather than declared."""
+    Canonically ``dag.created_at`` → last event ts. This is the one place a
+    collection stamp is legitimate: it is not a duration between two ``ts``
+    values but a bound, and the run had demonstrably reached its last append.
+    When the DAG has no ``created_at`` (or no DAG at all) the earliest observed
+    stamp stands in, and the basis records that the start is inferred rather
+    than declared."""
     dag_created = parse_iso((parsed["dag"] or {}).get("created_at"))
     event_stamps = sorted(dt for dt in
                           (parse_iso(e["ts"]) for e in parsed["events"]) if dt)
@@ -1042,25 +1067,30 @@ def _run_window(parsed):
 def _dispatch_intervals(events):
     """``(start, end)`` per timed agent-dispatch event.
 
-    The controller stamps ``ts`` when it appends the event — i.e. after the
-    subagent returned — so a dispatch that reports ``duration_s`` spans
-    ``[ts - duration_s, ts]``. Dispatches without a duration contribute no
-    interval (they are counted, never timed)."""
+    Strictly from the payload's ``dispatched_at``/``returned_at`` pair, which
+    the controller lifts from the workflow journal. Both are optional, and a
+    dispatch missing either contributes no interval — it is counted, never
+    timed. The event ``ts`` is a batch collection stamp and cannot stand in for
+    a dispatch clock (see module docstring)."""
     for event in _of_type(events, "agent-dispatch"):
-        end = parse_iso(event["ts"])
-        seconds = _pnumber(event, "duration_s")
-        if end and seconds and seconds > 0:
-            yield (end - timedelta(seconds=seconds), end)
+        start = parse_iso(_pstamp(event, "dispatched_at"))
+        end = parse_iso(_pstamp(event, "returned_at"))
+        if start and end and end > start:
+            yield (start, end)
 
 
 def _agent_stats(events):
     """Dispatch count and duration profile by agent, model, and role — the
-    dimension a wall-clock regression hides."""
+    dimension a wall-clock regression hides.
+
+    A dispatch's duration is ``returned_at - dispatched_at`` and nothing else;
+    one missing either stamp is counted in ``count`` but not in ``timed``, and
+    contributes to no duration group."""
     dispatches = _of_type(events, "agent-dispatch")
     if not dispatches:
         return None
-    timed = [(e, _pnumber(e, "duration_s")) for e in dispatches]
-    timed = [(e, secs) for e, secs in timed if secs and secs > 0]
+    timed = [(e, _dispatch_seconds(e)) for e in dispatches]
+    timed = [(e, secs) for e, secs in timed if secs is not None]
     return {
         "basis": BASIS_EVENTS,
         "count": len(dispatches),
@@ -1071,6 +1101,15 @@ def _agent_stats(events):
         "by_role": _duration_group(timed, "role"),
         "by_effort": _tally(_pstr(e, "effort") for e in dispatches) or None,
     }
+
+
+def _dispatch_seconds(event):
+    """One dispatch's wall duration from its paired stamps, or None."""
+    start = parse_iso(_pstamp(event, "dispatched_at"))
+    end = parse_iso(_pstamp(event, "returned_at"))
+    if start and end and end >= start:
+        return (end - start).total_seconds()
+    return None
 
 
 def _duration_group(timed, field):
@@ -1431,6 +1470,7 @@ def _legacy_safety(events, escalations, decisions, observed):
                           if observed else None,
             "per_scope": _tally(e["scope"] for e in escalations)
                          if observed else None,
+            "unkeyed_events": None,
         },
         "decisions_total": len(decisions) if observed else None,
         "deferrals_total": None,
