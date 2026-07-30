@@ -1,0 +1,79 @@
+# spec-loop 2
+
+A Claude Code plugin marketplace hosting **spec-loop 2.x** — the Opus 5-native,
+Workflow-orchestrated revision of the spec-driven autonomous development loop.
+
+Give it one feature request; it decomposes the work into targeted slices, then
+drives each wave of slices through a **deterministic Workflow script** — plan →
+plan-critique → TDD implementation → consolidated review in parallel with a
+scripted quality gate → bounded auto-fix → full verification — merging each
+verified slice serially into one integration branch, and surfacing to you
+**only** when it genuinely cannot decide.
+
+## Why a second major version
+
+v1 orchestrated everything in prompt space: a session-model slice agent carried
+~23k tokens of skill text for hours, five-member councils convened twice per
+slice, six review aspects re-read the same diff, and every finding got its own
+verifier agent. Measured on an Opus 5-class model, one real Tier-3 slice cost
+**3h27m and 261M tokens**. v2 moves the orchestration into deterministic
+JavaScript (the Claude Code Workflow tool) and consolidates the review
+machinery — same theology, a fraction of the dispatches:
+
+| | v1 | v2 |
+|---|---|---|
+| Agents per typical (Tier-2) slice | ~25 | ~7 |
+| Agents per worst-case slice | ~90 | ~25–30 |
+| Slice orchestrator | Opus-class agent, hours | JS control flow, zero tokens |
+| Escalation re-dispatch | replays the review stages | journal replay — only the answered stage runs |
+
+What did **not** change: the escalation-gate autonomy contract (five surface
+triggers, precedent check, one batched question per wave), single-branch
+integration with a guard hook, the scripted quality gate agents cannot weaken,
+knowledge-graph integration (v2 accretes onto the same vault nodes), and
+null-honest metrics.
+
+## Install
+
+```
+/plugin marketplace add z2297/spec-loop-2
+/plugin install spec-loop
+```
+
+Requirements: Claude Code ≥ 2.1.154 with the Workflow tool (an inline fallback
+runs slices as background agents when Workflow is unavailable), `git`,
+`python3` (all bundled scripts are stdlib-only — zero dependencies).
+
+## Usage
+
+```
+/spec-loop <request>
+/spec-loop --from-plan            # execute the most recent plan-mode plan
+/spec-loop --thorough <request>   # promote every slice's review one tier
+/spec-loop --resume <run-id>
+```
+
+See `plugins/spec-loop/README.md` for the full manual: flags, risk tiers, the
+review pipeline, quality-gate and knowledge-graph configuration, the dashboard,
+and `/spec-loop:peer-review`. Migrating from v1? Read
+`plugins/spec-loop/references/migration-from-v1.md`.
+
+## Repo layout
+
+```
+.claude-plugin/marketplace.json   the marketplace manifest
+plugins/spec-loop/                the plugin (everything that ships)
+scripts/                          dev/CI tooling (validators, coverage gate, release)
+docs/                             run artifacts from dogfooded runs
+```
+
+## CI
+
+`validate_marketplace.py` (manifest + frontmatter contracts), the unittest
+suites for every bundled script, a stdlib-only coverage floor gate
+(`measure_coverage.py`), Node built-in tests for the dashboard client, and
+`claude plugin validate` — all must pass.
+
+## License
+
+MIT
