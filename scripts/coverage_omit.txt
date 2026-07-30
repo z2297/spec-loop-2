@@ -35,5 +35,3 @@ scripts/run_state.py:740-741             # __main__ entry shim (if __name__/sys.
 scripts/spec_loop_guard.py:240-241       # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/validate_marketplace.py:417-418  # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/worktrees.py:385-386             # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-
-scripts/dashboard_server.py:1549-1555    # blocking serve_forever() try/except KeyboardInterrupt/finally daemon tail; cannot run to completion under a unit test

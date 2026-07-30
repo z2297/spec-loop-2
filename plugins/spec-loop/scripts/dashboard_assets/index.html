@@ -1,0 +1,1004 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>spec-loop-2 dashboard</title>
+  <style>
+    :root {
+      --bg: #0d1117; --panel: #161b22; --panel-2: #1c2230; --border: #30363d;
+      --fg: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --ok: #3fb950; --warn: #d29922; --bad: #f85149; --split: #a371f7;
+      --neutral: #6e7681;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--fg);
+      font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header {
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
+      display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
+      position: sticky; top: 0; background: var(--bg); z-index: 5;
+    }
+    h1 { font-size: 1.1rem; margin: 0; color: var(--accent); }
+    .tag { color: var(--muted); font-size: 0.8rem; }
+    .spacer { flex: 1 1 auto; }
+    .freshness {
+      font-size: 0.75rem; color: var(--muted);
+      display: inline-flex; align-items: center; gap: 0.4rem;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 999px; background: var(--ok);
+      box-shadow: 0 0 6px var(--ok);
+    }
+    .freshness.stale .dot { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+    .freshness.down .dot { background: var(--bad); box-shadow: 0 0 6px var(--bad); }
+    main { padding: 1.25rem; max-width: 1100px; margin: 0 auto; }
+
+    .crumbs { margin: 0 0 1rem; color: var(--muted); font-size: 0.85rem; }
+    .crumbs a { cursor: pointer; }
+
+    .run {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 1rem; margin-bottom: 1rem;
+    }
+    .run.clickable { cursor: pointer; transition: border-color 0.15s; }
+    .run.clickable:hover { border-color: var(--accent); }
+    .run h2 { margin: 0 0 0.35rem; font-size: 1rem; }
+    .run h2 a { color: var(--fg); }
+    .run .meta { color: var(--muted); font-size: 0.8rem; margin-bottom: 0.5rem; }
+    .excerpt { color: var(--fg); opacity: 0.85; margin: 0.25rem 0 0.6rem; }
+    .counts, .pill-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .pill {
+      padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.75rem;
+      border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
+    }
+    /* derived-label color treatment (applied via fixed allowlist map only) */
+    .lbl-complete           { color: var(--ok);      border-color: var(--ok); }
+    .lbl-split              { color: var(--split);   border-color: var(--split); }
+    .lbl-failed             { color: var(--bad);     border-color: var(--bad); }
+    .lbl-awaiting-human     { color: var(--bad);     border-color: var(--bad); }
+    .lbl-merge-pending      { color: var(--ok);      border-color: var(--border); }
+    .lbl-split-pending      { color: var(--split);   border-color: var(--border); }
+    .lbl-redispatch-pending { color: var(--warn);    border-color: var(--warn); }
+    .lbl-runnable-pending   { color: var(--accent);  border-color: var(--accent); }
+    .lbl-blocked-pending    { color: var(--muted);   border-color: var(--border); }
+    .lbl-unknown            { color: var(--neutral); border-color: var(--neutral); }
+
+    /* recorded-vs-projected wave treatment */
+    .w-dispatched { color: var(--accent); border-color: var(--accent); }
+    .w-collected  { color: var(--ok);     border-color: var(--ok); }
+    .w-projected  { color: var(--muted);  border-color: var(--border); }
+    .w-unknown    { color: var(--neutral); border-color: var(--neutral); }
+
+    /* sidecar outcome treatment */
+    .o-done     { color: var(--ok);     border-color: var(--ok); }
+    .o-split    { color: var(--split);  border-color: var(--split); }
+    .o-esc      { color: var(--warn);   border-color: var(--warn); }
+    .o-failed   { color: var(--bad);    border-color: var(--bad); }
+    .o-unknown  { color: var(--neutral); border-color: var(--neutral); }
+
+    /* run-metrics pills + provenance chip (run_metrics.py summary) */
+    .m-pill          { color: var(--accent); border-color: var(--border); }
+    .metrics-source  { margin-left: 0.5rem; text-transform: none; letter-spacing: 0; }
+    .metrics-truncated {
+      margin-left: 0.5rem; text-transform: none; letter-spacing: 0;
+      color: var(--warn); border-color: var(--warn);
+    }
+
+    .section { margin: 1.25rem 0; }
+    .section h3 {
+      font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--muted); margin: 0 0 0.6rem; border-bottom: 1px solid var(--border);
+      padding-bottom: 0.3rem;
+    }
+    .wave {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.6rem 0.8rem; margin-bottom: 0.5rem;
+    }
+    .wave .wave-title {
+      color: var(--accent); font-size: 0.8rem; margin-bottom: 0.4rem;
+      display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap;
+    }
+    .wave .journal { color: var(--muted); font-size: 0.7rem; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th, td {
+      text-align: left; padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    td.goal { max-width: 300px; }
+    .deps { color: var(--muted); }
+
+    .esc {
+      background: var(--panel-2); border-left: 3px solid var(--bad);
+      border-radius: 4px; padding: 0.5rem 0.7rem; margin-bottom: 0.5rem;
+    }
+    .esc .token { color: var(--bad); font-weight: 600; }
+    .esc .token.intake { color: var(--warn); }
+    .esc .trigger { color: var(--muted); font-size: 0.7rem; }
+    .esc .status { font-size: 0.7rem; letter-spacing: 0.04em; }
+    .esc .status.st-open { color: var(--bad); }
+    .esc .status.st-answered { color: var(--ok); }
+    .esc .status.st-unknown { color: var(--muted); }
+
+    /* stage pipeline strip */
+    .stages {
+      display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0 0 1.25rem;
+    }
+    .stage {
+      padding: 0.35rem 0.8rem; border-radius: 999px; cursor: pointer;
+      border: 1px solid var(--border); color: var(--muted); font-size: 0.8rem;
+      white-space: nowrap;
+    }
+    .stage:hover { border-color: var(--accent); }
+    .stage.active { color: var(--fg); border-color: var(--accent); background: var(--panel-2); }
+    .stage.current { box-shadow: 0 0 0 1px var(--ok) inset; }
+    .stage.current::after { content: " ·here"; color: var(--ok); font-size: 0.7rem; }
+
+    /* iron-council findings */
+    .finding {
+      background: var(--panel-2); border-left: 3px solid var(--border);
+      border-radius: 4px; padding: 0.5rem 0.7rem; margin-bottom: 0.5rem;
+    }
+    .finding .scope { color: var(--muted); font-weight: 600; }
+    .finding-summary { color: var(--fg); opacity: 0.85; margin-top: 0.3rem; white-space: pre-wrap; }
+    .v-endorse  { color: var(--ok);  border-color: var(--ok); }
+    .v-ewc      { color: var(--warn); border-color: var(--warn); }
+    .v-object   { color: var(--bad);  border-color: var(--bad); }
+    .v-unknown  { color: var(--neutral); border-color: var(--neutral); }
+
+    /* per-slice sidecar outcome cards */
+    .outcome {
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.6rem 0.8rem; margin-bottom: 0.5rem;
+    }
+    .outcome .head {
+      display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap;
+      margin-bottom: 0.35rem;
+    }
+    .outcome .sid { color: var(--fg); font-weight: 600; }
+    .outcome .line { color: var(--muted); font-size: 0.78rem; }
+
+    /* run-wide shared constraints */
+    .constraints { margin: 0; padding: 0 0 0 1.1rem; color: var(--fg); opacity: 0.85; }
+    .constraints li { margin-bottom: 0.2rem; }
+
+    /* final-review executive chips + readout */
+    .chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+    .chip {
+      padding: 0.15rem 0.6rem; border-radius: 6px; font-size: 0.75rem;
+      border: 1px solid var(--border); color: var(--fg); background: var(--panel-2);
+    }
+    .readout {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.9rem; white-space: pre-wrap; word-break: break-word;
+      color: var(--fg); font-size: 0.82rem; margin: 0;
+    }
+
+    .decisions { margin: 0; padding: 0; list-style: none; }
+    .decisions li {
+      padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border);
+      color: var(--fg); opacity: 0.9; white-space: pre-wrap; word-break: break-word;
+    }
+
+    .runnable-list, .awaiting-list { margin: 0.3rem 0 0; color: var(--muted); }
+
+    .transient {
+      background: var(--panel); border: 1px dashed var(--warn); border-radius: 8px;
+      padding: 1rem; margin-bottom: 1rem; color: var(--warn);
+    }
+    .empty, .err, .notice { color: var(--muted); padding: 2rem 0; text-align: center; }
+    .err { color: var(--bad); }
+    .notice {
+      color: var(--warn); padding: 0.6rem; text-align: left;
+      border: 1px solid var(--warn); border-radius: 6px; margin-bottom: 1rem;
+    }
+    footer {
+      color: var(--muted); font-size: 0.75rem; text-align: center; padding: 1rem;
+      border-top: 1px solid var(--border); margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>spec-loop-2 dashboard</h1>
+    <span class="tag">read-only</span>
+    <span class="spacer"></span>
+    <span id="freshness" class="freshness"><span class="dot"></span><span id="fresh-text">connecting&hellip;</span></span>
+  </header>
+  <main>
+    <div id="crumbs" class="crumbs" hidden></div>
+    <div id="view" class="empty">loading runs&hellip;</div>
+  </main>
+  <footer>served locally by scripts/dashboard_server.py &middot; this view never mutates run state</footer>
+
+  <script>
+    "use strict";
+
+    // ---- config -----------------------------------------------------------
+    const POLL_MS = 2500;            // single source of truth for poll cadence
+    const GOAL_TRUNCATE = 90;        // chars before truncating a slice goal in the table
+
+    // Fixed allowlist: derived label -> known CSS class. An unexpected label can
+    // never become markup or an injected class name; it falls back to lbl-unknown.
+    // The last three are v2-only: a slice whose work FAILED, and the two states
+    // where a sidecar records an outcome the controller has not yet written back
+    // into dag.json (DONE awaiting the serial merge, SPLIT awaiting child ingest).
+    const LABEL_CLASS = {
+      "complete": "lbl-complete",
+      "split": "lbl-split",
+      "awaiting-human": "lbl-awaiting-human",
+      "redispatch-pending": "lbl-redispatch-pending",
+      "runnable-pending": "lbl-runnable-pending",
+      "blocked-pending": "lbl-blocked-pending",
+      "failed": "lbl-failed",
+      "merge-pending": "lbl-merge-pending",
+      "split-pending": "lbl-split-pending",
+    };
+    function labelClass(label) {
+      return Object.prototype.hasOwnProperty.call(LABEL_CLASS, label)
+        ? LABEL_CLASS[label] : "lbl-unknown";
+    }
+
+    // Stage pipeline: fixed order + display labels. "preflight" is intentionally
+    // absent — a run isn't listed until dag.json exists, so it has no view.
+    const STAGE_ORDER = ["iron-council", "execution", "final-review"];
+    const STAGE_LABELS = {
+      "iron-council": "① Iron Council",
+      "execution": "② Execution",
+      "final-review": "③ Final Review",
+    };
+
+    // Fixed allowlists (same hasOwnProperty guard as labelClass): council verdict,
+    // escalation status, wave status, and sidecar outcome -> known CSS class;
+    // anything unexpected falls back.
+    const VERDICT_CLASS = {
+      "ENDORSE": "v-endorse",
+      "ENDORSE_WITH_CONCERNS": "v-ewc",
+      "OBJECT": "v-object",
+    };
+    function verdictClass(v) {
+      return Object.prototype.hasOwnProperty.call(VERDICT_CLASS, v)
+        ? VERDICT_CLASS[v] : "v-unknown";
+    }
+    const STATUS_CLASS = { "OPEN": "st-open", "ANSWERED": "st-answered" };
+    function statusClass(s) {
+      return Object.prototype.hasOwnProperty.call(STATUS_CLASS, s)
+        ? STATUS_CLASS[s] : "st-unknown";
+    }
+    // dispatched/collected are RECORDED in dag.json; projected is the server's own
+    // forecast of undispatched work. Keeping them visually distinct is the whole
+    // point — a projected wave is not a claim that anything is running.
+    const WAVE_STATUS_CLASS = {
+      "dispatched": "w-dispatched",
+      "collected": "w-collected",
+      "projected": "w-projected",
+    };
+    function waveStatusClass(s) {
+      return Object.prototype.hasOwnProperty.call(WAVE_STATUS_CLASS, s)
+        ? WAVE_STATUS_CLASS[s] : "w-unknown";
+    }
+    const OUTCOME_CLASS = {
+      "DONE": "o-done", "SPLIT": "o-split",
+      "ESCALATED": "o-esc", "FAILED": "o-failed",
+    };
+    function outcomeClass(s) {
+      return Object.prototype.hasOwnProperty.call(OUTCOME_CLASS, s)
+        ? OUTCOME_CLASS[s] : "o-unknown";
+    }
+
+    // ---- environment probe -------------------------------------------------
+    // True in a real browser, false when this script is loaded under Node for
+    // testing (no document/window). Every top-level side effect that touches a
+    // browser global is gated on this so the committed test harness can import
+    // the pure/DOM-producing functions without the page bootstrapping itself.
+    const HAS_DOM = typeof document !== "undefined" && typeof window !== "undefined";
+
+    // Swappable document provider: the real `document` in a browser, or a tiny
+    // pure-JS DOM shim injected by the test harness via __setDocument(). el()
+    // builds nodes through _doc so render output is testable under Node. In a
+    // browser _doc === document, so el() behavior is byte-identical.
+    let _doc = HAS_DOM ? document : null;
+    function __setDocument(doc) { _doc = doc; }
+
+    // ---- DOM refs ---------------------------------------------------------
+    // Populated only in a browser; stay null under Node (the tested builder
+    // functions never read these — only the out-of-scope $view-mutating
+    // orchestrators do, and those never run under the harness).
+    const $view = HAS_DOM ? document.getElementById("view") : null;
+    const $crumbs = HAS_DOM ? document.getElementById("crumbs") : null;
+    const $freshness = HAS_DOM ? document.getElementById("freshness") : null;
+    const $freshText = HAS_DOM ? document.getElementById("fresh-text") : null;
+
+    // ---- app state --------------------------------------------------------
+    // view: {kind:"overview"} | {kind:"detail", runId, stage}
+    // stage is null unless the hash pins one (#run/<id>/<stage>); null means
+    // "use the run's current derived stage". Node-safe default: parseHash() reads
+    // location.hash, absent under Node.
+    let view = HAS_DOM ? parseHash() : { kind: "overview" };
+    let lastData = null;       // last painted payload — lets a stage switch re-render without a refetch
+    let timer = null;          // the single re-armed poll timer
+    let goneTimer = null;      // deferred "run gone → overview" nav, cancellable
+    let viewGen = 0;           // bumped on every view entry; stale in-flight polls are dropped
+    let lastOkAt = 0;          // ms timestamp of last successful check (200 OR 304)
+    let connected = false;     // have we ever had a good response for this view?
+    // ETag stored keyed by the active URL so If-None-Match always matches the route.
+    const etags = Object.create(null);
+
+    // ---- tiny DOM helpers (textContent only — never innerHTML on data) -----
+    function el(tag, opts) {
+      const node = _doc.createElement(tag);
+      if (opts) {
+        if (opts.cls) node.className = opts.cls;
+        if (opts.text != null) node.textContent = String(opts.text);
+      }
+      return node;
+    }
+    function pill(label, n, cls) {
+      return el("span", { cls: "pill " + (cls || ""), text: n == null ? label : label + ": " + n });
+    }
+    function sha7(s) { return (s == null ? "?" : String(s)).slice(0, 7); }
+    // Null/undefined -> em dash. The single "we don't know" renderer, so a missing
+    // metrics or sidecar field can never surface as "null"/"undefined"/NaN.
+    function dash(v) { return v == null ? "—" : String(v); }
+
+    // ---- routing ----------------------------------------------------------
+    // Pure core: hash string -> view object. Extracted so it is testable without
+    // a browser `location`. A namespaced run-id (`<root>:<runId>`) survives the
+    // encodeURIComponent/decodeURIComponent round-trip intact (colon preserved).
+    function parseHashFrom(hash) {
+      const h = (hash || "").replace(/^#/, "");
+      if (h.startsWith("run/")) {
+        const rest = h.slice("run/".length);
+        // A run-id may contain ':' (root namespacing) but never '/', so the FIRST
+        // '/' after "run/" separates the (encoded) id from an optional stage.
+        const slash = rest.indexOf("/");
+        const id = decodeURIComponent(slash === -1 ? rest : rest.slice(0, slash));
+        const stage = slash === -1 ? null : (decodeURIComponent(rest.slice(slash + 1)) || null);
+        if (id) return { kind: "detail", runId: id, stage: stage };
+      }
+      return { kind: "overview" };
+    }
+    function parseHash() { return parseHashFrom(location.hash); }
+    function activeUrl() {
+      return view.kind === "detail"
+        ? "/api/runs/" + encodeURIComponent(view.runId)
+        : "/api/runs";
+    }
+
+    // ---- freshness indicator ----------------------------------------------
+    function markOk() { lastOkAt = Date.now(); connected = true; }
+    function renderFreshness() {
+      if (!connected) {
+        $freshness.className = "freshness down";
+        $freshText.textContent = "reconnecting…";
+        return;
+      }
+      const secs = Math.max(0, Math.round((Date.now() - lastOkAt) / 1000));
+      $freshness.className = "freshness" + (secs > POLL_MS / 1000 * 3 ? " stale" : "");
+      $freshText.textContent = "updated " + secs + "s ago";
+    }
+    function markDown() {
+      // keep last good render; only the indicator reflects the outage
+      connected = false;
+      renderFreshness();
+    }
+
+    // ---- breadcrumbs ------------------------------------------------------
+    function renderCrumbs() {
+      $crumbs.textContent = "";
+      if (view.kind !== "detail") { $crumbs.hidden = true; return; }
+      $crumbs.hidden = false;
+      const home = el("a", { text: "← all runs" });
+      home.addEventListener("click", () => navigate({ kind: "overview" }));
+      $crumbs.append(home, _doc.createTextNode("  /  " + view.runId));
+    }
+
+    // ---- overview render --------------------------------------------------
+    // Partition runs into ordered groups by source root. The API omits `root`
+    // entirely for single-root — that case yields one empty-keyed group so the
+    // overview renders as a flat list. Any run carrying a non-empty `root` flips
+    // multiRoot on and preserves first-appearance root order (the server emits
+    // roots in input-argument order).
+    function groupRunsByRoot(runs) {
+      const groups = [];
+      const byKey = Object.create(null);
+      (runs || []).forEach((r) => {
+        const key = (r && typeof r.root === "string") ? r.root : "";
+        let g = byKey[key];
+        if (!g) { g = { root: key, runs: [] }; byKey[key] = g; groups.push(g); }
+        g.runs.push(r);
+      });
+      const multiRoot = groups.some((g) => g.root !== "");
+      return { multiRoot, groups: groups.length ? groups : [{ root: "", runs: [] }] };
+    }
+    function rootGroupSection(group) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: group.root }));   // textContent only — root is untrusted
+      group.runs.forEach((r) => sec.appendChild(overviewCard(r)));
+      return sec;
+    }
+    function renderOverview(runs) {
+      $view.className = "";
+      $view.textContent = "";
+      if (!runs.length) {
+        $view.className = "empty";
+        $view.textContent = "no spec-loop runs found";
+        return;
+      }
+      const { multiRoot, groups } = groupRunsByRoot(runs);
+      if (!multiRoot) {
+        groups[0].runs.forEach((r) => $view.appendChild(overviewCard(r)));
+        return;
+      }
+      groups.forEach((g) => $view.appendChild(rootGroupSection(g)));
+    }
+    function overviewCard(run) {
+      if (run.status === "unreadable") return transientCard(run.run_id);
+      const card = el("div", { cls: "run clickable" });
+      const h2 = el("h2");
+      const link = el("a", { text: run.run_id });
+      link.addEventListener("click", (e) => { e.stopPropagation(); navigate({ kind: "detail", runId: run.run_id }); });
+      h2.appendChild(link);
+      const meta = el("div", { cls: "meta", text: (run.base_ref || "?") + "@" + sha7(run.base_sha) });
+      const excerpt = el("div", { cls: "excerpt", text: run.request_excerpt || "" });
+      const counts = el("div", { cls: "counts" });
+      countPills(run.counts).forEach((p) => counts.appendChild(p));
+      overviewMetricPills(run).forEach((p) => counts.appendChild(p));
+      card.append(h2, meta, excerpt, counts);
+      card.addEventListener("click", () => navigate({ kind: "detail", runId: run.run_id }));
+      return card;
+    }
+    function countPills(counts) {
+      const c = counts || {};
+      return Object.keys(c).sort().map((k) => pill(k, c[k], labelClass(k)));
+    }
+    function transientCard(runId) {
+      const card = el("div", { cls: "transient" });
+      card.append(
+        el("strong", { text: runId }),
+        el("div", { text: "run in progress — state momentarily unreadable" })
+      );
+      return card;
+    }
+
+    // ---- detail render (stage-aware) --------------------------------------
+    // Layout: header -> stage pipeline strip -> the active stage's view ->
+    // run metrics -> the static Escalations panel (always shown, any stage).
+    function renderDetail(run) {
+      $view.className = "";
+      $view.textContent = "";
+      if (!run || run.status === "unreadable") {
+        $view.appendChild(transientCard((run && run.run_id) || view.runId));
+        return;
+      }
+      const activeStage = view.stage || run.stage || "execution";
+      $view.appendChild(detailHeader(run));
+      $view.appendChild(stageStrip(run, activeStage));
+      $view.appendChild(stageView(run, activeStage));
+      $view.appendChild(metricsSection(run));
+      $view.appendChild(escalationsSection(run));
+    }
+    // Dispatch the active stage to its section builder (browser-only orchestrator;
+    // the section builders themselves are pure and unit-tested).
+    function stageView(run, activeStage) {
+      if (activeStage === "iron-council") return councilSection(run);
+      if (activeStage === "final-review") return finalReviewSection(run);
+      return executionSection(run);   // execution (and any unknown/preflight) -> the DAG view
+    }
+    // The pipeline nav. Marks the run's CURRENT derived stage and the ACTIVE
+    // (selected) stage; clicking a stage pins it via #run/<id>/<stage>.
+    function stageStrip(run, activeStage) {
+      const strip = el("div", { cls: "stages" });
+      STAGE_ORDER.forEach((st) => {
+        const cls = "stage"
+          + (st === run.stage ? " current" : "")
+          + (st === activeStage ? " active" : "");
+        const item = el("a", { cls: cls, text: STAGE_LABELS[st] || st });
+        item.addEventListener("click", () =>
+          navigate({ kind: "detail", runId: run.run_id, stage: st }));
+        strip.appendChild(item);
+      });
+      return strip;
+    }
+    // Where this run's displayed truth came from: which run-state generation read
+    // it, the controller's dispatch mode, how slices merge, which channel the
+    // escalation statuses were read from, and which readiness rule decided the
+    // waves. Provenance, not decoration — a v1 run in a mixed repo must be visibly
+    // a v1 run, and a wave view derived by the controller's own rule is a stronger
+    // claim than one derived by the older local fallback.
+    function provenancePills(run) {
+      const gen = run.schema_version == null ? 1 : run.schema_version;
+      const out = [pill("run-state", "v" + gen, "m-pill")];
+      if (run.mode) out.push(pill("mode", run.mode, "m-pill"));
+      if (run.merge_mode) out.push(pill("merge", run.merge_mode, "m-pill"));
+      if (run.escalations_source) {
+        out.push(pill("escalations via", run.escalations_source, "m-pill"));
+      }
+      if (run.readiness_rule) {
+        out.push(pill("waves via", run.readiness_rule, "m-pill"));
+      }
+      return out;
+    }
+    function detailHeader(run) {
+      const card = el("div", { cls: "run" });
+      card.appendChild(el("h2", { text: run.run_id }));
+      card.appendChild(el("div", { cls: "meta", text: (run.base_ref || "?") + "@" + (run.base_sha || "?") }));
+      if (run.request_excerpt) card.appendChild(el("div", { cls: "excerpt", text: run.request_excerpt }));
+      const row = el("div", { cls: "pill-row" });
+      provenancePills(run).forEach((p) => row.appendChild(p));
+      card.appendChild(row);
+      return card;
+    }
+    function sliceById(run) {
+      const map = Object.create(null);
+      (run.slices || []).forEach((s) => { map[s.id] = s; });
+      return map;
+    }
+    // A wave's heading: its 1-based index and its status. dispatched/collected are
+    // what dag.json RECORDS; projected is a forecast of work not yet dispatched.
+    function waveTitle(w) {
+      const idx = (w && w.index != null) ? w.index : "?";
+      return "Wave " + idx;
+    }
+    function wavesSection(run) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: "waves" }));
+      const waves = run.waves || [];
+      if (!waves.length) {
+        sec.appendChild(el("div", { cls: "empty", text: "no waves recorded and nothing runnable" }));
+        return sec;
+      }
+      const byId = sliceById(run);
+      waves.forEach((w) => sec.appendChild(waveCard(w, byId)));
+      return sec;
+    }
+    function waveCard(w, byId) {
+      const card = el("div", { cls: "wave" });
+      const title = el("div", { cls: "wave-title" });
+      title.appendChild(el("span", { text: waveTitle(w) }));
+      title.appendChild(pill(w.status || "unknown", null, waveStatusClass(w.status)));
+      if (w.workflow_run_id) {
+        title.appendChild(el("span", { cls: "journal", text: "journal " + w.workflow_run_id }));
+      }
+      card.appendChild(title);
+      const row = el("div", { cls: "pill-row" });
+      (w.slice_ids || []).forEach((id) => {
+        const s = byId[id];
+        const lbl = s ? s.label : "unknown";
+        row.appendChild(pill(id + " · " + lbl, null, labelClass(lbl)));
+      });
+      card.appendChild(row);
+      return card;
+    }
+    function sliceTableSection(run) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: "slices" }));
+      const table = el("table");
+      const thead = el("thead");
+      const htr = el("tr");
+      ["id", "goal", "tier", "depth", "parent", "deps", "status", "wave", "outcome", "report"]
+        .forEach((h) => htr.appendChild(el("th", { text: h })));
+      thead.appendChild(htr);
+      const tbody = el("tbody");
+      (run.slices || []).forEach((s) => tbody.appendChild(sliceRow(s)));
+      table.append(thead, tbody);
+      sec.appendChild(table);
+      return sec;
+    }
+    function truncate(text, n) {
+      const t = text == null ? "" : String(text);
+      return t.length > n ? t.slice(0, n) + "…" : t;
+    }
+    function sliceRow(s) {
+      const sc = s.sidecar || null;
+      const tr = el("tr");
+      tr.appendChild(el("td", { text: s.id }));
+      tr.appendChild(el("td", { cls: "goal", text: truncate(s.goal, GOAL_TRUNCATE) }));
+      tr.appendChild(el("td", { text: s.risk_tier }));
+      tr.appendChild(el("td", { text: s.depth }));
+      tr.appendChild(el("td", { text: s.parent == null ? "—" : s.parent }));
+      tr.appendChild(el("td", { cls: "deps", text: (s.deps && s.deps.length) ? s.deps.join(", ") : "—" }));
+      const status = el("td");
+      status.appendChild(pill(s.label, null, labelClass(s.label)));
+      tr.appendChild(status);
+      tr.appendChild(el("td", { text: dash(sc && sc.wave) }));
+      const outcome = el("td");
+      if (sc) outcome.appendChild(pill(sc.status, null, outcomeClass(sc.status)));
+      else outcome.textContent = "—";
+      tr.appendChild(outcome);
+      tr.appendChild(el("td", { text: s.has_report ? "✓" : "—" }));
+      return tr;
+    }
+    function rollupSection(run) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: "status rollup" }));
+      const counts = el("div", { cls: "counts" });
+      countPills(run.counts).forEach((p) => counts.appendChild(p));
+      sec.appendChild(counts);
+      const slices = run.slices || [];
+      const runnable = slices.filter((s) => s.label === "runnable-pending").map((s) => s.id);
+      const awaiting = slices.filter((s) => s.label === "awaiting-human").map((s) => s.id);
+      sec.appendChild(el("div", { cls: "runnable-list", text: "runnable now: " + (runnable.length ? runnable.join(", ") : "—") }));
+      sec.appendChild(el("div", { cls: "awaiting-list", text: "awaiting human: " + (awaiting.length ? awaiting.join(", ") : "—") }));
+      return sec;
+    }
+
+    // ---- run-wide shared constraints (v2 dag.json) -------------------------
+    function constraintsSection(run) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: "shared constraints" }));
+      const items = run.shared_constraints || [];
+      if (!items.length) {
+        sec.appendChild(el("div", { cls: "empty", text: "none declared" }));
+        return sec;
+      }
+      const ul = el("ul", { cls: "constraints" });
+      items.forEach((c) => ul.appendChild(el("li", { text: c })));
+      sec.appendChild(ul);
+      return sec;
+    }
+
+    // ---- per-slice outcomes (v2 sidecars) ---------------------------------
+    // The lines rendered for one sidecar, as plain strings. A FIXED field
+    // allowlist in a fixed order — the payload's keys are never iterated, so an
+    // unexpected sidecar field can never reach the page, and every missing value
+    // renders as an em dash rather than "undefined".
+    function sidecarLines(sc) {
+      const c = sc.critique || {};
+      const r = sc.review || {};
+      const t = sc.tests || {};
+      const q = sc.quality || {};
+      return [
+        "branch " + dash(sc.branch),
+        "risk tier " + dash(sc.risk_tier) + " · review tier " + dash(sc.review_tier),
+        "critique " + dash(c.verdict) + " · concerns " + dash(c.concerns)
+          + " · tasks " + dash(sc.tasks_completed),
+        "review confirmed " + dash(r.confirmed) + " · refuted " + dash(r.refuted)
+          + " · evidence-failed " + dash(r.evidence_failed)
+          + " · fix rounds " + dash(r.fix_rounds)
+          + " · residual " + dash(r.residual_count),
+        "tests " + dash(t.scope) + " → " + dash(t.result) + " · quality " + dash(q.status),
+        "agents " + dash(sc.agents_used) + " · " + dash(sc.started_at)
+          + " → " + dash(sc.finished_at),
+      ];
+    }
+    function outcomesSection(run) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: "slice outcomes" }));
+      const withSidecar = (run.slices || []).filter((s) => s.sidecar);
+      if (!withSidecar.length) {
+        sec.appendChild(el("div", { cls: "empty", text: "no slice has reported an outcome yet" }));
+        return sec;
+      }
+      withSidecar.forEach((s) => sec.appendChild(outcomeCard(s)));
+      return sec;
+    }
+    function outcomeCard(s) {
+      const sc = s.sidecar;
+      const card = el("div", { cls: "outcome" });
+      const head = el("div", { cls: "head" });
+      head.appendChild(el("span", { cls: "sid", text: s.id }));
+      head.appendChild(pill(sc.status, null, outcomeClass(sc.status)));
+      head.appendChild(pill("wave", dash(sc.wave), "m-pill"));
+      card.appendChild(head);
+      sidecarLines(sc).forEach((line) =>
+        card.appendChild(el("div", { cls: "line", text: line })));
+      return card;
+    }
+
+    // ---- stage: execution (the DAG view) ----------------------------------
+    // Composes waves + slice table + status rollup + slice outcomes + shared
+    // constraints + decisions tail into one stage view. A wrapper div so
+    // renderDetail appends a single node.
+    function executionSection(run) {
+      const wrap = el("div", { cls: "stage-view" });
+      wrap.appendChild(wavesSection(run));
+      wrap.appendChild(sliceTableSection(run));
+      wrap.appendChild(rollupSection(run));
+      wrap.appendChild(outcomesSection(run));
+      wrap.appendChild(constraintsSection(run));
+      wrap.appendChild(decisionsSection(run));
+      return wrap;
+    }
+
+    // ---- stage: iron council (findings) -----------------------------------
+    function councilSection(run) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: "iron council findings" }));
+      const council = run.council || [];
+      if (!council.length) {
+        sec.appendChild(el("div", { cls: "empty", text: "no council verdicts recorded" }));
+        return sec;
+      }
+      council.forEach((c) => {
+        const box = el("div", { cls: "finding" });
+        box.appendChild(el("span", { cls: "scope", text: "[" + (c.scope || "?") + "] " }));
+        box.appendChild(pill(c.verdict || "—", null, verdictClass(c.verdict)));
+        box.appendChild(el("div", { cls: "finding-summary", text: c.summary || "" }));
+        sec.appendChild(box);
+      });
+      return sec;
+    }
+
+    // ---- stage: final review (executive dashboard from the runbook) -------
+    function finalReviewSection(run) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: "final review — executive readout" }));
+      const rb = run.runbook;
+      if (!rb) {
+        sec.appendChild(el("div", { cls: "empty", text: "run not finished — no runbook yet" }));
+        return sec;
+      }
+      const fm = rb.front_matter || {};
+      const chips = el("div", { cls: "chips" });
+      ["verdict", "integration_gate", "slice_counts", "gap_counts", "publish"].forEach((k) => {
+        if (fm[k] != null) chips.appendChild(el("span", { cls: "chip", text: k + ": " + fm[k] }));
+      });
+      sec.appendChild(chips);
+      sec.appendChild(el("pre", { cls: "readout", text: rb.executive_readout || "" }));
+      return sec;
+    }
+
+    // ---- static escalations panel (all entries, with status) --------------
+    function escalationsSection(run) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: "escalations" }));
+      // Prefer the all-with-status list; fall back to the OPEN-only list, which is
+      // all a run has when its escalations came from prose markers.
+      const escs = run.escalations
+        || (run.open_escalations || []).map((e) => ({ token: e.token, title: e.title, status: "OPEN" }));
+      if (!escs.length) {
+        sec.appendChild(el("div", { cls: "empty", text: "none" }));
+        return sec;
+      }
+      escs.forEach((e) => sec.appendChild(escalationCard(e)));
+      return sec;
+    }
+    function escalationCard(e) {
+      const box = el("div", { cls: "esc" });
+      const isIntake = e.token === "intake";
+      box.appendChild(el("span", { cls: "token" + (isIntake ? " intake" : ""), text: "[" + (e.token || "?") + "] " }));
+      box.appendChild(el("span", { text: e.title || "" }));
+      box.appendChild(el("span", { cls: "status " + statusClass(e.status), text: " " + (e.status || "") }));
+      if (e.trigger) box.appendChild(el("div", { cls: "trigger", text: "trigger: " + e.trigger }));
+      return box;
+    }
+
+    // ---- run metrics panel (run_metrics.py summary) ------------------------
+    // Fixed field allowlist (same philosophy as labelClass): only these keys
+    // of run.metrics are ever rendered, in this order — payload keys are never
+    // iterated. Null/absent values render as "—", never NaN/undefined.
+    // Pinned to run_metrics.summary_row()'s v2 key set.
+    const METRIC_FIELDS = [
+      ["escalations", "escalations"],
+      ["autonomy_ratio", "autonomy"],
+      ["council_object_rate", "council OBJ"],
+      ["quality_gate_first_pass_rate", "QG 1st-pass"],
+      ["refuted_rate", "refuted"],
+      ["evidence_failed_drop_rate", "evidence-failed drop"],
+      ["split_rate", "splits"],
+      ["integration_gate", "gate"],
+      ["wall_clock_s", "wall clock"],
+      ["engine_active_s", "engine"],
+      ["human_wait_s", "human wait"],
+      ["tokens_total", "tokens"],
+    ];
+    // How each metrics_source reads to a human. "unavailable" is the honest label
+    // for a run_metrics module whose API this server could not call — distinct
+    // from no metrics module at all, which shows no chip.
+    const METRICS_SOURCE_LABEL = {
+      "file": "committed", "live": "live", "unavailable": "unavailable",
+    };
+    function metricsSourceLabel(src) {
+      return Object.prototype.hasOwnProperty.call(METRICS_SOURCE_LABEL, src)
+        ? METRICS_SOURCE_LABEL[src] : String(src);
+    }
+    function fmtDuration(secs) {
+      const s = Math.max(0, Math.round(secs));
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+      if (h) return h + "h" + String(m).padStart(2, "0") + "m";
+      if (m) return m + "m" + String(s % 60).padStart(2, "0") + "s";
+      return s + "s";
+    }
+    // Every second-valued metric key ends in _s (wall_clock_s, engine_active_s,
+    // human_wait_s), so one suffix test humanizes all of them and any future one.
+    function fmtMetric(key, value) {
+      if (value == null) return "—";
+      if (String(key).endsWith("_s")) return fmtDuration(value);
+      if (typeof value === "number" && !Number.isInteger(value)) return value.toFixed(2);
+      return String(value);
+    }
+    function metricsSection(run) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: "run metrics" }));
+      const m = run.metrics;
+      if (!m) {
+        const why = run.metrics_source === "unavailable"
+          ? "metrics unavailable — the metrics module did not answer"
+          : "no metrics available";
+        sec.appendChild(el("div", { cls: "empty", text: why }));
+        return sec;
+      }
+      if (run.metrics_source) {
+        sec.appendChild(el("span", {
+          cls: "chip metrics-source",
+          text: metricsSourceLabel(run.metrics_source),
+        }));
+      }
+      // events.jsonl is append-only and unbounded, so a long run's counts may be
+      // computed from only part of it — which UNDERSTATES them. Say so: a silently
+      // low number reads as fact.
+      if (run.metrics_truncated) {
+        sec.appendChild(el("span", {
+          cls: "chip metrics-truncated",
+          text: "event log truncated — counts may understate",
+        }));
+      }
+      const row = el("div", { cls: "pill-row" });
+      METRIC_FIELDS.forEach(([key, label]) =>
+        row.appendChild(pill(label, fmtMetric(key, m[key]), "m-pill")));
+      sec.appendChild(row);
+      return sec;
+    }
+    // The 3 headline metrics shown on each overview card (empty when absent).
+    function overviewMetricPills(run) {
+      if (!run.metrics) return [];
+      return [["escalations", "esc"], ["autonomy_ratio", "autonomy"],
+              ["wall_clock_s", "wall"]].map(([key, label]) =>
+        pill(label, fmtMetric(key, run.metrics[key]), "m-pill"));
+    }
+
+    function decisionsSection(run) {
+      const sec = el("div", { cls: "section" });
+      sec.appendChild(el("h3", { text: "recent decisions" }));
+      const tail = run.decisions_tail || [];
+      if (!tail.length) {
+        sec.appendChild(el("div", { cls: "empty", text: "no decisions logged" }));
+        return sec;
+      }
+      const ul = el("ul", { cls: "decisions" });
+      tail.forEach((line) => ul.appendChild(el("li", { text: line })));
+      sec.appendChild(ul);
+      return sec;
+    }
+
+    // ---- detail-not-found (404 from the detail endpoint) ------------------
+    function renderRunGone() {
+      $view.className = "";
+      $view.textContent = "";
+      const notice = el("div", { cls: "notice", text: "run “" + view.runId + "” is no longer available — returning to all runs…" });
+      $view.appendChild(notice);
+      clearTimeout(goneTimer);            // a fresh nav supersedes any prior pending one
+      goneTimer = setTimeout(() => navigate({ kind: "overview" }), 1200);
+    }
+
+    // ---- fetch + poll loop ------------------------------------------------
+    // One re-armed timer. A `gen` snapshot is checked after every await so a poll
+    // that resolves after the user navigated never paints into the wrong view.
+    async function poll() {
+      const url = activeUrl();
+      const gen = viewGen;
+      try {
+        const res = await fetch(url, fetchOpts(url));
+        if (gen === viewGen) await applyResponse(res, url, gen);
+      } catch (e) {
+        if (gen === viewGen) markDown();  // unreachable: keep last render
+      } finally {
+        if (gen === viewGen) {            // only the current view owns the timer
+          renderFreshness();
+          arm();
+        }
+      }
+    }
+
+    function fetchOpts(url) {
+      const headers = { "Accept": "application/json" };
+      const prev = etags[url];
+      if (prev) headers["If-None-Match"] = prev;
+      return { headers };
+    }
+
+    // Act on one response. 304 -> freshness only (no repaint); detail 404 ->
+    // run-gone; 2xx -> capture ETag and repaint the active view; else keep last render.
+    async function applyResponse(res, url, gen) {
+      if (res.status === 304) {
+        markOk();
+      } else if (res.status === 404 && view.kind === "detail") {
+        markOk();
+        renderRunGone();
+      } else if (res.ok) {
+        const etag = res.headers.get("ETag");
+        if (etag) etags[url] = etag;
+        const data = await res.json();
+        if (gen !== viewGen) return;      // re-check after the second await
+        markOk();
+        repaint(data);
+      } else {
+        markDown();                       // 421/5xx/etc: keep last render
+      }
+    }
+
+    function repaint(data) {
+      lastData = data;                    // remember it so a stage switch can re-render without a refetch
+      if (view.kind === "detail") renderDetail(data);
+      else renderOverview(data.runs || []);
+    }
+    function arm() {
+      clearTimeout(timer);
+      timer = setTimeout(poll, POLL_MS);
+    }
+
+    // ---- navigation -------------------------------------------------------
+    function detailHash(next) {
+      let hash = "#run/" + encodeURIComponent(next.runId);
+      if (next.stage) hash += "/" + encodeURIComponent(next.stage);
+      return hash;
+    }
+    function navigate(next) {
+      // Switching ONLY the stage within the same run needs no refetch — the
+      // detail payload already carries every stage's data, so re-render from the
+      // last payload immediately (a fresh fetch could 304 and never repaint).
+      const stageSwitch = next.kind === "detail" && view.kind === "detail"
+        && next.runId === view.runId && lastData && !lastData.status;
+      view = next;
+      const hash = next.kind === "detail" ? detailHash(next) : "#";
+      if (location.hash !== hash) location.hash = hash;   // also triggers hashchange (idempotent)
+      if (stageSwitch) { renderCrumbs(); renderDetail(lastData); return; }
+      enterView();
+    }
+    function enterView() {
+      clearTimeout(timer);
+      clearTimeout(goneTimer);            // cancel any pending "run gone" auto-nav
+      viewGen++;                          // invalidate any in-flight poll from the prior view
+      connected = false;                  // require a fresh good response for the new view
+      lastData = null;                    // a fresh view must not reuse the prior view's payload
+      renderCrumbs();
+      $view.className = "empty";
+      $view.textContent = "loading…";
+      renderFreshness();
+      poll();                             // immediate fetch, then re-arms itself
+    }
+
+    // ---- bootstrap (browser only) -----------------------------------------
+    // All startup side effects are gated on HAS_DOM so importing this script
+    // under Node (the committed test harness) never registers listeners, arms
+    // timers, or fires a fetch — it only exposes the functions above for test.
+    if (HAS_DOM) {
+      window.addEventListener("hashchange", () => {
+        const next = parseHash();
+        if (next.kind !== view.kind || next.runId !== view.runId || next.stage !== view.stage) {
+          navigate(next);   // routes stage-only switches through the no-refetch fast path
+        }
+      });
+
+      // tick the relative freshness stamp once a second (display only — no fetch)
+      setInterval(renderFreshness, 1000);
+
+      enterView();
+    }
+
+    // ---- test export (inert in a browser) ---------------------------------
+    // `module` is undefined in a classic <script>, so this block is a no-op when
+    // the page is opened directly. The committed Node harness (index.test.mjs)
+    // extracts the script body, strips this tail, and appends an equivalent ESM
+    // `export {...}` before importing it as a real module (so V8 attributes
+    // coverage). The two lists MUST stay in sync — index.test.mjs asserts it.
+    /* test-export */ if (typeof module !== "undefined" && module.exports) {
+      module.exports = {
+        labelClass, verdictClass, waveStatusClass, outcomeClass, metricsSourceLabel,
+        sha7, truncate, dash, groupRunsByRoot, parseHashFrom,
+        el, overviewCard, rootGroupSection, sliceRow, __setDocument,
+        stageStrip, councilSection, executionSection, finalReviewSection, escalationsSection,
+        wavesSection, waveTitle, outcomesSection, sidecarLines, constraintsSection,
+        provenancePills, metricsSection, overviewMetricPills, fmtMetric, fmtDuration,
+      };
+    }
+  </script>
+</body>
+</html>
