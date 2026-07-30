@@ -83,15 +83,19 @@ MAX_OMIT_FRACTION = 0.25
 
 # Product modules that count toward coverage (basename -> relpath key).
 TARGET_FILES = (
-    "scripts/council_contracts.py",
+    "scripts/dag.py",
     "scripts/dashboard_launcher.py",
     "scripts/dashboard_server.py",
+    "scripts/knowledge_graph.py",
     "scripts/pr_resolver.py",
     "scripts/quality_gate.py",
     "scripts/release.py",
+    "scripts/review_package.py",
     "scripts/run_metrics.py",
+    "scripts/run_state.py",
     "scripts/spec_loop_guard.py",
     "scripts/validate_marketplace.py",
+    "scripts/worktrees.py",
 )
 
 # Importable module names for the targets (``scripts/release.py`` -> ``release``),
@@ -119,17 +123,21 @@ TARGET_MODULES = tuple(Path(t).stem for t in TARGET_FILES)
 # and not chased in this slice), not from the optimistic local 100%. The TOTAL floor
 # likewise sits well under the py3.12 aggregate that pr_resolver drags down.
 PER_FILE_FLOORS = {
-    "scripts/council_contracts.py": 93,    # local 98.5% (2026-07-07) - 5
+    "scripts/dag.py": 94,                  # local 99.8% (2026-07-30) - 5
     "scripts/dashboard_launcher.py": 95,   # local 100% - 5
-    "scripts/dashboard_server.py": 95,     # local 100% - 5
+    "scripts/dashboard_server.py": 94,     # local 99.5% (2026-07-30) - 5
+    "scripts/knowledge_graph.py": 81,      # local 86.5% (2026-07-30) - 5
     "scripts/pr_resolver.py": 80,          # py3.12 preview 85.4% - 5 (not local 100%)
-    "scripts/quality_gate.py": 87,         # local 92.6% (2026-07-07) - 5
+    "scripts/quality_gate.py": 86,         # local 91.6% (2026-07-30) - 5
     "scripts/release.py": 95,              # local 100% - 5
-    "scripts/run_metrics.py": 89,          # local 94.7% (2026-07-14) - 5
-    "scripts/spec_loop_guard.py": 86,      # local 91.8% (2026-07-07) - 5
-    "scripts/validate_marketplace.py": 94, # local 100% - ~6 (extra head-room)
+    "scripts/review_package.py": 89,       # local 94.3% (2026-07-30) - 5
+    "scripts/run_metrics.py": 93,          # local 98.2% (2026-07-30) - 5
+    "scripts/run_state.py": 95,            # local 100% (2026-07-30) - 5
+    "scripts/spec_loop_guard.py": 86,      # local 92.0% (2026-07-30) - 6 (kept at v1 floor)
+    "scripts/validate_marketplace.py": 94, # local 99.3% - 5
+    "scripts/worktrees.py": 94,            # local 99.6% (2026-07-30) - 5
 }
-TOTAL_FLOOR = 90  # py3.12 aggregate ~96-97% (pr_resolver-dragged) - margin
+TOTAL_FLOOR = 90  # local aggregate 96.5% (2026-07-30, knowledge_graph-dragged) - margin
 
 
 @dataclass
