@@ -70,12 +70,17 @@ deadlock is itself an escalation):
 1. **Compute** `dag.py next-wave`; cap membership at `--max-parallel` (highest-risk first).
 2. **Prepare** `worktrees.py prepare --slices <ids> --base-ref <branch> --run-id <run-id>`;
    record each slice's `base_sha` (`git rev-parse <branch>`).
-3. **Dispatch**: build the wave args object exactly as `slice-wave.workflow.js` documents —
-   `{run_id, wave_index, ctx: {run_dir (absolute), plugin_root, base_ref, test_command,
-   conventions_path, shared_constraints, tier3_surfaces (from quality-gate config),
-   quality_gate_cmd ("python3 <plugin_root>/scripts/quality_gate.py --config <path>"),
-   models (from config), thorough, polish}, slices: [{id, goal, files, subsystems,
-   risk_tier, depth, worktree, branch, base_sha, kg_snippet}], answers: {}}` — then invoke
+3. **Dispatch**: resolve the effective gate config once through the one door —
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/quality_gate.py" --print-config --config
+   ~/.claude/spec-loop-2/quality-gate.json --overlay .spec-loop/quality-gate.json` — and
+   take `tier3_surfaces` and `models` from it. Build the wave args object exactly as
+   `slice-wave.workflow.js` documents — `{run_id, wave_index, ctx: {run_dir (absolute),
+   plugin_root, base_ref, test_command, conventions_path, shared_constraints,
+   tier3_surfaces, quality_gate_cmd ("python3 <plugin_root>/scripts/quality_gate.py
+   --config <global> --overlay <repo overlay>" — the same two paths, so agents measure
+   against the merged bar), models, thorough, polish}, slices: [{id, goal, files,
+   subsystems, risk_tier, depth, worktree, branch, base_sha, kg_snippet}],
+   answers: {}}` — then invoke
    the Workflow named `spec-loop:slice-wave` (fallback: `scriptPath:
    "${CLAUDE_PLUGIN_ROOT}/workflows/slice-wave.workflow.js"`). Record the wave:
    `dag.py record-wave --index N --slice-ids <ids> --workflow-run-id <wf_id>`; append a

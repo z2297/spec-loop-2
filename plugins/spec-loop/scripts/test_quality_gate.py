@@ -162,6 +162,74 @@ class TestLoadConfig(unittest.TestCase):
         with self.assertRaises(qg.GateError):
             qg.load_config(path)
 
+    def _tmp_json(self, obj):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(obj, fh)
+        self.addCleanup(os.unlink, fh.name)
+        return fh.name
+
+    def test_overlay_merges_over_global(self):
+        base = self._tmp_json({
+            "thresholds": {"cyclomatic_complexity": 12, "method_lines": 60},
+            "custom_gates": [{"name": "g1", "metric": "x", "threshold": 1}],
+            "tier3_surfaces": ["**/auth/**"],
+            "models": {"reviewer": "sonnet"},
+        })
+        overlay = self._tmp_json({
+            "thresholds": {"cyclomatic_complexity": 8},
+            "custom_gates": [{"name": "g2", "metric": "y", "threshold": 2}],
+            "tier3_surfaces": ["**/migrations/**"],
+            "models": {"reviewer": "inherit"},
+        })
+        cfg, src = qg.load_config(base, overlay)
+        self.assertEqual(src, "loaded+overlay")
+        self.assertEqual(cfg["thresholds"]["cyclomatic_complexity"], 8)   # overlay wins
+        self.assertEqual(cfg["thresholds"]["method_lines"], 60)           # base survives
+        self.assertEqual([g["name"] for g in cfg["custom_gates"]], ["g1", "g2"])
+        self.assertEqual(cfg["tier3_surfaces"], ["**/auth/**", "**/migrations/**"])
+        self.assertEqual(cfg["models"], {"reviewer": "inherit"})          # non-list keys override
+
+    def test_overlay_over_missing_global_uses_defaults(self):
+        overlay = self._tmp_json({"thresholds": {"nesting_depth": 2}})
+        cfg, src = qg.load_config(None, overlay)
+        self.assertEqual(src, "defaults+overlay")
+        self.assertEqual(cfg["thresholds"]["nesting_depth"], 2)
+        self.assertEqual(cfg["thresholds"]["cyclomatic_complexity"],
+                         qg.DEFAULT_THRESHOLDS["cyclomatic_complexity"])
+
+    def test_missing_overlay_path_is_ignored(self):
+        base = self._tmp_json({"thresholds": {"method_lines": 40}})
+        cfg, src = qg.load_config(base, "/nonexistent/.spec-loop/quality-gate.json")
+        self.assertEqual(src, "loaded")
+        self.assertEqual(cfg["thresholds"]["method_lines"], 40)
+
+    def test_malformed_overlay_is_hard_error(self):
+        base = self._tmp_json({})
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            fh.write("{not json")
+        self.addCleanup(os.unlink, fh.name)
+        with self.assertRaises(qg.GateError):
+            qg.load_config(base, fh.name)
+
+    def test_print_config_cli(self):
+        base = self._tmp_json({"tier3_surfaces": ["**/auth/**"]})
+        proc = subprocess.run(
+            [sys.executable, os.path.join(os.path.dirname(__file__), "quality_gate.py"),
+             "--config", base, "--print-config"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["source"], "loaded")
+        self.assertEqual(out["config"]["tier3_surfaces"], ["**/auth/**"])
+
+    def test_base_required_without_print_config(self):
+        proc = subprocess.run(
+            [sys.executable, os.path.join(os.path.dirname(__file__), "quality_gate.py")],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 2)
+
 
 # --------------------------------------------------------------------------
 # Pure metric primitives

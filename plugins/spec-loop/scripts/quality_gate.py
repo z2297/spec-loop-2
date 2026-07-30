@@ -169,29 +169,59 @@ def _intersects_changed(start, end, changed_ranges):
 # Config
 # --------------------------------------------------------------------------
 
-def load_config(path):
-    """Load the gate config, returning (config_dict, source) where source is
-    "loaded" or "defaults". A missing file (or None path) yields the documented
-    defaults; a present-but-malformed file is a hard error (exit 2) rather than
-    a silent fallback, so a broken config is never mistaken for the default bar."""
-    if not path or not os.path.exists(path):
-        return {"enabled": True, "thresholds": dict(DEFAULT_THRESHOLDS),
-                "custom_gates": [], "refactor_attempts": 3}, "defaults"
+def _read_config_object(path, what):
+    """Read one config JSON object. Present-but-malformed is a hard error
+    (exit 2) rather than a silent fallback, so a broken config is never
+    mistaken for the default bar."""
     try:
         with open(path, encoding="utf-8") as fh:
             raw = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
-        raise GateError(f"cannot read config {path!r}: {exc}") from exc
+        raise GateError(f"cannot read {what} {path!r}: {exc}") from exc
     if not isinstance(raw, dict):
-        raise GateError(f"config {path!r} must be a JSON object")
+        raise GateError(f"{what} {path!r} must be a JSON object")
+    return raw
+
+
+def load_config(path, overlay_path=None):
+    """Load the gate config, returning (config_dict, source). source is
+    "defaults", "loaded", or "loaded+overlay". A missing file (or None path)
+    yields the documented defaults.
+
+    The per-repo overlay (committed `.spec-loop/quality-gate.json`) deep-merges
+    over the global config: threshold keys override, `tier3_surfaces` unions
+    (the overlay extends, it cannot remove a surface), `custom_gates` concat,
+    other keys override. Both files predate the run — the guard hook denies
+    writes to either while a run is active — so any loosening in an overlay is
+    a deliberate, committed human choice, visible in review.
+    """
+    raw = {} if not path or not os.path.exists(path) else _read_config_object(path, "config")
+    source = "defaults" if not raw else "loaded"
+    if overlay_path and os.path.exists(overlay_path):
+        overlay = _read_config_object(overlay_path, "overlay")
+        merged_thresholds = dict(raw.get("thresholds") or {})
+        merged_thresholds.update(overlay.get("thresholds") or {})
+        merged = dict(raw)
+        merged.update(overlay)
+        merged["thresholds"] = merged_thresholds
+        merged["custom_gates"] = (raw.get("custom_gates") or []) + (overlay.get("custom_gates") or [])
+        merged["tier3_surfaces"] = sorted(
+            set(raw.get("tier3_surfaces") or []) | set(overlay.get("tier3_surfaces") or [])
+        )
+        raw = merged
+        source = ("loaded+overlay" if source == "loaded" else "defaults+overlay")
     thresholds = dict(DEFAULT_THRESHOLDS)
     thresholds.update(raw.get("thresholds") or {})
-    return {
+    config = {
         "enabled": raw.get("enabled", True),
         "thresholds": thresholds,
         "custom_gates": raw.get("custom_gates") or [],
-        "refactor_attempts": raw.get("refactor_attempts", 3),
-    }, "loaded"
+    }
+    # Pass through controller-consumed keys (tier3_surfaces, models, …) so
+    # --print-config is the one door to the effective configuration.
+    for key, value in raw.items():
+        config.setdefault(key, value)
+    return config, source
 
 
 # --------------------------------------------------------------------------
@@ -997,7 +1027,7 @@ def run_gate(args):
     """Full gate run: load config (honouring enabled=false), discover changed
     code, measure it, evaluate thresholds + custom gates + CRAP, and return the
     report dict. Raises GateError (exit 2) for git/config failures."""
-    config, config_source = load_config(args.config)
+    config, config_source = load_config(args.config, getattr(args, "overlay", None))
     if not config.get("enabled", True):
         return {"skipped": "gate disabled"}, config_source
 
@@ -1035,11 +1065,29 @@ def main(argv=None):
         description="Objective code-quality gate for a spec-loop slice.")
     ap.add_argument("--config", help="path to quality-gate.json (defaults used "
                                      "if absent)")
-    ap.add_argument("--base", required=True, help="base ref of the slice diff")
+    ap.add_argument("--overlay", help="per-repo overlay (.spec-loop/quality-gate.json) "
+                                      "deep-merged over --config")
+    ap.add_argument("--print-config", action="store_true",
+                    help="print the effective merged config as JSON and exit 0 "
+                         "(the one door to tier3_surfaces/models for callers)")
+    ap.add_argument("--base", help="base ref of the slice diff")
     ap.add_argument("--head", default="HEAD", help="head ref (default HEAD)")
     ap.add_argument("--repo-dir", default=".", help="repo/worktree to measure")
     ap.add_argument("--coverage", help="coverage report path (for CRAP)")
     args = ap.parse_args(argv)
+
+    if args.print_config:
+        try:
+            config, source = load_config(args.config, args.overlay)
+        except GateError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps({"config": config, "source": source},
+                         ensure_ascii=False, indent=2))
+        return 0
+
+    if not args.base:
+        ap.error("--base is required unless --print-config is given")
 
     try:
         report, _ = run_gate(args)
