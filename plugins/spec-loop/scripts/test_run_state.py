@@ -762,6 +762,174 @@ class TestOpenEscalations(RunStateTestCase):
 
 
 # --------------------------------------------------------------------------
+# the workflow's returned events[] — the rich channel
+# --------------------------------------------------------------------------
+
+def returned_events():
+    """The shape slice-wave.workflow.js actually returns: {scope, type, payload}."""
+    return [
+        {"scope": "s1", "type": "agent-dispatch",
+         "payload": {"role": "planner", "model": "claude-opus-5", "effort": "high",
+                     "agent_type": "slice-planner"}},
+        {"scope": "s1", "type": "agent-dispatch",
+         "payload": {"role": "implementer", "model": "claude-sonnet-5",
+                     "effort": "medium", "agent_type": "sdd-implementer"}},
+        {"scope": "s1", "type": "council-verdict",
+         "payload": {"verdict": "ENDORSE_WITH_CONCERNS", "panel": ["architect"],
+                     "safety": False, "concerns_folded": 2, "deferred": []}},
+        {"scope": "s1", "type": "review-summary",
+         "payload": {"findings": 7, "confirmed": 1, "refuted": 2, "fix_rounds": 1,
+                     "reviewers": 3}},
+        {"scope": "s1", "type": "quality-gate",
+         "payload": {"status": "PASS", "violations": 0}},
+        {"scope": "s1", "type": "decision",
+         "payload": {"summary": "review tier promoted to 3: diff touches tier3 surface",
+                     "rationale": "deterministic surface-glob match",
+                     "reversibility": "n/a"}},
+    ]
+
+
+class TestReturnedEvents(RunStateTestCase):
+    """The workflow's events[] is the rich channel; the sidecar blocks are the
+    lean fallback. Losing the rich payloads nulls out run_metrics' dials."""
+
+    def test_returned_events_are_appended_verbatim(self):
+        rich = returned_events()
+        rs.persist_slice(self.run_dir, sidecar(events=rich), wave=1, ts=TS)
+        stored = self.events()
+        self.assertEqual([e["type"] for e in stored], [e["type"] for e in rich])
+        for original, appended in zip(rich, stored):
+            self.assertEqual(appended["payload"], original["payload"])
+
+    def test_rich_payload_keys_survive(self):
+        # These are exactly the keys the sidecar summary blocks cannot carry.
+        rs.persist_slice(self.run_dir, sidecar(events=returned_events()),
+                         wave=1, ts=TS)
+        by_type = {}
+        for event in self.events():
+            by_type.setdefault(event["type"], []).append(event["payload"])
+        self.assertEqual(len(by_type["agent-dispatch"]), 2)
+        self.assertEqual(by_type["agent-dispatch"][0]["agent_type"], "slice-planner")
+        self.assertIs(by_type["council-verdict"][0]["safety"], False)
+        self.assertEqual(by_type["review-summary"][0]["findings"], 7)
+        self.assertEqual(by_type["review-summary"][0]["reviewers"], 3)
+
+    def test_every_returned_event_is_stamped_with_the_controller_clock(self):
+        rs.persist_slice(self.run_dir, sidecar(events=returned_events()),
+                         wave=1, ts=TS)
+        self.assertEqual({e["ts"] for e in self.events()}, {TS})
+
+    def test_an_entrys_own_ts_is_replaced_by_the_controller_stamp(self):
+        rs.persist_slice(self.run_dir, sidecar(events=[
+            {"scope": "s1", "type": "quality-gate", "ts": "1999-01-01T00:00:00Z",
+             "payload": {"status": "PASS"}}]), wave=1, ts=TS)
+        self.assertEqual(self.events()[0]["ts"], TS)
+
+    def test_scope_is_preserved_and_defaults_to_the_slice(self):
+        rs.persist_slice(self.run_dir, sidecar(events=[
+            {"scope": "wave1", "type": "decision", "payload": {"summary": "a"}},
+            {"type": "decision", "payload": {"summary": "b"}}]), wave=1, ts=TS)
+        self.assertEqual([e["scope"] for e in self.events()], ["wave1", "s1"])
+
+    def test_no_double_emission_of_gate_events(self):
+        # The sidecar also carries critique/review/quality blocks; with a rich
+        # array present each event type must appear exactly once.
+        rs.persist_slice(self.run_dir, sidecar(events=returned_events()),
+                         wave=1, ts=TS)
+        types = [e["type"] for e in self.events()]
+        for once in ("council-verdict", "review-summary", "quality-gate"):
+            self.assertEqual(types.count(once), 1, once)
+
+    def test_the_rich_verdict_wins_over_the_sidecar_summary(self):
+        rs.persist_slice(self.run_dir, sidecar(events=returned_events()),
+                         wave=1, ts=TS)
+        verdict = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        self.assertIn("panel", verdict["payload"])  # rich shape, not {verdict, concerns}
+
+    def test_derivation_still_fires_when_events_are_absent(self):
+        rs.persist_slice(self.run_dir, sidecar(), wave=1, ts=TS)
+        self.assertEqual([e["type"] for e in self.events()],
+                         ["council-verdict", "review-summary", "quality-gate"])
+
+    def test_derivation_still_fires_on_an_empty_events_array(self):
+        rs.persist_slice(self.run_dir, sidecar(events=[]), wave=1, ts=TS)
+        self.assertEqual([e["type"] for e in self.events()],
+                         ["council-verdict", "review-summary", "quality-gate"])
+
+    def test_escalations_are_emitted_alongside_a_rich_array(self):
+        # The workflow reports escalations in escalations[], never as events, so
+        # skipping derivation wholesale would leave the human surface empty.
+        rs.persist_slice(self.run_dir,
+                         sidecar("ESCALATED", events=returned_events()),
+                         wave=1, ts=TS)
+        types = [e["type"] for e in self.events()]
+        self.assertEqual(types.count("escalation-opened"), 1)
+        self.assertIn("(status: OPEN)", self.read("escalations.md"))
+        self.assertEqual([r["id"] for r in rs.open_escalations(self.run_dir)],
+                         ["s1:review-block"])
+
+    def test_an_escalation_already_in_the_rich_array_is_not_duplicated(self):
+        record = escalation()
+        rich = [{"scope": "s1", "type": "escalation-opened", "payload": record}]
+        rs.persist_slice(self.run_dir,
+                         sidecar("ESCALATED", escalations=[record], events=rich),
+                         wave=1, ts=TS)
+        types = [e["type"] for e in self.events()]
+        self.assertEqual(types.count("escalation-opened"), 1)
+        self.assertEqual(self.read("escalations.md").count("s1:review-block"), 1)
+
+    def test_rich_decision_events_reach_the_decisions_log(self):
+        rs.persist_slice(self.run_dir, sidecar(events=returned_events()),
+                         wave=1, ts=TS)
+        body = self.read("decisions-log.md")
+        self.assertIn("DECISION: review tier promoted to 3", body)
+        self.assertIn("QUALITY-GATE: PASS", body)
+
+    def test_agent_dispatch_events_render_no_prose(self):
+        rs.persist_slice(self.run_dir, sidecar(events=[
+            {"scope": "s1", "type": "agent-dispatch", "payload": {"role": "planner"}}]),
+            wave=1, ts=TS)
+        self.assertEqual(len(self.events()), 1)
+        self.assertIsNone(self.read("decisions-log.md"))
+
+    def test_the_report_returns_the_types_that_were_appended(self):
+        report = rs.persist_slice(self.run_dir, sidecar(events=returned_events()),
+                                  wave=1, ts=TS)
+        self.assertEqual(report["events"], [e["type"] for e in self.events()])
+
+    def test_events_must_be_a_list(self):
+        self.assertIn("events must be a list when present",
+                      rs.validate_sidecar(sidecar(events={"type": "decision"})))
+
+    def test_an_entry_without_a_type_is_refused(self):
+        with self.assertRaises(rs.SidecarInvalid) as ctx:
+            rs.persist_slice(self.run_dir,
+                             sidecar(events=[{"scope": "s1", "payload": {}}]),
+                             wave=1, ts=TS)
+        self.assertIn("events[1]: type", " ".join(ctx.exception.errors))
+        self.assertEqual(os.listdir(self.run_dir), [])
+
+    def test_a_non_object_entry_is_refused(self):
+        self.assertIn("events[1] must be a JSON object",
+                      rs.validate_sidecar(sidecar(events=["decision"])))
+
+    def test_a_non_object_payload_is_refused(self):
+        self.assertIn("events[1]: payload must be a JSON object when present",
+                      rs.validate_sidecar(sidecar(events=[
+                          {"type": "decision", "payload": "just text"}])))
+
+    def test_a_blank_scope_is_refused(self):
+        self.assertIn("events[1]: scope must be a non-empty string when present",
+                      rs.validate_sidecar(sidecar(events=[
+                          {"type": "decision", "scope": "  ", "payload": {}}])))
+
+    def test_a_missing_payload_becomes_an_empty_object(self):
+        rs.persist_slice(self.run_dir, sidecar(events=[{"type": "baseline"}]),
+                         wave=1, ts=TS)
+        self.assertEqual(self.events()[0]["payload"], {})
+
+
+# --------------------------------------------------------------------------
 # pinned payload facts (run-state-v2.md §Pinned payload facts)
 # --------------------------------------------------------------------------
 

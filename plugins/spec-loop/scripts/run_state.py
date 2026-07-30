@@ -235,6 +235,30 @@ def _validate_children(children, label="split.children"):
     return errors
 
 
+def _returned_event_errors(events):
+    """Validate the workflow's `events[]` entries: {scope?, type, payload?}.
+
+    Fail-closed like the rest of the sidecar: an entry with no usable `type`
+    would be appended to events.jsonl as an unreadable line, so it is refused
+    here rather than written and ignored downstream.
+    """
+    if not isinstance(events, list):
+        return []
+    errors = []
+    for position, entry in enumerate(events):
+        label = "events[%d]" % (position + 1)
+        if not isinstance(entry, dict):
+            errors.append("%s must be a JSON object" % label)
+            continue
+        if not _nonempty_str(entry.get("type")):
+            errors.append("%s: type must be a non-empty event type" % label)
+        if entry.get("payload") is not None and not isinstance(entry["payload"], dict):
+            errors.append("%s: payload must be a JSON object when present" % label)
+        if entry.get("scope") is not None and not _nonempty_str(entry.get("scope")):
+            errors.append("%s: scope must be a non-empty string when present" % label)
+    return errors
+
+
 def validate_sidecar(body):
     """Return every contract violation in a SliceResult sidecar.
 
@@ -263,6 +287,10 @@ def validate_sidecar(body):
     if "escalations" in body and body["escalations"] is not None \
             and not isinstance(body["escalations"], list):
         errors.append("escalations must be a list when present")
+    if "events" in body and body["events"] is not None \
+            and not isinstance(body["events"], list):
+        errors.append("events must be a list when present")
+    errors.extend(_returned_event_errors(body.get("events")))
     if "branch" in body and body["branch"] is not None \
             and not _nonempty_str(body["branch"]):
         errors.append("branch must be a non-empty string when present")
@@ -587,13 +615,29 @@ def open_escalations(run_dir):
 # persist-slice
 # --------------------------------------------------------------------------
 
-def _slice_events(body, ts):
-    """The (type, payload) events one sidecar contributes, in reading order.
+def _returned_events(body, slice_id):
+    """The workflow's own `events[]`, normalized to (scope, type, payload).
 
-    Only facts with their own event type in the contract are emitted. The
-    slice's own outcome (status, commits, tiers, counts, timings) is NOT
-    re-emitted as an event: the sidecar is the single home of per-slice facts,
-    and a duplicate machine channel could drift from it.
+    Payloads are passed through byte-for-byte (the pinned contract), `scope`
+    defaults to the slice, and any `ts` the entry carries is discarded — the
+    controller owns the clock, and per-agent timing lives inside the payload
+    (`dispatched_at`/`returned_at`), never in the collection stamp.
+    """
+    normalized = []
+    for entry in body.get("events") or []:
+        payload = entry.get("payload")
+        normalized.append((entry.get("scope") or slice_id, entry.get("type"),
+                           payload if isinstance(payload, dict) else {}))
+    return normalized
+
+
+def _derived_gate_events(body):
+    """Gate/verdict/review events reconstructed from the sidecar's own blocks.
+
+    The FALLBACK channel only: it carries just the summary numbers the sidecar
+    happens to keep, which is all a lean result (the inline fallback worker)
+    offers. Never appended alongside a returned `events[]` — the rich array
+    already covers these, and emitting both would double-count every gate.
     """
     events = []
     critique = body.get("critique")
@@ -604,7 +648,22 @@ def _slice_events(body, ts):
         events.append(("review-summary", body["review"]))
     if body.get("quality"):
         events.append(("quality-gate", body["quality"]))
+    return events
+
+
+def _escalation_events(body, ts, already_opened):
+    """escalation-opened/answered for the sidecar's embedded EscalationRecords.
+
+    Always derived, whichever channel supplied the rest: a workflow reports
+    escalations in `escalations[]`, not as events, so skipping these when a rich
+    `events[]` is present would leave escalations.md and `open-escalations`
+    empty — the human would never see the question. Records already carried as
+    `escalation-opened` in the returned array are skipped here by id.
+    """
+    events = []
     for record in body.get("escalations") or []:
+        if record.get("id") in already_opened:
+            continue
         events.append(("escalation-opened", record))
         if record.get("status") == "ANSWERED" and record.get("answer"):
             events.append(("escalation-answered", {
@@ -612,6 +671,29 @@ def _slice_events(body, ts):
                 "answer": record.get("answer"),
                 "answered_at": record.get("answered_at") or ts,
             }))
+    return events
+
+
+def _slice_events(body, ts, slice_id):
+    """Every (scope, type, payload) one persisted SliceResult contributes.
+
+    The workflow's returned `events[]` wins when present: it carries the rich
+    payloads — `agent-dispatch` entries, the council `safety` flag, review
+    `findings`/`reviewers` counts — that CANNOT be reconstructed from the
+    sidecar's summary blocks, and run_metrics' dials read null without them.
+    The sidecar-derived gate events are the fallback for a lean result, never an
+    addition. Escalations are derived either way (see `_escalation_events`).
+
+    The slice's own outcome (status, commits, tiers, counts, timings) is never
+    emitted as an event on either path: the sidecar is its single home.
+    """
+    returned = _returned_events(body, slice_id)
+    events = returned or [(slice_id, event_type, payload)
+                          for event_type, payload in _derived_gate_events(body)]
+    already_opened = {payload.get("id") for scope, event_type, payload in returned
+                      if event_type == "escalation-opened"}
+    events += [(slice_id, event_type, payload)
+               for event_type, payload in _escalation_events(body, ts, already_opened)]
     return events
 
 
@@ -634,8 +716,8 @@ def persist_slice(run_dir, body, wave, ts):
     _atomic_write(sidecar_path, json.dumps(body, ensure_ascii=False, indent=2) + "\n")
 
     emitted = []
-    for event_type, payload in _slice_events(body, ts):
-        append_event(run_dir, ts, slice_id, event_type, payload)
+    for scope, event_type, payload in _slice_events(body, ts, slice_id):
+        append_event(run_dir, ts, scope, event_type, payload)
         emitted.append(event_type)
 
     report_path = os.path.join(run_dir, "slice-%s-report.md" % slice_id)
