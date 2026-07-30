@@ -114,9 +114,25 @@ Event types (extensible; consumers ignore unknown types): `run-created`,
 `baseline`, `council-verdict`, `decision`, `deferred`, `escalation-opened`,
 `escalation-answered`, `wave-dispatched`, `wave-collected`, `slice-merged`,
 `integration-check`, `split-ingested`, `quality-gate`, `review-summary`,
-`agent-dispatch` (payload: `{agent, model, effort, role, duration_s?,
-tokens_in?, tokens_out?}` — from the workflow journal, null-honest),
-`phase5-gate`, `publish-choice`.
+`agent-dispatch`, `phase5-gate`, `publish-choice`.
+
+Pinned payload facts (consumers rely on these; everything else is
+best-effort):
+
+- **`ts` is a collection stamp, not a duration source.** The controller
+  appends a wave's events in one batch at collection, so their `ts` values
+  cluster — deriving durations or interval unions from `ts` is forbidden.
+- **`agent-dispatch`** payload: `{role, model, effort, agent_type}` from the
+  workflow, plus `dispatched_at`/`returned_at`/`tokens_in`/`tokens_out` when
+  the controller can extract them from the workflow journal at collection —
+  all optional and null-honest. `engine_active_s` derives ONLY from
+  `dispatched_at`/`returned_at` pairs; when absent it is `null`, never a
+  `ts`-based guess.
+- **`council-verdict`** payload carries `safety: bool` — whether the verdict
+  involved a SAFETY flag (the one objection that halts alone).
+- **`escalation-opened`** payload is the full EscalationRecord, including its
+  `id`; `escalation-answered` pairs by that `id` (never by scope alone — one
+  slice can open several).
 
 `run_metrics.py` reads events.jsonl as its primary channel. `decisions-log.md`
 and `escalations.md` are rendered from the same objects for humans; they have

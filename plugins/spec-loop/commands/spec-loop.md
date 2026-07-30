@@ -85,7 +85,10 @@ deadlock is itself an escalation):
 4. **Collect** (on the completion notification): for each result object,
    `run_state.py persist-slice --json - --wave N --ts <now>` — it validates fail-closed
    (invalid → treat the slice as ESCALATED), writes the sidecar, appends its events (stamp
-   every event with your clock), and renders the prose files.
+   every event with your clock), and renders the prose files. Before persisting, enrich
+   `agent-dispatch` events with `dispatched_at`/`returned_at`/token counts from the
+   workflow's `journal.jsonl` when it offers them — timing left absent stays null
+   (never derive durations from `ts`; it is a batch stamp).
 5. **Route**: `SPLIT` → `dag.py ingest-split` (autonomous, never a question — see
    split-ingestion.md; depth-capped splits arrive as escalations instead). `DONE` → verify
    independently before merging: the branch exists, `commits.head` matches it, and the
