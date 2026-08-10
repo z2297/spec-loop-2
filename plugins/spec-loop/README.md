@@ -64,8 +64,26 @@ versus roughly 7 / 25 / 90 in v1.
 Risk tiers are assigned at decomposition (`references/risk-tiers.md`) and
 promoted deterministically when the implementation touches a `tier3_surfaces`
 glob (auth, migrations, security paths — configurable). An answered
-escalation re-invokes the same wave with the journal cache: completed stages
-replay free; only the answered stage runs live.
+escalation re-invokes the wave with ONLY its non-terminal slices (merged work
+never re-enters) and the journal cache: the escalated slices' completed
+stages replay free where the cache holds; only the answered stage runs live.
+
+## Runtime expectations (Opus 5)
+
+Measured across real multi-slice runs (2026-08, .NET repo with a ~9,400-test
+suite): a slice lands in **~40–70 minutes all-in** — wave pipeline plus the
+controller's serial merge and integration suite — so a 3–5 slice run is a
+**3–5 hour job by design**, not a hang. Tier-3 work costs more: the critic
+panel, batched finding verification, simplify pass, and high-effort reviews
+put an observed Tier-3 remediation wave at ~1.5–2 hours. A Phase-5 cross-slice
+review that confirms a real integration defect adds a remediation slice — one
+more wave — and that is the loop working, not overrunning.
+
+Two calibration notes. First, v1-on-Opus-4.8 timings are not the baseline:
+v1 on Opus 5 measured ~3.5 hours per Tier-3 slice; v2 is the cheaper
+architecture on the same model. Second, wall clock ≠ compute: the loop is
+built to run unattended, and question rounds + the publish prompt fire a
+desktop alert so a finished run is never silently parked overnight.
 
 ## Escalations
 

@@ -5,6 +5,55 @@ All notable changes to the spec-loop plugin are documented here. The format is
 [SemVer](https://semver.org/). History before 2.0.0 lives in the
 [v1 repository](https://github.com/z2297/spec-loop).
 
+## [Unreleased]
+
+Runtime and trust fixes from the 2026-08-06/07 production-run analysis
+(Groundworks.Jobs): active runtime was ~3–5h for 3–5 slices, but one run read
+as 15h48m — 7.6h of it a silently-parked publish prompt, 2h20m a discarded
+re-run of an already-merged slice, plus controller time re-verifying two
+false-PASS gate labels caused by a guard-hook false positive.
+
+### Fixed
+- **Guard hook redirect false positive** — `spec_loop_guard.py` denied any
+  command containing `quality-gate.json` plus any redirect character, so the
+  verifier's read-only gate invocation with `2>&1` was blocked (two false
+  PASS labels in run 20260807). A write must now actually target a
+  `quality-gate.json` path (redirect into it, `tee`/`mv`/`cp` naming it,
+  `sed -i` on it).
+- **Wave re-dispatch re-ran merged slices** — the controller re-dispatched
+  the full wave after escalation answers, relying on journal replay to make
+  DONE slices free; a cache miss re-ran a merged slice against a deleted
+  worktree for 140 minutes and the result was discarded. Re-dispatch now
+  includes only non-terminal slices.
+- **Agent-labeled gate verdicts** — the verifier returned a self-labeled
+  PASS/FAIL enum that twice contradicted its own detail text. It now
+  transcribes the gate JSON's `summary.pass` verbatim (`summary_pass`,
+  null when no JSON was produced) and the workflow computes the status
+  deterministically — null or any violation is FAIL, fail closed.
+- **Run-state fragments from a drifted cwd** — `run_state.py` silently
+  created `server/docs/spec-loop/<run-id>/` fragments when a `cd server &&`
+  test command left the session cwd in a subdirectory. Every subcommand now
+  refuses a `--run-dir` that lacks `dag.json` (exit 2) instead of creating
+  one; Phase 5 verifies the run dir is whole at the repo root before `.done`.
+- **Vacuous quality-gate passes** — a whole-run gate measurement could return
+  `pass: true` with zero checks over a 60-file range, indistinguishable from
+  a measured pass. `summary` now carries `checks` and `vacuous`; Phase 5
+  treats a vacuous pass over a code-changing range as unmeasured, never green.
+
+### Added
+- **Human-wait alerts** — the controller fires a best-effort desktop
+  notification (`osascript` + terminal bell) before every AskUserQuestion
+  round and the publish prompt (observed: a finished run waited 7.6h
+  overnight at the publish prompt).
+- **Suite segmentation contract** — a `test_command` may be a ` ; `-joined
+  segment list; the baseline step splits any invocation near the 10-minute
+  tool ceiling per test project, and every runner executes each segment as
+  its own tool call (a monolithic call at the ceiling was killed mid-suite
+  twice in run 20260807's Phase 5).
+- **Runtime expectations** — README documents the measured Opus 5 envelope
+  (~40–70 min per slice all-in; 3–5 slice runs are 3–5 hour jobs) and that
+  v1-on-Opus-4.8 timings are not the comparison baseline.
+
 ## [2.0.0] - 2026-07-30
 
 Ground-up Opus 5-native rewrite. Same theology — autonomous spec-driven
