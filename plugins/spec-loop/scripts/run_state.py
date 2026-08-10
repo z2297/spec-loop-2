@@ -751,8 +751,23 @@ def _payload_arg(raw):
     return payload
 
 
+def _require_run_dir(run_dir):
+    """The run dir is created once, in Phase 1, with dag.json — every later
+    invocation must land in that same directory. A --run-dir that does not
+    exist or lacks dag.json means the caller's cwd drifted (e.g. a test
+    command's `cd server && ...` persisting across Bash calls); writing there
+    would scatter run-state fragments the dashboard can never find, so refuse
+    loudly instead."""
+    if not os.path.isfile(os.path.join(run_dir, "dag.json")):
+        raise RunStateError(
+            "--run-dir %r is not an existing run directory (no dag.json found). "
+            "Refusing to create a fragment — check the current working directory "
+            "or pass the run dir as an absolute path." % run_dir)
+
+
 def _run(args):
     """Return (payload, exit_code) for parsed arguments."""
+    _require_run_dir(args.run_dir)
     if args.command == "persist-slice":
         _require_ts(args.ts)
         body = read_json(args.json)

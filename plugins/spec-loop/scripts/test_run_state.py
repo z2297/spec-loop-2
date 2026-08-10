@@ -446,6 +446,10 @@ class RunStateTestCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.run_dir = os.path.join(self.root, "docs", "spec-loop", "20260730-demo")
         os.makedirs(self.run_dir)
+        # Phase 1 creates dag.json before any event is appended; the CLI
+        # refuses a run dir without it (see TestRunDirGuard).
+        with open(os.path.join(self.run_dir, "dag.json"), "w", encoding="utf-8") as fh:
+            json.dump({"schema_version": 2}, fh)
 
     def read(self, name):
         path = os.path.join(self.run_dir, name)
@@ -471,6 +475,39 @@ class RunStateTestCase(unittest.TestCase):
                 patch.stop()
         payload = json.loads(out.getvalue()) if out.getvalue().strip() else None
         return code, payload, err.getvalue()
+
+
+class TestRunDirGuard(RunStateTestCase):
+    def _main(self, run_dir):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("sys.stdout", out), mock.patch("sys.stderr", err):
+            code = rs.main(["append-event", "--run-dir", run_dir, "--ts", TS,
+                            "--scope", "run", "--type", "baseline",
+                            "--payload", "{}"])
+        return code, err.getvalue()
+
+    def test_cli_refuses_nonexistent_run_dir(self):
+        # Regression (run 20260807-upsell-lines-invoice-status): a test
+        # command's `cd server && ...` left the session cwd in server/, and
+        # append-event silently created server/docs/spec-loop/<run-id>/ with
+        # an events.jsonl fragment the dashboard could never find.
+        stray = os.path.join(self.root, "server", "docs", "spec-loop",
+                             "20260730-demo")
+        code, err = self._main(stray)
+        self.assertEqual(code, 2)
+        self.assertIn("dag.json", err)
+        self.assertFalse(os.path.exists(stray))
+
+    def test_cli_refuses_run_dir_without_dag_json(self):
+        os.unlink(os.path.join(self.run_dir, "dag.json"))
+        code, err = self._main(self.run_dir)
+        self.assertEqual(code, 2)
+        self.assertIn("dag.json", err)
+
+    def test_cli_accepts_real_run_dir(self):
+        code, err = self._main(self.run_dir)
+        self.assertEqual(code, 0, err)
+        self.assertIsNotNone(self.read("events.jsonl"))
 
 
 class TestAppendEvent(RunStateTestCase):
@@ -689,7 +726,7 @@ class TestPersistSlice(RunStateTestCase):
             rs.persist_slice(self.run_dir, sidecar(status="DONE", commits={}),
                              wave=1, ts=TS)
         self.assertTrue(ctx.exception.errors)
-        self.assertEqual(os.listdir(self.run_dir), [])
+        self.assertEqual(os.listdir(self.run_dir), ["dag.json"])  # fixture only
 
     def test_unknown_status_is_refused(self):
         with self.assertRaises(rs.SidecarInvalid):
@@ -907,7 +944,7 @@ class TestReturnedEvents(RunStateTestCase):
                              sidecar(events=[{"scope": "s1", "payload": {}}]),
                              wave=1, ts=TS)
         self.assertIn("events[1]: type", " ".join(ctx.exception.errors))
-        self.assertEqual(os.listdir(self.run_dir), [])
+        self.assertEqual(os.listdir(self.run_dir), ["dag.json"])  # fixture only
 
     def test_a_non_object_entry_is_refused(self):
         self.assertIn("events[1] must be a JSON object",
