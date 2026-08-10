@@ -144,7 +144,11 @@ const VERIFY_RESULT = {
   type: 'object', additionalProperties: false,
   properties: {
     suite: { type: 'object', additionalProperties: false, properties: { command: { type: 'string' }, passed: { type: 'boolean' }, summary: { type: 'string' } }, required: ['command', 'passed', 'summary'] },
-    quality: { type: 'object', additionalProperties: false, properties: { status: { enum: ['PASS', 'FAIL', 'SKIPPED'] }, violations: { type: 'array', items: { type: 'object' } }, detail: { type: 'string' } }, required: ['status', 'violations'] },
+    // summary_pass is the gate JSON's summary.pass transcribed verbatim (null
+    // only when the gate produced no parseable JSON). The PASS/FAIL enum the
+    // sidecar carries is computed by qualityStatus() below, never self-labeled:
+    // agent self-labels produced two false PASSes in run 20260807.
+    quality: { type: 'object', additionalProperties: false, properties: { summary_pass: { type: ['boolean', 'null'] }, violations: { type: 'array', items: { type: 'object' } }, detail: { type: 'string' } }, required: ['summary_pass', 'violations'] },
     changed_files: { type: 'array', items: { type: 'string' } },
     head_sha: { type: 'string' }, tree_sha: { type: 'string' },
   },
@@ -174,6 +178,15 @@ function touchesTier3Surface(files, surfaces) {
 function blocking(findings, bar) {
   const block = bar === 'P0' ? ['P0'] : ['P0', 'P1']
   return findings.filter(f => block.includes(f.severity))
+}
+
+// Deterministic gate verdict: PASS requires summary.pass === true AND zero
+// violations. A missing return, a null summary_pass (gate never produced
+// JSON), or a true/violations contradiction is FAIL — fail closed.
+function qualityStatus(q) {
+  if (!q) return 'FAIL'
+  if ((q.violations || []).length) return 'FAIL'
+  return q.summary_pass === true ? 'PASS' : 'FAIL'
 }
 
 function esc(slice, trigger, title, context, question, options) {
@@ -272,7 +285,7 @@ function gatePrompt(slice, state) {
 Reporter mode, quality gate ONLY (no test suite this dispatch). In the worktree run exactly:
   ${CTX.quality_gate_cmd} --base ${state.commits.base} --head ${state.commits.head} --repo-dir "${slice.worktree}"
 Read the JSON output. Also run: git -C "${slice.worktree}" diff --name-only ${state.commits.base}..${state.commits.head}
-Return quality {status, violations, detail}, changed_files, plus head_sha/tree_sha (git rev-parse HEAD / HEAD^{tree}). Set suite to {command:"skipped", passed:true, summary:"gate-only dispatch"}.`
+Return quality {summary_pass: the gate JSON's summary.pass copied verbatim — null ONLY if the gate never produced parseable JSON (say why in detail), violations: its summary.failures array verbatim, detail}, changed_files, plus head_sha/tree_sha (git rev-parse HEAD / HEAD^{tree}). You never return a PASS/FAIL label — the workflow computes it. Set suite to {command:"skipped", passed:true, summary:"gate-only dispatch"}.`
 }
 
 function verifierBatchPrompt(slice, state, confirmed) {
@@ -305,9 +318,10 @@ function verifyPrompt(slice, state) {
   return `${packet(slice)}
 
 Reporter mode, full verification. In the worktree run the full suite exactly: ${CTX.test_command}
+(a " ; "-joined command is a segment list: run each segment as its own tool call, in order, all to completion; the suite passed only if every segment passed)
 Then the quality gate exactly:
   ${CTX.quality_gate_cmd} --base ${state.commits.base} --head HEAD --repo-dir "${slice.worktree}"
-Read both outputs; report what they actually say. changed_files from git diff --name-only ${state.commits.base}..HEAD.`
+Read both outputs; report what they actually say. quality.summary_pass is the gate JSON's summary.pass copied verbatim (null ONLY if the gate never produced parseable JSON — say why in detail); quality.violations is its summary.failures array verbatim; you never return a PASS/FAIL label. changed_files from git diff --name-only ${state.commits.base}..HEAD.`
 }
 
 function debugFixPrompt(slice, plan, state, verify) {
@@ -445,8 +459,9 @@ async function runSlice(slice) {
       summary: reviewParts.filter(Boolean).map(r => r.summary).join(' | ') || 'review dispatch failed (fail closed)',
     }
     if (reviewParts.some(r => !r)) review.findings.push({ id: 'failclosed-review', severity: 'P0', category: 'correctness', file: '-', line: 0, claim: 'a reviewer dispatch returned no result — review incomplete (fail closed)', evidence: { quote: 'n/a' }, remedy: 'resume to re-run the review', confidence: 'high', outside_diff: true })
-    const gateViolations = (gate && gate.quality.status === 'FAIL') ? gate.quality.violations.map((v, i) => ({ id: `qg-${i}`, severity: 'P1', category: 'quality-gate', file: v.file || '-', line: 0, claim: `${v.metric} ${v.value} > threshold ${v.threshold} in ${v.function || v.file}`, evidence: { quote: JSON.stringify(v) }, remedy: 'behavior-preserving refactor (extract method, guard clauses, parameter object)', confidence: 'high', outside_diff: false })) : []
-    state.quality = gate ? { status: gate.quality.status, detail: gate.quality.detail || `${gateViolations.length} violation(s)` } : { status: 'FAIL', detail: 'gate dispatch failed (fail closed)' }
+    const gateStatus = qualityStatus(gate && gate.quality)
+    const gateViolations = (gateStatus === 'FAIL' && gate) ? (gate.quality.violations || []).map((v, i) => ({ id: `qg-${i}`, severity: 'P1', category: 'quality-gate', file: v.file || '-', line: 0, claim: `${v.metric} ${v.value} > threshold ${v.threshold} in ${v.function || v.file}`, evidence: { quote: JSON.stringify(v) }, remedy: 'behavior-preserving refactor (extract method, guard clauses, parameter object)', confidence: 'high', outside_diff: false })) : []
+    state.quality = gate ? { status: gateStatus, detail: gate.quality.detail || `${gateViolations.length} violation(s)` } : { status: 'FAIL', detail: 'gate dispatch failed (fail closed)' }
     state.events.push({ scope: slice.id, type: 'quality-gate', payload: { status: state.quality.status, violations: gateViolations.length } })
 
     // Stage V/F — verify findings + fix loop (≤2 rounds)
@@ -488,9 +503,9 @@ async function runSlice(slice) {
     // Stage Z — full verification (suite + gate re-check), ≤1 debug-fix
     for (let attempt = 0; attempt < 2; attempt++) {
       const v = await dispatch(slice, state, `verify:${attempt + 1}`, verifyPrompt(slice, state), { agentType: 'spec-loop:verifier', schema: VERIFY_RESULT, model: 'haiku', effort: 'low' })
-      if (v && v.suite.passed && v.quality.status !== 'FAIL') {
+      if (v && v.suite.passed && qualityStatus(v.quality) === 'PASS') {
         state.tests = { command: v.suite.command, result: v.suite.summary, scope: 'full', tree_sha: v.tree_sha }
-        state.quality = { status: v.quality.status === 'SKIPPED' ? state.quality.status : v.quality.status, detail: v.quality.detail || state.quality.detail }
+        state.quality = { status: 'PASS', detail: v.quality.detail || state.quality.detail }
         state.commits.head = v.head_sha
         return done('DONE')
       }
@@ -499,7 +514,7 @@ async function runSlice(slice) {
         if (df && df.commits && df.commits.head) state.commits.head = df.commits.head
         continue
       }
-      return escalated(slice, state, esc(slice, v && !v.suite.passed ? 'review-block' : 'quality-gate-block', 'verification failed', v ? `suite: ${v.suite.summary}; quality: ${v.quality.status}` : 'verifier dispatch failed terminally', 'Verification cannot pass automatically. Guide, accept, or drop?', []))
+      return escalated(slice, state, esc(slice, v && !v.suite.passed ? 'review-block' : 'quality-gate-block', 'verification failed', v ? `suite: ${v.suite.summary}; quality: ${qualityStatus(v.quality)} (summary_pass=${String(v.quality.summary_pass)}${v.quality.detail ? ` — ${v.quality.detail}` : ''})` : 'verifier dispatch failed terminally', 'Verification cannot pass automatically. Guide, accept, or drop?', []))
     }
     return escalated(slice, state, esc(slice, 'review-block', 'verification loop exhausted', 'unreachable', 'Guide, accept, or drop?', []))
   } catch (e) {

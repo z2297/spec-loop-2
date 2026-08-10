@@ -98,7 +98,10 @@ behavior-preserving refactors only; thresholds and the gate config are never edi
 pass.
 
 **6 — Verify.** Dispatch `verifier` with the worktree path, the full suite command, and the
-exact quality-gate invocation. It reports; you do not re-interpret. Red suite → attribute the
+exact quality-gate invocation. It reports raw facts (`quality.summary_pass` is the gate JSON's
+`summary.pass` verbatim, never a verdict); YOU derive the sidecar's quality status
+deterministically — PASS only when `summary_pass` is `true` AND violations are empty; a null
+`summary_pass` or any violation is FAIL, fail closed. Red suite → attribute the
 failure through the per-task commits and fix within your remaining bounds, never by reverting
 the slice wholesale, and never by claiming DONE on stale green output. This full-suite run is
 the slice's only mandatory verification point; scoped task runs never substitute for it.

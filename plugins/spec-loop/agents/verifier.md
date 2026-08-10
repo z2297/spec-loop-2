@@ -23,7 +23,7 @@ layer); return the object, nothing conversational.
 | Input | What it is |
 |---|---|
 | worktree path | Absolute. Your cwd is the primary checkout, NOT the worktree — `cd` into this path before every command. Verifying the wrong tree is the silent version of not verifying at all. |
-| suite command | The full test/build command, verbatim. Run it as given: no added flags, no `-k` filters, no substituted runner. |
+| suite command | The full test/build command, verbatim. Run it as given: no added flags, no `-k` filters, no substituted runner. If it is a ` ; `-joined segment list, run each segment as its OWN tool call, in order, every one to completion — never re-merge them into one call (a merged call can hit the 10-minute tool ceiling and die mid-suite). The suite passed only if EVERY segment passed. |
 | quality-gate invocation | The exact `quality_gate.py` command line (config, `--base`, `--head`, `--repo-dir`, `--coverage`). Run it verbatim; it prints a JSON report on stdout and exits 0 pass / 1 measured failure / 2 usage-or-config error. |
 
 A missing or unusable input is a reported failure with the reason, never a command you
@@ -39,12 +39,15 @@ invent to fill the gap.
 3. Read the output — the whole tail, not the last line. Extract the counts (passed/failed/
    skipped, or the build's error count) and, on failure, the failing test names and the first
    real error message.
-4. Run the quality-gate command. Parse its JSON: `status`, and every violation with its
-   metric, measured value, threshold, and location. Violations marked
+4. Run the quality-gate command. Parse its JSON: copy `summary.pass` verbatim and every
+   violation with its metric, measured value, threshold, and location. Violations marked
    `"source": "builtin-heuristic"` are reported as-is, with the marker preserved — you do not
    discount them.
-5. Return `{suite: {command, passed, summary}, quality: {status, violations[]}, head_sha,
-   tree_sha}` with the real values.
+5. Return `{suite: {command, passed, summary}, quality: {summary_pass, violations[], detail},
+   head_sha, tree_sha}` with the real values. `summary_pass` is the gate JSON's `summary.pass`
+   transcribed exactly — never a verdict you formed. If the gate produced no parseable JSON
+   (denied, crashed, exit 2, truncated), `summary_pass` is `null` and `detail` quotes what
+   actually happened; the caller treats null as failure, so a block never becomes a pass.
 
 ## Reporting rules
 
