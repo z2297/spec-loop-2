@@ -7,6 +7,7 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-10
 Runtime and trust fixes from the 2026-08-06/07 production-run analysis
 (Groundworks.Jobs): active runtime was ~3–5h for 3–5 slices, but one run read
 as 15h48m — 7.6h of it a silently-parked publish prompt, 2h20m a discarded
@@ -123,4 +124,6 @@ schemas, agents, and internals redesigned; see
   and the `--budget` flag (cost control is structural: caps + bounds; the
   Workflow token ceiling activates when the session sets a token target).
 
+[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.1.0
 [2.0.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.0.0
