@@ -55,7 +55,12 @@ artifact you hand an agent is a file path, never pasted content.
    `spec-loop/<run-id>`, which git rejects as a ref-directory prefix of the slice branches
    `spec-loop/<run-id>/<slice-id>`). A dirty tree = escalate before touching anything.
 3. Baseline: run the full suite once on the new branch; record a `baseline` event with
-   `{tree_sha, command, result}`. Red baseline → escalate before any slice.
+   `{tree_sha, command, result}`. Red baseline → escalate before any slice. If any single
+   invocation runs near the 10-minute tool ceiling, split it into per-project segments
+   (e.g. one `dotnet test` per test project) and record `test_command` as the segment
+   list joined with ` ; ` — every downstream runner executes each segment as its OWN tool
+   call; a monolithic command at the ceiling gets killed mid-run and reads as a false red
+   (observed: a Phase 5 suite had to re-run in three segments after two background kills).
 4. Create `docs/spec-loop/<run-id>/` with `.active`, `request.md`, `conventions.md`,
    `dag.json` (schema per run-state-v2.md, `mode: "workflow"`), and empty `events.jsonl`;
    append a `run-created` event via `run_state.py append-event`. Ensure `.worktrees/` is
@@ -117,10 +122,15 @@ deadlock is itself an escalation):
    summaries); squarely-resolved → answer it yourself with a `decision` event citing the
    precedent. Everything else: ONE `AskUserQuestion` round for ALL open escalations
    (recommended defaults first). Write answers back (`escalation-answered` events), then
-   **re-dispatch the same wave** with the same args plus `answers` filled in and
-   `resumeFromRunId: <wf_id>` — completed stages replay from the journal at no cost; only
-   answered stages run live. (A journal lost to a session restart just means the wave
-   re-runs live — sidecars bound the loss to one wave.)
+   **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
+   whose sidecars are not DONE/SPLIT (merged work never re-enters a wave; its worktree is
+   already gone) — same `ctx`, `answers` filled in, and `resumeFromRunId: <wf_id>` so the
+   escalated slices' completed stages replay from the journal where the cache holds. Never
+   rely on replay to make a terminal slice free: a cache miss re-runs it live against a
+   deleted worktree and the result must be discarded (observed cost: 140 minutes). If a
+   result arrives for a slice you did not include, discard it without persisting. (A journal
+   lost to a session restart just means the remaining slices re-run live — sidecars bound
+   the loss to one wave.)
 8. Knowledge graph (if enabled): one `batch` call upserting the wave's `decision` nodes and
    touched `component` hubs, extracted from the wave's events.
 
@@ -132,8 +142,11 @@ cross-slice `pr-reviewer` (mode `integration`, session model, high effort) over
 `run_metrics.py compute <run-dir> --write` → COMMIT-SAFETY run-state commit (explicit
 pathspec, never `git add -A`) → knowledge-graph runbook synthesis (if enabled) → publish
 prompt (ONE question: push feature branch ± PR / merge onto default branch `--no-ff` / leave
-local), writing `.publish-choice` BEFORE acting, then rename `.active` → `.done`. Your final
-output is the runbook's Executive Readout, verbatim.
+local), writing `.publish-choice` BEFORE acting, then rename `.active` → `.done` — but first
+verify the run dir is whole at `$(git rev-parse --show-toplevel)/docs/spec-loop/<run-id>/`
+(dag.json + events.jsonl + runbook.md present there, not in a worktree or subdirectory copy);
+a fragmented run dir is an escalation, not a `.done`. Your final output is the runbook's
+Executive Readout, verbatim.
 
 ## Resume
 
@@ -148,7 +161,12 @@ Phase 5 (regenerating `runbook.md` is safe).
 
 You are the only layer that can ask the human. Never ask mid-wave, never one-at-a-time;
 apply the `escalation-gate` five-trigger test and precedent check to every candidate
-question, including your own. Every autonomous decision = one `decision` event with
+question, including your own. Announce every question you do ask: immediately before ANY
+`AskUserQuestion` (escalation rounds, the publish prompt), fire a best-effort desktop alert —
+`printf '\a'; command -v osascript >/dev/null 2>&1 && osascript -e 'display notification
+"spec-loop run needs a decision" with title "spec-loop"' || true` — so an unattended run is
+never silently parked (a finished run once waited 7.6 hours at the publish prompt). An alert
+failure is ignored, never a reason to delay the question. Every autonomous decision = one `decision` event with
 rationale and reversibility. When a workflow result surprises you (empty, malformed,
 contradicting its own events), read the workflow journal before re-dispatching — never
 re-run work you merely failed to look at.
