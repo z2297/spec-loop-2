@@ -1007,9 +1007,17 @@ def _all_metric_values(func_measurements, class_measurements):
 # Report assembly
 # --------------------------------------------------------------------------
 
-def build_report(base, head, config_source, backends, findings, skipped):
+def build_report(base, head, config_source, backends, findings, skipped,
+                 changed_files=0):
     """Assemble the single JSON report. summary.pass is True iff every finding
-    passed; summary.failures lists the failing findings verbatim."""
+    passed; summary.failures lists the failing findings verbatim.
+
+    summary.vacuous marks a pass earned by measuring NOTHING over a non-empty
+    diff (zero checks, one or more changed files). Such a pass is not evidence
+    that the code meets the bar — files may have been unreadable, or no
+    function matched the changed ranges — and callers gating a code-changing
+    range must treat it as unmeasured, not as green (run 20260807 Phase 5
+    accepted-then-caught exactly this by hand)."""
     failures = [f for f in findings if not f["pass"]]
     return {
         "version": 1,
@@ -1019,7 +1027,12 @@ def build_report(base, head, config_source, backends, findings, skipped):
         "config": config_source,
         "findings": findings,
         "skipped": skipped,
-        "summary": {"pass": not failures, "failures": failures},
+        "summary": {
+            "pass": not failures,
+            "failures": failures,
+            "checks": len(findings),
+            "vacuous": not failures and not findings and changed_files > 0,
+        },
     }
 
 
@@ -1056,7 +1069,8 @@ def run_gate(args):
         args.base, args.head, config_source,
         used_backends or (["builtin-heuristic"] if changed else []),
         findings + custom_findings,
-        measure_skips + eval_skips + custom_skips)
+        measure_skips + eval_skips + custom_skips,
+        changed_files=len(changed))
     return report, config_source
 
 

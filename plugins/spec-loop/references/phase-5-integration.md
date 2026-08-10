@@ -11,6 +11,14 @@ merged slice) and read the output — the assembled whole, not any single slice'
 checkpoint is never satisfied by evidence transfer; it always runs (see
 `verification-before-completion` §Scoped vs. full).
 
+When measuring quality over the whole-run range, read `summary.vacuous` before accepting any
+pass: a gate report with `pass: true` but `vacuous: true` measured ZERO checks over a
+non-empty diff and is **not evidence** — fall back to the per-slice gate results (verify
+their union covers every changed source file, closing any post-gate commits by direct
+measurement), and record what you did in the `phase5-gate` event. Run 20260807 caught a
+vacuous whole-run pass only because the controller re-read the report by hand; the marker
+now makes acceptance of one a controller defect, not a judgment call.
+
 ## 2. Cross-slice integration review
 
 Dispatch **ONE** `pr-reviewer` agent in `integration` mode over the cumulative diff

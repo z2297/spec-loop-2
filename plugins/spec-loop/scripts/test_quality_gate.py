@@ -718,6 +718,31 @@ class TestBuildReport(unittest.TestCase):
         self.assertEqual(report["summary"]["failures"][0]["metric"],
                          "method_lines")
 
+    def test_vacuous_pass_is_flagged(self):
+        # Regression (run 20260807, Phase 5): a pass with ZERO checks over a
+        # 60-file range was indistinguishable from a measured pass; the
+        # controller had to catch it by hand. A zero-check pass over a
+        # non-empty diff now carries summary.vacuous so no caller can mistake
+        # it for evidence.
+        report = qg.build_report("B", "H", "loaded", [], [], [],
+                                 changed_files=60)
+        self.assertTrue(report["summary"]["pass"])
+        self.assertEqual(report["summary"]["checks"], 0)
+        self.assertTrue(report["summary"]["vacuous"])
+
+    def test_measured_pass_is_not_vacuous(self):
+        findings = [qg._finding("m.py", "f", "cyclomatic_complexity", 3, 10,
+                                "builtin-heuristic")]
+        report = qg.build_report("B", "H", "loaded", ["builtin-heuristic"],
+                                 findings, [], changed_files=1)
+        self.assertEqual(report["summary"]["checks"], 1)
+        self.assertFalse(report["summary"]["vacuous"])
+
+    def test_empty_diff_pass_is_not_vacuous(self):
+        report = qg.build_report("B", "H", "loaded", [], [], [],
+                                 changed_files=0)
+        self.assertFalse(report["summary"]["vacuous"])
+
 
 # --------------------------------------------------------------------------
 # main() / run_gate — exit codes, disabled gate (git mocked or real)
