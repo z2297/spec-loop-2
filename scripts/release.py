@@ -39,7 +39,7 @@ SEMVER = re.compile(
 PLUGIN_MANIFEST = "plugins/spec-loop/.claude-plugin/plugin.json"
 MARKETPLACE = ".claude-plugin/marketplace.json"
 CHANGELOG = "CHANGELOG.md"
-REPO = "z2297/spec-loop"
+REPO = "z2297/spec-loop-2"
 PLUGIN_PATH = "plugins/spec-loop"
 
 

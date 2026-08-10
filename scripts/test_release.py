@@ -46,7 +46,7 @@ import release as rel  # noqa: E402
 # --------------------------------------------------------------------------
 
 PLUGIN_VERSION = "1.1.0-alpha.3"
-REPO = "z2297/spec-loop"
+REPO = "z2297/spec-loop-2"
 
 # Channel entries (names NOT matching ^spec-loop-\d) then existing archive entries
 # (names matching ^spec-loop-\d). add_archive_entry must insert a new archive entry
