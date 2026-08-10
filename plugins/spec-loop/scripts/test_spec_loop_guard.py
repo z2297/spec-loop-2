@@ -185,6 +185,37 @@ class QualityGateConfigTests(GuardTestCase):
             guard.evaluate(self.bash("cat ~/.claude/spec-loop-2/quality-gate.json"))
         )
 
+    def test_readonly_gate_invocation_with_stderr_redirect_allowed(self):
+        # Regression (run 20260807-upsell-lines-invoice-status): the verifier's
+        # read-only gate command was denied because `2>&1` matched the old
+        # any-redirect heuristic, cascading into false PASS labels downstream.
+        self.make_run()
+        cmd = (
+            "python3 scripts/quality_gate.py "
+            "--config ~/.claude/spec-loop-2/quality-gate.json "
+            "--overlay .spec-loop/quality-gate.json "
+            "--base abc123 --head def456 --repo-dir /tmp/wt 2>&1"
+        )
+        self.assertIsNone(guard.evaluate(self.bash(cmd)))
+
+    def test_readonly_gate_invocation_redirected_elsewhere_allowed(self):
+        self.make_run()
+        cmd = (
+            "python3 scripts/quality_gate.py "
+            "--config ~/.claude/spec-loop-2/quality-gate.json "
+            "--base abc123 --head def456 > /tmp/gate-out.json"
+        )
+        self.assertIsNone(guard.evaluate(self.bash(cmd)))
+
+    def test_tee_append_move_into_config_denied(self):
+        self.make_run()
+        for cmd in (
+            "cat /tmp/x | tee .spec-loop/quality-gate.json",
+            "echo '{}' >> ~/.claude/spec-loop-2/quality-gate.json",
+            "mv /tmp/x .spec-loop/quality-gate.json",
+        ):
+            self.assertIsNotNone(guard.evaluate(self.bash(cmd)), cmd)
+
     def test_write_tool_denied(self):
         self.make_run()
         reason = guard.evaluate(self.write("~/.claude/spec-loop-2/quality-gate.json"))

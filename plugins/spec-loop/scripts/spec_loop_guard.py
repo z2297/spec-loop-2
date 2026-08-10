@@ -60,7 +60,14 @@ GIT_ADD_BROAD = re.compile(
 GIT_COMMIT_OR_MERGE = re.compile(r"\bgit\b(?:\s+-\S+|\s+-C\s+\S+)*\s+(?:commit|merge)\b")
 CHECKOUT_MAIN = re.compile(r"\bgit\b[^;|&]*\b(?:checkout|switch)\s+(?:main|master)\b")
 COMMIT_MERGE_PUSH_WORD = re.compile(r"\b(?:commit|merge|push)\b")
-WRITE_INDICATORS = re.compile(r"(?:>>?|\btee\b|\bsed\s+-i\b|\bmv\b|\bcp\b)")
+# A write must TARGET a quality-gate.json path to count. A bare redirect
+# elsewhere in the command (`2>&1`, `> /tmp/out.json`) alongside a --config
+# flag is a read-only gate invocation and must stay allowed.
+QUALITY_GATE_WRITE = re.compile(
+    r"(?:>>?\s*\S*quality-gate\.json"  # redirect into the config
+    r"|\b(?:tee|mv|cp)\b[^;|&>]*quality-gate\.json"  # tee/mv/cp naming it
+    r"|\bsed\s+-i\b[^;|&]*quality-gate\.json)"  # in-place sed on it
+)
 
 
 def find_active_runs(project_root):
@@ -140,7 +147,7 @@ def check_bash(command, cwd, runs):
             % (run["run_id"], run["run_id"], _remediation(run))
         )
 
-    if "quality-gate.json" in command and WRITE_INDICATORS.search(command):
+    if QUALITY_GATE_WRITE.search(command):
         run = runs[0]
         return (
             "spec-loop run %s is active: the quality-gate config must not be modified "
