@@ -7,6 +7,31 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+### Added
+- **Run-level scope ceiling** — an optional `scope_ceiling` list in `dag.json`, threaded
+  through `ctx` and into every agent's packet as a binding "do NOT build these" block.
+- **Record-only `critique.over_scope`** — an optional `{flag, reason}` field on the
+  council verdict contract, owned by plan-critic's weighted scope lane. It is carried
+  into the `council-verdict` event and the slice sidecar untouched by any control-flow
+  branch: it never blocks, never suppresses a split, never raises an objection, and is
+  never a finding.
+- **One durable `deferred` event per defer-hinted concern** — each `defer`-hinted council
+  concern now emits its own `deferred` event (`{summary, source: "plan-critique"}`, plus a
+  bare-boolean `over_scope: true` marker when applicable), read by the reviewer as advisory
+  context only — never a findings filter.
+- **Weighted scope lane on plan-critic** — plan-critic's existing Scope mandate now owns the
+  over-scope record; no new agent, no change to any panel size or objection threshold.
+
+### Fixed
+- **Wave-aborting unguarded `commits` read** — a task that legitimately committed nothing
+  returns `DONE` with `commits` absent (not required by `TASK_RESULT`); the Stage-T loop's
+  unguarded `r.commits.head` read threw a `TypeError` that the catch-all mislabelled as a
+  budget-exhausted "wave interrupted" escalation. The read is now guarded the way the
+  fix/debug-fix sites already guard it.
+- **Missing `quality-gate-block` answer injection** — `fixPrompt` and `verifyPrompt` had no
+  `answerFor(slice, 'quality-gate-block')` site, so a human's answer to a quality-gate
+  escalation could not reach the re-dispatched prompt.
+
 ## [2.1.0] - 2026-08-10
 Runtime and trust fixes from the 2026-08-06/07 production-run analysis
 (Groundworks.Jobs): active runtime was ~3–5h for 3–5 slices, but one run read
