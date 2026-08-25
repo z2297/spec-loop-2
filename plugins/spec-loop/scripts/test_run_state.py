@@ -1172,6 +1172,51 @@ class TestPinnedPayloadFacts(RunStateTestCase):
                         {"verdict": "OBJECT", "concerns": 1, "safety": True})
         self.assertIn("SAFETY OBJECT", self.read("decisions-log.md"))
 
+    def test_council_verdict_carries_the_whole_over_scope_record_not_just_a_bool(self):
+        # safety drops its reason and records it nowhere; over_scope must not
+        # repeat that — flag AND reason are both durable.
+        record = {"flag": True, "reason": "adds a tier-assignment heuristic"}
+        rs.persist_slice(self.run_dir, sidecar(critique={
+            "verdict": "OBJECT", "concerns": 3, "over_scope": record}),
+            wave=1, ts=TS)
+        verdict = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        self.assertEqual(verdict["payload"]["over_scope"], record)
+
+    def test_a_clean_over_scope_record_survives_persistence(self):
+        rs.persist_slice(self.run_dir, sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": False, "reason": None}}), wave=1, ts=TS)
+        verdict = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        self.assertIs(verdict["payload"]["over_scope"]["flag"], False)
+        self.assertIn("scope: clean", self.read("decisions-log.md"))
+
+    def test_a_returned_council_verdict_event_keeps_over_scope_byte_for_byte(self):
+        payload = {"verdict": "ENDORSE_WITH_CONCERNS", "panel": ["plan-critic"],
+                   "safety": False, "concerns_folded": 1, "deferred": ["P2: later"],
+                   "over_scope": {"flag": True, "reason": "dashboard UI work"}}
+        rs.persist_slice(self.run_dir, sidecar(events=[
+            {"scope": "s1", "type": "council-verdict", "payload": payload}]),
+            wave=1, ts=TS)
+        stored = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        self.assertEqual(stored["payload"], payload)
+
+    def test_a_deferred_event_marks_deferred_scope_with_over_scope_true(self):
+        rs.append_event(self.run_dir, TS, "s1", "deferred",
+                        {"title": "dashboard charts", "over_scope": True})
+        self.assertEqual(self.events()[0]["payload"],
+                         {"title": "dashboard charts", "over_scope": True})
+        self.assertIn("DEFERRED: SCOPE dashboard charts",
+                      self.read("decisions-log.md"))
+
+    def test_over_scope_never_changes_the_recorded_verdict(self):
+        # Record-only: the flag is not a vote and not a finding.
+        rs.persist_slice(self.run_dir, sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": True, "reason": "out of the run ceiling"}}),
+            wave=1, ts=TS)
+        verdict = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        self.assertEqual(verdict["payload"]["verdict"], "ENDORSE")
+
     def test_agent_dispatch_payload_is_passed_through_verbatim(self):
         payload = {"role": "implementer", "model": "claude-opus-5", "effort": "high",
                    "agent_type": "sdd-implementer",

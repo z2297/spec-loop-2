@@ -76,7 +76,8 @@ prose about the slice.
   "commits": { "base": "<sha>", "head": "<sha>" },   // null head if nothing committed
   "risk_tier": 2,
   "review_tier": 2,             // may exceed risk_tier via surface auto-promotion
-  "critique": { "verdict": "ENDORSE | ENDORSE_WITH_CONCERNS | OBJECT | SKIPPED", "concerns": 2 },
+  "critique": { "verdict": "ENDORSE | ENDORSE_WITH_CONCERNS | OBJECT | SKIPPED", "concerns": 2,
+                "over_scope": { "flag": false, "reason": null } },  // OPTIONAL; absent ≠ flag:false
   "tasks_completed": 4,
   "review": { "confirmed": 1, "refuted": 2, "evidence_failed": 0,
               "fix_rounds": 1, "residual": ["P2: ..."] },
@@ -144,7 +145,17 @@ best-effort):
   duration_ms}` — the honest wave-level token/duration channel while
   per-dispatch stamps are unavailable. Optional, null-honest.
 - **`council-verdict`** payload carries `safety: bool` — whether the verdict
-  involved a SAFETY flag (the one objection that halts alone).
+  involved a SAFETY flag (the one objection that halts alone) — and the
+  OPTIONAL `over_scope: {flag: bool, reason: string|null}` record. `over_scope`
+  keeps BOTH halves: unlike `safety`, whose reason is dropped at the source, the
+  reason is durable here. It is **record-only**: no verdict, gate, veto or
+  blocking decision reads it, and it is never a finding. Absent means no scope
+  judgement was recorded and is NOT equivalent to `flag: false`; both render
+  distinctly in `decisions-log.md` (`scope: clean` vs nothing at all).
+- **`deferred`** payload is null-honest and otherwise free-form
+  (`title`/`detail`), with one pinned key: `over_scope: true` marks a deferral of
+  work judged outside the slice's scope. Advisory prose data only — it suppresses
+  no finding and drops no work.
 - **`escalation-opened`** payload is the full EscalationRecord, including its
   `id`; `escalation-answered` pairs by that `id` (never by scope alone — one
   slice can open several).
