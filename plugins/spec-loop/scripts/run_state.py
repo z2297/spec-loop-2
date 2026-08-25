@@ -90,6 +90,14 @@ ESCALATIONS_HEADER = ("# Escalations\n\n"
 
 ID_ANCHOR = "<!-- escalation-id: %s -->"
 SUMMARY_LIMIT = 200
+# critique.over_scope validation messages. Module-level so _over_scope_errors
+# stays flat: the quality gate derives nesting/cognitive scores from indentation,
+# and wrapped message literals inside the checks push it past both thresholds.
+OVER_SCOPE_NOT_OBJECT = ("critique.over_scope must be a JSON object when "
+                         "present (found %r)")
+OVER_SCOPE_BAD_FLAG = "critique.over_scope.flag must be true or false (found %r)"
+OVER_SCOPE_BAD_REASON = ("critique.over_scope.reason must be a string or null "
+                         "when present (found %r)")
 # Deliberately permissive ISO-8601: date, optional time, optional fraction, and
 # an optional Z / ±HH:MM offset. The controller supplies UTC stamps.
 ISO_TS = re.compile(
@@ -354,16 +362,14 @@ def _over_scope_errors(block):
     if block is None:
         return []
     if not isinstance(block, dict):
-        return ["critique.over_scope must be a JSON object when present "
-                "(found %r)" % (block,)]
+        return [OVER_SCOPE_NOT_OBJECT % (block,)]
     errors = []
-    if not isinstance(block.get("flag"), bool):
-        errors.append("critique.over_scope.flag must be true or false "
-                      "(found %r)" % (block.get("flag"),))
+    flag = block.get("flag")
     reason = block.get("reason")
+    if not isinstance(flag, bool):
+        errors.append(OVER_SCOPE_BAD_FLAG % (flag,))
     if reason is not None and not isinstance(reason, str):
-        errors.append("critique.over_scope.reason must be a string or null "
-                      "when present (found %r)" % (reason,))
+        errors.append(OVER_SCOPE_BAD_REASON % (reason,))
     return errors
 
 

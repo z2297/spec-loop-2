@@ -303,8 +303,8 @@ class TestValidateSidecar(unittest.TestCase):
         errors = rs.validate_sidecar(sidecar(critique={
             "verdict": "ENDORSE", "concerns": 0,
             "over_scope": {"flag": None, "reason": []}}))
-        self.assertEqual(len([e for e in errors
-                             if e.startswith("critique.over_scope.")]), 2)
+        scoped = [e for e in errors if e.startswith("critique.over_scope.")]
+        self.assertEqual(len(scoped), 2)
 
 
 # --------------------------------------------------------------------------
