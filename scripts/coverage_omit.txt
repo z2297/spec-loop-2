@@ -22,7 +22,7 @@
 # in plugins/spec-loop/scripts/ but keys stay scripts/<name>.py because
 # measure_coverage.normalize_key canonicalizes either scripts/ dir.
 
-scripts/dag.py:693-694                   # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
+scripts/dag.py:754-755                   # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/dashboard_launcher.py:558-559    # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/dashboard_server.py:1645-1646    # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/knowledge_graph.py:1211-1212     # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
@@ -31,7 +31,7 @@ scripts/quality_gate.py:1104-1105        # __main__ entry shim (if __name__/sys.
 scripts/release.py:194-195               # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/review_package.py:131-132        # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/run_metrics.py:1825-1826         # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/run_state.py:822-823             # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
+scripts/run_state.py:837-838             # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/spec_loop_guard.py:240-241       # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/validate_marketplace.py:417-418  # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/worktrees.py:385-386             # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest

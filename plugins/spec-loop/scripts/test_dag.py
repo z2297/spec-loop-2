@@ -117,8 +117,8 @@ class TestValidate(unittest.TestCase):
         self.assertEqual(dagmod.validate_dag(d), [])
 
     def test_scope_ceiling_of_non_empty_strings_is_valid(self):
-        d = make_dag(scope_ceiling=["do not touch the tier table",
-                                    "no dashboard UI work"])
+        entries = ["do not touch the tier table", "no dashboard UI work"]
+        d = make_dag(scope_ceiling=entries)
         self.assertEqual(dagmod.validate_dag(d), [])
 
     def test_scope_ceiling_may_be_an_empty_list(self):
@@ -143,8 +143,8 @@ class TestValidate(unittest.TestCase):
             len([e for e in errors if e.startswith("scope_ceiling entry")]), 2)
 
     def test_a_null_scope_ceiling_is_reported_as_a_bad_list_not_ignored(self):
-        self.assertErrorMentions(dagmod.validate_dag(make_dag(scope_ceiling=None)),
-                                 "scope_ceiling must be a list")
+        errors = dagmod.validate_dag(make_dag(scope_ceiling=None))
+        self.assertErrorMentions(errors, "scope_ceiling must be a list")
 
     def test_duplicate_slice_ids(self):
         d = make_dag(slices=[sl("s1"), sl("s1")])
