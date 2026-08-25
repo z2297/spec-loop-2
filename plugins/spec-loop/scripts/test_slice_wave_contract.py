@@ -453,5 +453,26 @@ class TestDeferralEventsBehavesAndNotJustExists(WorkflowSourceTestCase):
         self.assertEqual(got, ["first", "second", "third"])
 
 
+class TestTheRunScopeCeilingReachesEveryAgent(WorkflowSourceTestCase):
+    """A ceiling in dag.json that reaches neither call site validates green,
+    passes every test, and reaches no agent."""
+
+    def test_the_packet_carries_the_ceiling(self):
+        packet = self.between("const packet = (slice) => [", "const answerFor")
+        self.assertIn("CTX.scope_ceiling", packet)
+        self.assertIn("do NOT build these", packet)
+
+    def test_an_absent_ceiling_is_read_safely(self):
+        packet = self.between("const packet = (slice) => [", "const answerFor")
+        self.assertIn("(CTX.scope_ceiling || []).length", packet)
+
+    def test_the_controller_builds_the_ctx_field(self):
+        command = (Path(__file__).resolve().parents[1] / "commands"
+                   / "spec-loop.md").read_text(encoding="utf-8")
+        self.assertIn("scope_ceiling", command)
+        # run-level, one home: never duplicated into the per-slice objects.
+        self.assertIn("the scope ceiling is run-level and travels in ctx", command)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

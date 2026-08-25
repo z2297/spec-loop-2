@@ -26,7 +26,7 @@ export const meta = {
 // Tolerate stringified args: some harness paths deliver the args value
 // JSON-encoded even when the caller passed an object (verified 2026-07-30).
 const A = typeof args === 'string' ? JSON.parse(args) : args
-const CTX = A.ctx // {run_dir, plugin_root, base_ref, test_command, conventions_path, shared_constraints[], tier3_surfaces[], quality_gate_cmd, models{reviewer}, thorough, polish}
+const CTX = A.ctx // {run_dir, plugin_root, base_ref, test_command, conventions_path, shared_constraints[], scope_ceiling[] (optional), tier3_surfaces[], quality_gate_cmd, models{reviewer}, thorough, polish}
 
 const CAPS = { 1: 10, 2: 18, 3: 32 }
 const MAX_FIX_ROUNDS = 2
@@ -254,6 +254,9 @@ const packet = (slice) => [
   `Run dir: ${CTX.run_dir}`,
   `Conventions: ${CTX.conventions_path}`,
   `Shared constraints (binding, verbatim):\n${(CTX.shared_constraints || []).map(c => `- ${c}`).join('\n') || '- none'}`,
+  (CTX.scope_ceiling || []).length
+    ? `Run scope ceiling (binding — do NOT build these; if your goal appears to require one, say so in your return and your report, and never silently build it):\n${CTX.scope_ceiling.map(c => `- ${c}`).join('\n')}`
+    : '',
   slice.kg_snippet ? `Prior knowledge (graph context):\n${slice.kg_snippet}` : '',
 ].filter(Boolean).join('\n')
 

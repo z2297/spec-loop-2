@@ -43,9 +43,12 @@ artifact you hand an agent is a file path, never pasted content.
    `shared_constraints` and the decomposition, logging DECISION/DEFERRED events.
 7. Decompose into independent vertical slices (coarse is fine — planners self-split): id,
    goal, files, subsystems, deps, risk_tier (per `references/risk-tiers.md`, floored by
-   `--risk-floor`). Then ask EVERYTHING in ONE `AskUserQuestion` round: config first-run
-   choices, council objections that survived the precedent check, genuine decomposition
-   ambiguities. Recommended default first, always.
+   `--risk-floor`). Record anything the run must NOT build as the run-level `scope_ceiling`
+   list in `dag.json` (things explicitly ruled out in step 4's in/out-of-scope restatement,
+   plus anything the intake council deferred as out of scope); the key is optional and may
+   be absent when nothing was ruled out. Then ask EVERYTHING in ONE `AskUserQuestion` round:
+   config first-run choices, council objections that survived the precedent check, genuine
+   decomposition ambiguities. Recommended default first, always.
 
 ## Phase 1 — Run state
 
@@ -62,7 +65,8 @@ artifact you hand an agent is a file path, never pasted content.
    call; a monolithic command at the ceiling gets killed mid-run and reads as a false red
    (observed: a Phase 5 suite had to re-run in three segments after two background kills).
 4. Create `docs/spec-loop/<run-id>/` with `.active`, `request.md`, `conventions.md`,
-   `dag.json` (schema per run-state-v2.md, `mode: "workflow"`), and empty `events.jsonl`;
+   `dag.json` (schema per run-state-v2.md, `mode: "workflow"`, plus `shared_constraints` and
+   the optional run-level `scope_ceiling` from Phase 0), and empty `events.jsonl`;
    append a `run-created` event via `run_state.py append-event`. Ensure `.worktrees/` is
    gitignored. Validate: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dag.py" validate --run-dir <dir>`.
 5. Knowledge graph (if enabled): one `knowledge_graph.py batch` seeding the system hub + run
@@ -82,10 +86,13 @@ deadlock is itself an escalation):
    take `tier3_surfaces` and `models` from it. Build the wave args object exactly as
    `slice-wave.workflow.js` documents — `{run_id, wave_index, ctx: {run_dir (absolute),
    plugin_root, base_ref, test_command, conventions_path, shared_constraints,
-   tier3_surfaces, quality_gate_cmd ("python3 <plugin_root>/scripts/quality_gate.py
-   --config <global> --overlay <repo overlay>" — the same two paths, so agents measure
-   against the merged bar), models, thorough, polish}, slices: [{id, goal, files,
-   subsystems, risk_tier, depth, worktree, branch, base_sha, kg_snippet}],
+   scope_ceiling (dag.json's run-level list, verbatim; omit or pass [] when the run has
+   none — the workflow puts it in every agent packet), tier3_surfaces, quality_gate_cmd
+   ("python3 <plugin_root>/scripts/quality_gate.py --config <global> --overlay <repo
+   overlay>" — the same two paths, so agents measure against the merged bar), models,
+   thorough, polish}, slices: [{id, goal, files, subsystems, risk_tier, depth, worktree,
+   branch, base_sha, kg_snippet}] (per-slice only —
+   the scope ceiling is run-level and travels in ctx, never duplicated here),
    answers: {}}` — then invoke
    the Workflow named `spec-loop:slice-wave` (fallback: `scriptPath:
    "${CLAUDE_PLUGIN_ROOT}/workflows/slice-wave.workflow.js"`). Pass `args` as a real
