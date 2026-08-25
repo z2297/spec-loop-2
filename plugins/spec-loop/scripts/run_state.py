@@ -90,6 +90,11 @@ ESCALATIONS_HEADER = ("# Escalations\n\n"
 
 ID_ANCHOR = "<!-- escalation-id: %s -->"
 SUMMARY_LIMIT = 200
+# Payload keys, in priority order, that may carry a human-readable one-liner.
+# Module-level for the same reason as the messages below: a wrapped literal
+# inside _first_text's loop reads as nesting to the quality gate.
+SUMMARY_TEXT_KEYS = ("summary", "decision", "title", "question", "detail",
+                     "answer", "result", "status", "note")
 # critique.over_scope validation messages. Module-level so _over_scope_errors
 # stays flat: the quality gate derives nesting/cognitive scores from indentation,
 # and wrapped message literals inside the checks push it past both thresholds.
@@ -444,18 +449,58 @@ def _summarize(event):
         return _one_line(payload)
     event_type = event.get("type")
     if event_type == "council-verdict":
-        verdict = payload.get("verdict") or "(no verdict)"
-        concerns = payload.get("concerns")
-        # `safety` is pinned in the contract and is the objection that halts the
-        # loop alone, so it is named in the human line whenever it is set.
-        return "%s%s%s" % ("SAFETY " if payload.get("safety") else "", verdict,
-                           " (%s concerns)" % concerns if concerns else "")
+        return _verdict_summary(payload)
     if event_type in ("quality-gate", "integration-check", "phase5-gate"):
         outcome = payload.get("status") or payload.get("result") or "(no result)"
         detail = payload.get("detail") or payload.get("summary")
         return "%s%s" % (outcome, " — %s" % _one_line(detail) if detail else "")
-    for key in ("summary", "decision", "title", "question", "detail", "answer",
-                "result", "status", "note"):
+    if event_type == "deferred" and payload.get("over_scope") is True:
+        return "SCOPE %s" % _first_text(payload)
+    return _first_text(payload)
+
+
+def _verdict_summary(payload):
+    """The council-verdict line (PURE).
+
+    `safety` is pinned in the contract and is the objection that halts the loop
+    alone, so it is named whenever it is set. The `over_scope` record is
+    rendered whenever the payload carries one — including `flag: false` — so a
+    council that looked and found nothing is distinguishable from a council
+    that never looked. It is a record, never a verdict: it changes no branch.
+    """
+    prefix = "SAFETY " if payload.get("safety") else ""
+    line = "%s%s" % (prefix, payload.get("verdict") or "(no verdict)")
+    if payload.get("concerns"):
+        line += " (%s concerns)" % (payload["concerns"],)
+    note = _scope_note(payload.get("over_scope"))
+    if note:
+        line += " [%s]" % (note,)
+    return line
+
+
+def _scope_note(block):
+    """Human phrase for an over-scope record, or None when none was recorded (PURE).
+
+    Four distinct outcomes, none collapsed into another: absent/null -> None
+    (nothing is rendered at all), `flag: false` -> "scope: clean",
+    `flag: true` -> the flag plus its reason when one was given, and anything
+    malformed -> "scope: unreadable" rather than a silent pass.
+    """
+    if block is None:
+        return None
+    if not isinstance(block, dict) or not isinstance(block.get("flag"), bool):
+        return "scope: unreadable"
+    if not block["flag"]:
+        return "scope: clean"
+    reason = block.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        return "SCOPE-FLAGGED: %s" % _one_line(reason)
+    return "SCOPE-FLAGGED"
+
+
+def _first_text(payload):
+    """The first human-readable field of an arbitrary payload (PURE)."""
+    for key in SUMMARY_TEXT_KEYS:
         if payload.get(key):
             return _one_line(payload[key])
     return _one_line(json.dumps(payload, ensure_ascii=False, sort_keys=True))
@@ -518,9 +563,7 @@ def render_report(body):
                                       if quality.get("detail") else ""))
     critique = body.get("critique") if isinstance(body.get("critique"), dict) else {}
     if critique.get("verdict"):
-        add("Iron Council", "%s%s" % (critique["verdict"],
-                                      " (%s concerns)" % critique["concerns"]
-                                      if critique.get("concerns") else ""))
+        add("Iron Council", _council_summary(critique))
     review = body.get("review") if isinstance(body.get("review"), dict) else {}
     if review:
         parts = []
@@ -565,6 +608,21 @@ def render_report(body):
     lines += ["", "_Rendered from slice-%s-status.json; that sidecar is "
                  "authoritative._" % slice_id, ""]
     return "\n".join(lines)
+
+
+def _council_summary(critique):
+    """The `Iron Council` value of a slice report, from a critique block (PURE).
+
+    Shares `_scope_note` with the decisions log, so the two human surfaces can
+    never disagree about whether a scope judgement was recorded.
+    """
+    line = "%s" % (critique["verdict"],)
+    if critique.get("concerns"):
+        line += " (%s concerns)" % (critique["concerns"],)
+    note = _scope_note(critique.get("over_scope"))
+    if note:
+        line += " — %s" % (note,)
+    return line
 
 
 # --------------------------------------------------------------------------

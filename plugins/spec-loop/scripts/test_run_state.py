@@ -432,6 +432,80 @@ class TestDecisionLine(unittest.TestCase):
     def test_non_object_payload_is_tolerated(self):
         self.assertIn("just text", self.line("decision", "just text"))
 
+    def test_a_flagged_scope_record_is_named_in_the_council_line(self):
+        line = self.line("council-verdict",
+                         {"verdict": "ENDORSE", "concerns": 1,
+                          "over_scope": {"flag": True,
+                                         "reason": "adds a tier heuristic"}})
+        self.assertIn("SCOPE-FLAGGED: adds a tier heuristic", line)
+
+    def test_a_flagged_scope_record_without_a_reason_still_says_flagged(self):
+        line = self.line("council-verdict",
+                         {"verdict": "ENDORSE",
+                          "over_scope": {"flag": True, "reason": None}})
+        self.assertIn("SCOPE-FLAGGED", line)
+
+    def test_a_clean_scope_record_is_rendered_not_swallowed(self):
+        # Unconditional rendering: "the council looked and found nothing" must
+        # be visible, otherwise it is indistinguishable from "nobody looked".
+        line = self.line("council-verdict",
+                         {"verdict": "ENDORSE",
+                          "over_scope": {"flag": False, "reason": None}})
+        self.assertIn("scope: clean", line)
+
+    def test_an_absent_scope_record_renders_no_scope_phrase_at_all(self):
+        line = self.line("council-verdict", {"verdict": "ENDORSE", "concerns": 0})
+        self.assertNotIn("scope", line.lower())
+
+    def test_a_malformed_scope_record_is_reported_as_unreadable(self):
+        line = self.line("council-verdict",
+                         {"verdict": "ENDORSE", "over_scope": {"flag": "yes"}})
+        self.assertIn("scope: unreadable", line)
+
+    def test_a_non_object_scope_record_is_reported_as_unreadable(self):
+        line = self.line("council-verdict",
+                         {"verdict": "ENDORSE", "over_scope": True})
+        self.assertIn("scope: unreadable", line)
+
+    def test_the_safety_prefix_and_the_scope_note_coexist(self):
+        line = self.line("council-verdict",
+                         {"verdict": "OBJECT", "concerns": 2, "safety": True,
+                          "over_scope": {"flag": True, "reason": "dashboards"}})
+        self.assertIn("SAFETY OBJECT (2 concerns)", line)
+        self.assertIn("SCOPE-FLAGGED: dashboards", line)
+
+    def test_a_scope_marked_deferral_is_marked_in_the_decisions_log(self):
+        line = self.line("deferred", {"title": "dashboard charts",
+                                      "over_scope": True})
+        self.assertIn("DEFERRED: SCOPE dashboard charts", line)
+
+    def test_an_ordinary_deferral_is_unmarked(self):
+        line = self.line("deferred", {"title": "dashboard charts"})
+        self.assertIn("DEFERRED: dashboard charts", line)
+        self.assertNotIn("SCOPE", line)
+
+    def test_a_deferral_marked_false_is_not_a_scope_deferral(self):
+        # over_scope: false is an explicit "not a scope deferral"; only the
+        # boolean true earns the marker.
+        line = self.line("deferred", {"title": "dashboard charts",
+                                      "over_scope": False})
+        self.assertIn("DEFERRED: dashboard charts", line)
+        self.assertNotIn("SCOPE", line)
+
+    def test_a_non_string_verdict_is_still_rendered_not_crashed_on(self):
+        # decision_line renders arbitrary events.jsonl payloads, so the
+        # extracted _verdict_summary must stay as type-tolerant as the
+        # %-formatted expression it replaced.
+        line = self.line("council-verdict", {"verdict": 7, "concerns": "many"})
+        self.assertIn("COUNCIL-VERDICT: 7 (many concerns)", line)
+
+    def test_the_scope_marker_is_only_read_on_deferred_events(self):
+        # over_scope on some other event type is not a rendering instruction.
+        line = self.line("decision", {"summary": "use the CSV writer",
+                                      "over_scope": True})
+        self.assertIn("DECISION: use the CSV writer", line)
+        self.assertNotIn("SCOPE", line)
+
 
 class TestRenderReport(unittest.TestCase):
     def test_done_report(self):
@@ -485,6 +559,38 @@ class TestRenderReport(unittest.TestCase):
 
     def test_report_points_at_the_authoritative_sidecar(self):
         self.assertIn("slice-s1-status.json", rs.render_report(sidecar()))
+
+    def test_the_report_names_a_flagged_scope_beside_the_council_verdict(self):
+        text = rs.render_report(sidecar(critique={
+            "verdict": "ENDORSE_WITH_CONCERNS", "concerns": 2,
+            "over_scope": {"flag": True, "reason": "adds a tier heuristic"}}))
+        self.assertIn("Iron Council", text)
+        self.assertIn("SCOPE-FLAGGED: adds a tier heuristic", text)
+
+    def test_the_report_names_a_clean_scope_verdict_too(self):
+        text = rs.render_report(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": False, "reason": None}}))
+        self.assertIn("scope: clean", text)
+
+    def test_the_report_says_nothing_about_scope_when_none_was_recorded(self):
+        # The Tests line has always printed the unrelated "(scope: full)"
+        # test-scope field, so the unrecorded-scope contract is asserted
+        # against the Iron Council line itself, not the whole document.
+        text = rs.render_report(sidecar())
+        self.assertEqual(
+            [ln for ln in text.splitlines() if "Iron Council" in ln],
+            ["- **Iron Council:** ENDORSE_WITH_CONCERNS (2 concerns)"])
+        self.assertNotIn("SCOPE", text)
+
+    def test_a_non_string_council_verdict_is_still_rendered_in_the_report(self):
+        text = rs.render_report(sidecar(critique={"verdict": 7, "concerns": 1}))
+        self.assertIn("**Iron Council:** 7 (1 concerns)", text)
+
+    def test_a_malformed_scope_record_is_named_unreadable_in_the_report(self):
+        text = rs.render_report(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0, "over_scope": {"reason": "x"}}))
+        self.assertIn("scope: unreadable", text)
 
 
 # --------------------------------------------------------------------------
