@@ -433,50 +433,48 @@ class TestDecisionLine(unittest.TestCase):
         self.assertIn("just text", self.line("decision", "just text"))
 
     def test_a_flagged_scope_record_is_named_in_the_council_line(self):
-        line = self.line("council-verdict",
-                         {"verdict": "ENDORSE", "concerns": 1,
-                          "over_scope": {"flag": True,
-                                         "reason": "adds a tier heuristic"}})
+        record = {"flag": True, "reason": "adds a tier heuristic"}
+        payload = {"verdict": "ENDORSE", "concerns": 1, "over_scope": record}
+        line = self.line("council-verdict", payload)
         self.assertIn("SCOPE-FLAGGED: adds a tier heuristic", line)
 
     def test_a_flagged_scope_record_without_a_reason_still_says_flagged(self):
-        line = self.line("council-verdict",
-                         {"verdict": "ENDORSE",
-                          "over_scope": {"flag": True, "reason": None}})
-        self.assertIn("SCOPE-FLAGGED", line)
+        record = {"flag": True, "reason": None}
+        payload = {"verdict": "ENDORSE", "over_scope": record}
+        self.assertIn("SCOPE-FLAGGED", self.line("council-verdict", payload))
 
     def test_a_clean_scope_record_is_rendered_not_swallowed(self):
         # Unconditional rendering: "the council looked and found nothing" must
         # be visible, otherwise it is indistinguishable from "nobody looked".
-        line = self.line("council-verdict",
-                         {"verdict": "ENDORSE",
-                          "over_scope": {"flag": False, "reason": None}})
-        self.assertIn("scope: clean", line)
+        record = {"flag": False, "reason": None}
+        payload = {"verdict": "ENDORSE", "over_scope": record}
+        self.assertIn("scope: clean", self.line("council-verdict", payload))
 
     def test_an_absent_scope_record_renders_no_scope_phrase_at_all(self):
         line = self.line("council-verdict", {"verdict": "ENDORSE", "concerns": 0})
         self.assertNotIn("scope", line.lower())
 
     def test_a_malformed_scope_record_is_reported_as_unreadable(self):
-        line = self.line("council-verdict",
-                         {"verdict": "ENDORSE", "over_scope": {"flag": "yes"}})
+        payload = {"verdict": "ENDORSE", "over_scope": {"flag": "yes"}}
+        line = self.line("council-verdict", payload)
         self.assertIn("scope: unreadable", line)
 
     def test_a_non_object_scope_record_is_reported_as_unreadable(self):
-        line = self.line("council-verdict",
-                         {"verdict": "ENDORSE", "over_scope": True})
+        payload = {"verdict": "ENDORSE", "over_scope": True}
+        line = self.line("council-verdict", payload)
         self.assertIn("scope: unreadable", line)
 
     def test_the_safety_prefix_and_the_scope_note_coexist(self):
-        line = self.line("council-verdict",
-                         {"verdict": "OBJECT", "concerns": 2, "safety": True,
-                          "over_scope": {"flag": True, "reason": "dashboards"}})
+        record = {"flag": True, "reason": "dashboards"}
+        payload = {"verdict": "OBJECT", "concerns": 2, "safety": True}
+        payload["over_scope"] = record
+        line = self.line("council-verdict", payload)
         self.assertIn("SAFETY OBJECT (2 concerns)", line)
         self.assertIn("SCOPE-FLAGGED: dashboards", line)
 
     def test_a_scope_marked_deferral_is_marked_in_the_decisions_log(self):
-        line = self.line("deferred", {"title": "dashboard charts",
-                                      "over_scope": True})
+        payload = {"title": "dashboard charts", "over_scope": True}
+        line = self.line("deferred", payload)
         self.assertIn("DEFERRED: SCOPE dashboard charts", line)
 
     def test_an_ordinary_deferral_is_unmarked(self):
@@ -487,8 +485,8 @@ class TestDecisionLine(unittest.TestCase):
     def test_a_deferral_marked_false_is_not_a_scope_deferral(self):
         # over_scope: false is an explicit "not a scope deferral"; only the
         # boolean true earns the marker.
-        line = self.line("deferred", {"title": "dashboard charts",
-                                      "over_scope": False})
+        payload = {"title": "dashboard charts", "over_scope": False}
+        line = self.line("deferred", payload)
         self.assertIn("DEFERRED: dashboard charts", line)
         self.assertNotIn("SCOPE", line)
 
@@ -501,8 +499,8 @@ class TestDecisionLine(unittest.TestCase):
 
     def test_the_scope_marker_is_only_read_on_deferred_events(self):
         # over_scope on some other event type is not a rendering instruction.
-        line = self.line("decision", {"summary": "use the CSV writer",
-                                      "over_scope": True})
+        payload = {"summary": "use the CSV writer", "over_scope": True}
+        line = self.line("decision", payload)
         self.assertIn("DECISION: use the CSV writer", line)
         self.assertNotIn("SCOPE", line)
 
