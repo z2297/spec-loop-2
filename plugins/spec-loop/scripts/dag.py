@@ -158,19 +158,64 @@ def deps_of(item):
 # --------------------------------------------------------------------------
 
 def validate_dag(dag):
-    """Return every contract violation in `dag` as a list of messages."""
+    """Return every contract violation in `dag` as a list of messages.
+
+    Run-level keys are deliberately asymmetric: `scope_ceiling` is checked only
+    when present, while its neighbours (`run_id`, `base_ref`, `merge_mode`,
+    `shared_constraints`, ...) stay unvalidated. Absence must never be an error:
+    `_load_for_mutation` refuses to mutate a contract-invalid dag, so making any
+    run-level key required would make every pre-existing run un-resumable and
+    hard-fail mark/record-wave/ingest-split mid-run.
+
+    Delegates each independent section of the contract (top-level keys, per-
+    slice fields, cross-slice relations, cycles, waves) to its own helper so no
+    single function accumulates every branch — each section's errors are still
+    concatenated into one flat list, in the same order as before.
+    """
     if not isinstance(dag, dict):
         return ["dag.json must contain a JSON object"]
 
+    errors = list(_top_level_errors(dag))
+    errors.extend(_slice_field_errors(dag))
+    index = slice_index(dag)
+    errors.extend(_slice_relation_errors(dag, index))
+    errors.extend(_cycle_errors(dag, index))
+    errors.extend(_wave_errors(dag, index))
+    return errors
+
+
+def _top_level_errors(dag):
+    """Run-level key checks: schema_version, slices, waves, scope_ceiling."""
     errors = []
     if dag.get("schema_version") != SCHEMA_VERSION:
-        errors.append("schema_version must be %d (found %r)"
-                      % (SCHEMA_VERSION, dag.get("schema_version")))
+        errors.append(
+            "schema_version must be %d (found %r)"
+            % (SCHEMA_VERSION, dag.get("schema_version")))
     if not isinstance(dag.get("slices"), list):
         errors.append("slices must be a list")
     if "waves" in dag and not isinstance(dag.get("waves"), list):
         errors.append("waves must be a list")
+    errors.extend(_scope_ceiling_errors(dag))
+    return errors
 
+
+def _scope_ceiling_errors(dag):
+    if "scope_ceiling" not in dag:
+        return []
+    ceiling = dag.get("scope_ceiling")
+    if not isinstance(ceiling, list):
+        return ["scope_ceiling must be a list of strings"]
+    return [
+        "scope_ceiling entry %d must be a non-empty string (found %r)"
+        % (position, entry)
+        for position, entry in enumerate(ceiling)
+        if not isinstance(entry, str) or not entry.strip()
+    ]
+
+
+def _slice_field_errors(dag):
+    """Per-slice field checks (id, status, risk_tier, depth, deps)."""
+    errors = []
     seen = set()
     for position, item in enumerate(slices_of(dag)):
         sid = item.get("id")
@@ -181,70 +226,135 @@ def validate_dag(dag):
             errors.append("duplicate slice id %r" % sid)
             continue
         seen.add(sid)
+        errors.extend(_single_slice_field_errors(sid, item))
+    return errors
 
-        if item.get("status") not in SLICE_STATUSES:
-            errors.append("slice %s: status must be one of %s (found %r)"
-                          % (sid, "/".join(SLICE_STATUSES), item.get("status")))
-        if item.get("risk_tier") not in RISK_TIERS:
-            errors.append("slice %s: risk_tier must be 1, 2 or 3 (found %r)"
-                          % (sid, item.get("risk_tier")))
-        depth = item.get("depth")
-        if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0:
-            errors.append("slice %s: depth must be a non-negative integer (found %r)"
-                          % (sid, depth))
-        elif depth > MAX_DEPTH:
-            errors.append("slice %s: depth %d exceeds the cap of %d"
-                          % (sid, depth, MAX_DEPTH))
-        if not isinstance(item.get("deps", []), list):
-            errors.append("slice %s: deps must be a list" % sid)
 
-    index = slice_index(dag)
+def _single_slice_field_errors(sid, item):
+    """Every field message for one slice that has a usable, unique id."""
+    errors = list(_slice_status_errors(sid, item.get("status")))
+    errors.extend(_risk_tier_errors(sid, item.get("risk_tier")))
+    errors.extend(_depth_errors(sid, item.get("depth")))
+    errors.extend(_deps_shape_errors(sid, item.get("deps", [])))
+    return errors
+
+
+def _slice_status_errors(sid, status):
+    if status in SLICE_STATUSES:
+        return []
+    return ["slice %s: status must be one of %s (found %r)"
+            % (sid, "/".join(SLICE_STATUSES), status)]
+
+
+def _risk_tier_errors(sid, risk_tier):
+    if risk_tier in RISK_TIERS:
+        return []
+    return ["slice %s: risk_tier must be 1, 2 or 3 (found %r)" % (sid, risk_tier)]
+
+
+def _depth_errors(sid, depth):
+    if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0:
+        return ["slice %s: depth must be a non-negative integer (found %r)"
+               % (sid, depth)]
+    if depth > MAX_DEPTH:
+        return ["slice %s: depth %d exceeds the cap of %d" % (sid, depth, MAX_DEPTH)]
+    return []
+
+
+def _deps_shape_errors(sid, deps):
+    if isinstance(deps, list):
+        return []
+    return ["slice %s: deps must be a list" % sid]
+
+
+def _slice_relation_errors(dag, index):
+    """Cross-slice checks: deps resolve, and parent/split/depth agreement."""
+    errors = []
     for item in slices_of(dag):
         sid = item.get("id")
         if not isinstance(sid, str) or not sid:
             continue
-        for dep in deps_of(item):
-            if dep not in index:
-                errors.append("slice %s: dep %r references an unknown slice" % (sid, dep))
-        parent_id = item.get("parent")
-        if parent_id is None:
-            continue
-        parent = index.get(parent_id)
-        if parent is None:
-            errors.append("slice %s: unknown parent %r" % (sid, parent_id))
-            continue
-        if parent.get("status") != "split":
-            errors.append("slice %s: parent %s must have status \"split\" (found %r)"
-                          % (sid, parent_id, parent.get("status")))
-        if isinstance(item.get("depth"), int) and isinstance(parent.get("depth"), int):
-            if item["depth"] != parent["depth"] + 1:
-                errors.append("slice %s: depth %r must be parent %s depth + 1 (%d)"
-                              % (sid, item["depth"], parent_id, parent["depth"] + 1))
+        errors.extend(_dep_reference_errors(sid, item, index))
+        errors.extend(_parent_relation_errors(sid, item, index))
+    return errors
 
-    errors.extend(_cycle_errors(dag, index))
 
+def _dep_reference_errors(sid, item, index):
+    return ["slice %s: dep %r references an unknown slice" % (sid, dep)
+            for dep in deps_of(item) if dep not in index]
+
+
+def _parent_relation_errors(sid, item, index):
+    parent_id = item.get("parent")
+    if parent_id is None:
+        return []
+    parent = index.get(parent_id)
+    if parent is None:
+        return ["slice %s: unknown parent %r" % (sid, parent_id)]
+    errors = list(_parent_status_errors(sid, parent_id, parent.get("status")))
+    errors.extend(_child_depth_errors(
+        sid, parent_id, item.get("depth"), parent.get("depth")))
+    return errors
+
+
+def _parent_status_errors(sid, parent_id, parent_status):
+    if parent_status == "split":
+        return []
+    return ["slice %s: parent %s must have status \"split\" (found %r)"
+            % (sid, parent_id, parent_status)]
+
+
+def _child_depth_errors(sid, parent_id, child_depth, parent_depth):
+    """A child sits exactly one level below its parent (unknown depths pass)."""
+    if not isinstance(child_depth, int) or not isinstance(parent_depth, int):
+        return []
+    if child_depth == parent_depth + 1:
+        return []
+    return ["slice %s: depth %r must be parent %s depth + 1 (%d)"
+            % (sid, child_depth, parent_id, parent_depth + 1)]
+
+
+def _wave_errors(dag, index):
+    """Wave checks: 1-based unique index, status enum, slice_ids resolve."""
+    errors = []
     wave_indexes = set()
     for position, item in enumerate(waves_of(dag)):
-        wave_index = item.get("index")
-        label = wave_index if isinstance(wave_index, int) else "at position %d" % position
-        if not isinstance(wave_index, int) or isinstance(wave_index, bool) or wave_index < 1:
-            errors.append("wave %s: index must be a 1-based integer" % label)
-        elif wave_index in wave_indexes:
-            errors.append("duplicate wave index %d" % wave_index)
-        else:
-            wave_indexes.add(wave_index)
-        if item.get("status") not in WAVE_STATUSES:
-            errors.append("wave %s: status must be one of %s (found %r)"
-                          % (label, "/".join(WAVE_STATUSES), item.get("status")))
-        ids = item.get("slice_ids")
-        if not isinstance(ids, list):
-            errors.append("wave %s: slice_ids must be a list" % label)
-            continue
-        for sid in ids:
-            if sid not in index:
-                errors.append("wave %s: slice_ids entry %r references an unknown slice"
-                              % (label, sid))
+        errors.extend(_single_wave_errors(position, item, index, wave_indexes))
     return errors
+
+
+def _single_wave_errors(position, item, index, wave_indexes):
+    """Every field message for one wave, in index/status/slice_ids order."""
+    wave_index = item.get("index")
+    label = wave_index if isinstance(wave_index, int) else "at position %d" % position
+    errors = list(_wave_index_errors(wave_index, label, wave_indexes))
+    errors.extend(_wave_status_errors(label, item.get("status")))
+    errors.extend(_wave_slice_id_errors(label, item.get("slice_ids"), index))
+    return errors
+
+
+def _wave_index_errors(wave_index, label, wave_indexes):
+    """1-based and unique; records a usable index in `wave_indexes` (IMPURE)."""
+    if not isinstance(wave_index, int) or isinstance(wave_index, bool) or wave_index < 1:
+        return ["wave %s: index must be a 1-based integer" % label]
+    if wave_index in wave_indexes:
+        return ["duplicate wave index %d" % wave_index]
+    wave_indexes.add(wave_index)
+    return []
+
+
+def _wave_status_errors(label, status):
+    if status in WAVE_STATUSES:
+        return []
+    return ["wave %s: status must be one of %s (found %r)"
+            % (label, "/".join(WAVE_STATUSES), status)]
+
+
+def _wave_slice_id_errors(label, ids, index):
+    if not isinstance(ids, list):
+        return ["wave %s: slice_ids must be a list" % label]
+    return ["wave %s: slice_ids entry %r references an unknown slice" % (label, sid)
+            for sid in ids if sid not in index]
 
 
 def _cycle_errors(dag, index):
