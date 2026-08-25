@@ -11,3 +11,4 @@ Rendered from the run's events; append-only, and nothing parses it back.
 [intake] DEFERRED: the pre-existing fixableByReplan vs fixable_by_replan casing mismatch in all three council agent docs is left unfixed — AT: 2026-08-25T17:52:29Z
 [intake] DEFERRED: dashboard surfacing of the new over-scope flag is not built - three server allowlists and two client allowlists would need changes — AT: 2026-08-25T17:52:29Z
 [run] DECISION: human chose to update the installed plugin to 2.1.0 and resume, rather than run four waves on stale 2.0.0 machinery — AT: 2026-08-25T17:57:44Z
+[run] DECISION: installed plugin updated 2.0.0 -> 2.1.0; the 2.1.0 cache is byte-identical to the repo plugin dir and carries the fixed guard — AT: 2026-08-25T17:59:13Z
