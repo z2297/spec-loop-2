@@ -1201,12 +1201,12 @@ class TestPinnedPayloadFacts(RunStateTestCase):
         self.assertEqual(stored["payload"], payload)
 
     def test_a_deferred_event_marks_deferred_scope_with_over_scope_true(self):
-        rs.append_event(self.run_dir, TS, "s1", "deferred",
-                        {"title": "dashboard charts", "over_scope": True})
-        self.assertEqual(self.events()[0]["payload"],
-                         {"title": "dashboard charts", "over_scope": True})
-        self.assertIn("DEFERRED: SCOPE dashboard charts",
-                      self.read("decisions-log.md"))
+        payload = {"title": "dashboard charts", "over_scope": True}
+        rs.append_event(self.run_dir, TS, "s1", "deferred", payload)
+        stored = self.events()[0]["payload"]
+        decisions_log = self.read("decisions-log.md")
+        self.assertEqual(stored, payload)
+        self.assertIn("DEFERRED: SCOPE dashboard charts", decisions_log)
 
     def test_over_scope_never_changes_the_recorded_verdict(self):
         # Record-only: the flag is not a vote and not a finding.

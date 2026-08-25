@@ -799,36 +799,71 @@ def _council_stats(parsed):
     carries a ``safety`` flag: "no payload said safety" is not evidence that no
     SAFETY objection was raised. ``over_scope_flags`` and
     ``over_scope_deferrals`` are a record of what the council observed and
-    feed no threshold, gate or blocking decision."""
+    feed no threshold, gate or blocking decision. Split into small PURE
+    helpers by concern so this function's own branching stays flat as the
+    stats grow new fields."""
     verdict_events = _of_type(parsed["events"], "council-verdict")
-    critiques = [sc["critique"] for sc in parsed["sidecars"] if sc["critique"]]
-    sidecar_verdicts = [c["verdict"] for c in critiques if c["verdict"]]
+    critiques = _sidecar_critiques(parsed)
     if not verdict_events and not critiques:
-        return {"basis": None, "verdicts": None, "object_rate": None,
-                "safety_objections": None, "concerns_total": None,
-                "concerns_deferred": None, "by_member": None,
-                "slice_verdicts": None, "over_scope_flags": None,
-                "over_scope_deferrals": None}
-    verdicts = [_pstr(e, "verdict") for e in verdict_events]
-    verdicts = [v.upper() for v in verdicts if v and v.upper() in COUNCIL_VERDICTS]
-    safety_flagged = [e for e in verdict_events
-                      if isinstance(e["payload"].get("safety"), bool)]
+        return _empty_council_stats()
+    verdicts = _normalized_verdicts(verdict_events)
+    deferred_events = _of_type(parsed["events"], "deferred")
     return {
         "basis": _basis(bool(verdict_events), bool(critiques)),
         "verdicts": _tally(verdicts) if verdict_events else None,
         "object_rate": _ratio(verdicts.count("OBJECT"), len(verdicts)),
-        "safety_objections": sum(1 for e in safety_flagged
-                                 if e["payload"]["safety"]) if safety_flagged
-                             else None,
+        "safety_objections": _safety_objections(verdict_events),
         "concerns_total": _concerns_total(verdict_events, critiques),
-        "concerns_deferred": _sum_optional(_plist_len(e, "deferred")
-                                           for e in verdict_events),
+        "concerns_deferred": _concerns_deferred(verdict_events),
         "by_member": _tally(_pstr(e, "member") for e in verdict_events) or None,
-        "slice_verdicts": _tally(sidecar_verdicts) or None,
+        "slice_verdicts": _tally(_sidecar_verdicts(critiques)) or None,
         "over_scope_flags": _flag_count(verdict_events, "over_scope"),
-        "over_scope_deferrals": _marked_count(
-            _of_type(parsed["events"], "deferred"), "over_scope"),
+        "over_scope_deferrals": _marked_count(deferred_events, "over_scope"),
     }
+
+
+def _concerns_deferred(verdict_events):
+    """The summed count of `deferred` items across verdict payloads (PURE)."""
+    lengths = (_plist_len(e, "deferred") for e in verdict_events)
+    return _sum_optional(lengths)
+
+
+def _sidecar_critiques(parsed):
+    """Non-null critique blocks from every parsed sidecar (PURE)."""
+    return [sc["critique"] for sc in parsed["sidecars"] if sc["critique"]]
+
+
+def _sidecar_verdicts(critiques):
+    """The non-null `verdict` of each sidecar critique block (PURE)."""
+    return [c["verdict"] for c in critiques if c["verdict"]]
+
+
+def _empty_council_stats():
+    """The all-null council-stats shape for a run with no council data (PURE)."""
+    return {"basis": None, "verdicts": None, "object_rate": None,
+            "safety_objections": None, "concerns_total": None,
+            "concerns_deferred": None, "by_member": None,
+            "slice_verdicts": None, "over_scope_flags": None,
+            "over_scope_deferrals": None}
+
+
+def _normalized_verdicts(verdict_events):
+    """Recognized council verdicts, upper-cased (PURE)."""
+    verdicts = [_pstr(e, "verdict") for e in verdict_events]
+    return [v.upper() for v in verdicts if v and v.upper() in COUNCIL_VERDICTS]
+
+
+def _safety_objections(verdict_events):
+    """How many verdict payloads flagged `safety: true`, or None (PURE)."""
+    safety_flagged = [e for e in verdict_events if _has_bool_safety(e)]
+    if not safety_flagged:
+        return None
+    return sum(1 for e in safety_flagged if e["payload"]["safety"])
+
+
+def _has_bool_safety(event):
+    """True if `event`'s payload carries a boolean `safety` flag (PURE)."""
+    return isinstance(event["payload"].get("safety"), bool)
 
 
 def _flag_count(events, key):
@@ -1685,7 +1720,56 @@ def legacy_compute_metrics(artifacts):
 
 
 def _legacy_safety(events, escalations, decisions, observed):
-    council = [e for e in events if e["tag"] == "council"]
+    """The v1 prose-log safety metrics block. Split into small PURE helpers
+    by sub-block so this function's own branching stays flat as the block
+    grows new fields; the legacy prose channel never carries a scope
+    judgement, so the over-scope counters are honestly ``None`` here."""
+    council = _legacy_council_events(events)
+    verdicts, safety_objections = _legacy_council_tally(council)
+    precedent = _legacy_precedent_count(decisions)
+    return {
+        "basis": BASIS_LEGACY if observed else None,
+        "escalations": _legacy_escalations_block(escalations, observed),
+        "decisions_total": len(decisions) if observed else None,
+        "deferrals_total": None,
+        "autonomy_ratio": _legacy_autonomy_ratio(decisions, escalations, observed),
+        "escalation_answer_latency_s": _answer_latency(escalations),
+        "council": _legacy_council_block(council, verdicts, safety_objections),
+        "reversibility_mix": _legacy_reversibility_mix(events),
+        "precedent_reuse": _legacy_precedent_reuse(precedent, decisions),
+    }
+
+
+def _legacy_council_events(events):
+    """The v1 log lines tagged as council output (PURE)."""
+    return [e for e in events if e["tag"] == "council"]
+
+
+def _legacy_precedent_count(decisions):
+    """How many v1 decision lines mention reusing a precedent (PURE)."""
+    return sum(1 for e in decisions if LEGACY_PRECEDENT.search(e["rest"]))
+
+
+def _legacy_reversibility_mix(events):
+    """The `reversibility_mix` tally across every v1 log line (PURE)."""
+    return _tally(e["reversibility"] for e in events) or None
+
+
+def _legacy_autonomy_ratio(decisions, escalations, observed):
+    """The `autonomy_ratio` field of the legacy safety metrics (PURE)."""
+    if not observed:
+        return None
+    return _ratio(len(decisions), len(decisions) + len(escalations))
+
+
+def _legacy_precedent_reuse(precedent, decisions):
+    """The `precedent_reuse` sub-block of the legacy safety metrics (PURE)."""
+    return {"count": precedent if decisions else None,
+            "rate": _ratio(precedent, len(decisions))}
+
+
+def _legacy_council_tally(council):
+    """`(verdicts, safety_objections)` tallied from v1 council log lines (PURE)."""
     verdicts = []
     safety_objections = 0
     for event in council:
@@ -1694,42 +1778,39 @@ def _legacy_safety(events, escalations, decisions, observed):
             verdicts.append(verdict)
         if verdict == "OBJECT" and _legacy_mentions_unnegated_safety(event["rest"]):
             safety_objections += 1
-    precedent = sum(1 for e in decisions if LEGACY_PRECEDENT.search(e["rest"]))
+    return verdicts, safety_objections
+
+
+def _legacy_escalations_block(escalations, observed):
+    """The `escalations` sub-block of the legacy safety metrics (PURE)."""
     return {
         "basis": BASIS_LEGACY if observed else None,
-        "escalations": {
-            "basis": BASIS_LEGACY if observed else None,
-            "total": len(escalations) if observed else None,
-            "open": sum(1 for e in escalations if e["status"] == "OPEN")
+        "total": len(escalations) if observed else None,
+        "open": sum(1 for e in escalations if e["status"] == "OPEN")
+                if observed else None,
+        "answered": sum(1 for e in escalations if e["status"] == "ANSWERED")
                     if observed else None,
-            "answered": sum(1 for e in escalations if e["status"] == "ANSWERED")
-                        if observed else None,
-            "by_trigger": _tally(t for e in escalations for t in e["triggers"])
-                          if observed else None,
-            "per_scope": _tally(e["scope"] for e in escalations)
-                         if observed else None,
-            "unkeyed_events": None,
-        },
-        "decisions_total": len(decisions) if observed else None,
-        "deferrals_total": None,
-        "autonomy_ratio": _ratio(len(decisions), len(decisions) + len(escalations))
-                          if observed else None,
-        "escalation_answer_latency_s": _answer_latency(escalations),
-        "council": {
-            "basis": BASIS_LEGACY if council else None,
-            "verdicts": _tally(verdicts) if council else None,
-            "object_rate": _ratio(verdicts.count("OBJECT"), len(council)),
-            "safety_objections": safety_objections if council else None,
-            "concerns_total": None,
-            "concerns_deferred": None,
-            "by_member": None,
-            "slice_verdicts": None,
-            "over_scope_flags": None,
-            "over_scope_deferrals": None,
-        },
-        "reversibility_mix": _tally(e["reversibility"] for e in events) or None,
-        "precedent_reuse": {"count": precedent if decisions else None,
-                            "rate": _ratio(precedent, len(decisions))},
+        "by_trigger": _tally(t for e in escalations for t in e["triggers"])
+                      if observed else None,
+        "per_scope": _tally(e["scope"] for e in escalations)
+                     if observed else None,
+        "unkeyed_events": None,
+    }
+
+
+def _legacy_council_block(council, verdicts, safety_objections):
+    """The `council` sub-block of the legacy safety metrics (PURE)."""
+    return {
+        "basis": BASIS_LEGACY if council else None,
+        "verdicts": _tally(verdicts) if council else None,
+        "object_rate": _ratio(verdicts.count("OBJECT"), len(council)),
+        "safety_objections": safety_objections if council else None,
+        "concerns_total": None,
+        "concerns_deferred": None,
+        "by_member": None,
+        "slice_verdicts": None,
+        "over_scope_flags": None,
+        "over_scope_deferrals": None,
     }
 
 

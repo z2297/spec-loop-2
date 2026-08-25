@@ -277,11 +277,29 @@ def validate_sidecar(body):
 
     Fail-closed by construction: an unknown or missing `status` is itself an
     error, so a sidecar can never slip past the per-status requirements by
-    naming a status this contract does not know.
+    naming a status this contract does not know. The checks are split into
+    focused, PURE helpers by concern (top-level fields, shape/type checks,
+    critique/quality, and per-status requirements) so no single function's
+    branching grows unbounded as the contract grows.
     """
     if not isinstance(body, dict):
         return ["sidecar must contain a JSON object"]
 
+    top_errors, status = _top_level_sidecar_errors(body)
+    errors = list(top_errors)
+    errors.extend(_shape_errors(body))
+    errors.extend(_critique_and_quality_errors(body))
+    split = body.get("split")
+    if isinstance(split, dict):
+        errors.extend(_validate_children(split.get("children")))
+    for position, record in enumerate(body.get("escalations") or []):
+        errors.extend(validate_escalation(record, "escalations[%d]" % (position + 1)))
+    errors.extend(_status_requirement_errors(status, body, split))
+    return errors
+
+
+def _top_level_sidecar_errors(body):
+    """schema_version/id/status checks (PURE). Returns (errors, normalized_status)."""
     errors = []
     if body.get("schema_version") != SCHEMA_VERSION:
         errors.append("schema_version must be %d (found %r)"
@@ -293,65 +311,99 @@ def validate_sidecar(body):
         errors.append("status must be one of %s (found %r)"
                       % ("/".join(SLICE_RESULT_STATUSES), status))
         status = None
+    return errors, status
 
-    for key in ("commits", "critique", "review", "tests", "quality", "split"):
-        if key in body and body[key] is not None and not isinstance(body[key], dict):
-            errors.append("%s must be a JSON object when present" % key)
-    if "escalations" in body and body["escalations"] is not None \
-            and not isinstance(body["escalations"], list):
-        errors.append("escalations must be a list when present")
-    if "events" in body and body["events"] is not None \
-            and not isinstance(body["events"], list):
-        errors.append("events must be a list when present")
+
+_SHAPE_TYPE_FIELDS = (
+    ("commits", dict, "JSON object"), ("critique", dict, "JSON object"),
+    ("review", dict, "JSON object"), ("tests", dict, "JSON object"),
+    ("quality", dict, "JSON object"), ("split", dict, "JSON object"),
+    ("escalations", list, "list"), ("events", list, "list"),
+)
+
+
+def _shape_errors(body):
+    """Type/shape checks for the optional top-level fields (PURE)."""
+    errors = _shape_type_errors(body)
+    errors.extend(_shape_numeric_errors(body))
+    return errors
+
+
+def _shape_type_errors(body):
+    """Type checks for the optional dict/list fields, the event list's own
+    content, and the `branch` string field (PURE)."""
+    errors = []
+    for key, kind, noun in _SHAPE_TYPE_FIELDS:
+        if key in body and body[key] is not None and not isinstance(body[key], kind):
+            errors.append("%s must be a %s when present" % (key, noun))
     errors.extend(_returned_event_errors(body.get("events")))
-    if "branch" in body and body["branch"] is not None \
-            and not _nonempty_str(body["branch"]):
+    if "branch" in body and body["branch"] is not None and not _nonempty_str(body["branch"]):
         errors.append("branch must be a non-empty string when present")
+    return errors
+
+
+def _shape_numeric_errors(body):
+    """The integer fields and the tier-enum fields (PURE)."""
+    errors = []
     for key in ("wave", "tasks_completed", "agents_used"):
         if body.get(key) is not None and not _is_int(body[key]):
-            errors.append("%s must be an integer when present (found %r)"
-                          % (key, body[key]))
+            errors.append("%s must be an integer when present (found %r)" % (key, body[key]))
     for key in ("risk_tier", "review_tier"):
         if body.get(key) is not None and body[key] not in RISK_TIERS:
-            errors.append("%s must be 1, 2 or 3 when present (found %r)"
-                          % (key, body[key]))
+            errors.append("%s must be 1, 2 or 3 when present (found %r)" % (key, body[key]))
+    return errors
 
-    critique = body.get("critique")
-    if isinstance(critique, dict) and critique.get("verdict") not in VERDICTS:
-        errors.append("critique.verdict must be one of %s (found %r)"
-                      % ("/".join(VERDICTS), critique.get("verdict")))
-    if isinstance(critique, dict):
-        errors.extend(_over_scope_errors(critique.get("over_scope")))
+
+def _critique_and_quality_errors(body):
+    """critique.verdict/critique.over_scope and quality.status checks (PURE)."""
+    errors = _critique_errors(body.get("critique"))
     quality = body.get("quality")
     if isinstance(quality, dict) and quality.get("status") not in QUALITY_STATUSES:
-        errors.append("quality.status must be one of %s (found %r)"
-                      % ("/".join(QUALITY_STATUSES), quality.get("status")))
-    split = body.get("split")
-    if isinstance(split, dict):
-        errors.extend(_validate_children(split.get("children")))
-    for position, record in enumerate(body.get("escalations") or []):
-        errors.extend(validate_escalation(record, "escalations[%d]" % (position + 1)))
+        errors.append("quality.status must be one of %s (found %r)" % ("/".join(QUALITY_STATUSES), quality.get("status")))
+    return errors
 
+
+def _critique_errors(critique):
+    """critique.verdict and critique.over_scope checks (PURE)."""
+    if not isinstance(critique, dict):
+        return []
+    errors = []
+    if critique.get("verdict") not in VERDICTS:
+        errors.append("critique.verdict must be one of %s (found %r)" % ("/".join(VERDICTS), critique.get("verdict")))
+    errors.extend(_over_scope_errors(critique.get("over_scope")))
+    return errors
+
+
+def _status_requirement_errors(status, body, split):
+    """Per-status required-field checks (PURE)."""
     if status == "DONE":
-        commits = body.get("commits")
-        if not isinstance(commits, dict):
-            errors.append("DONE requires commits with a head sha")
-        elif not _nonempty_str(commits.get("head")):
-            errors.append("DONE requires commits.head (a DONE slice committed "
-                          "something)")
-        tests = body.get("tests")
-        if not isinstance(tests, dict):
-            errors.append("DONE requires tests (command, result, scope)")
-        elif not _nonempty_str(tests.get("result")):
-            errors.append("DONE requires tests.result")
-        if not isinstance(body.get("quality"), dict):
-            errors.append("DONE requires quality (status, detail)")
-    elif status == "SPLIT":
+        return _done_requirement_errors(body)
+    if status == "SPLIT":
         if not isinstance(split, dict):
-            errors.append("SPLIT requires split.children (the proposed children)")
-    elif status == "ESCALATED":
+            return ["SPLIT requires split.children (the proposed children)"]
+        return []
+    if status == "ESCALATED":
         if not body.get("escalations"):
-            errors.append("ESCALATED requires a non-empty escalations list")
+            return ["ESCALATED requires a non-empty escalations list"]
+        return []
+    return []
+
+
+def _done_requirement_errors(body):
+    """The DONE-status field requirements (PURE)."""
+    errors = []
+    commits = body.get("commits")
+    if not isinstance(commits, dict):
+        errors.append("DONE requires commits with a head sha")
+    elif not _nonempty_str(commits.get("head")):
+        errors.append("DONE requires commits.head (a DONE slice committed something)")
+    tests = body.get("tests")
+    if not isinstance(tests, dict):
+        errors.append("DONE requires tests (command, result, scope)")
+    elif not _nonempty_str(tests.get("result")):
+        errors.append("DONE requires tests.result")
+    if not isinstance(body.get("quality"), dict):
+        errors.append("DONE requires quality (status, detail)")
     return errors
 
 
@@ -527,9 +579,32 @@ def _orphan_answer_entry(event):
 
 
 def render_report(body):
-    """Render the short human summary of one sidecar (PURE, null-honest)."""
+    """Render the short human summary of one sidecar (PURE, null-honest).
+
+    The sections below are split into focused, PURE helpers by concern (the
+    top summary bullets, then the optional residual/split/escalations
+    sections) so no single function's branching grows unbounded as the
+    report grows new sections.
+    """
     slice_id = body.get("id") or "?"
+    review = body.get("review") if isinstance(body.get("review"), dict) else {}
     lines = ["# Slice %s — %s" % (slice_id, body.get("status") or "UNKNOWN"), ""]
+    lines += _report_summary_lines(body, review)
+    lines += _report_residual_lines(review)
+    lines += _report_split_lines(body)
+    lines += _report_escalation_lines(body)
+    footer = "_Rendered from slice-%s-status.json; that sidecar is authoritative._" % slice_id
+    lines += ["", footer, ""]
+    return "\n".join(lines)
+
+
+def _report_summary_lines(body, review):
+    """The top `- **Label:** value` bullets of a slice report (PURE).
+
+    Each non-trivial field's value is computed by its own small PURE helper
+    (returning None when the field contributes no bullet) so this function
+    stays a flat dispatch table rather than growing nested per-field logic."""
+    lines = []
 
     def add(label, value):
         if value not in (None, "", []):
@@ -537,77 +612,123 @@ def render_report(body):
 
     add("Wave", body.get("wave"))
     add("Branch", body.get("branch"))
-    commits = body.get("commits") if isinstance(body.get("commits"), dict) else {}
-    if commits.get("base") or commits.get("head"):
-        add("Commits", "%s → %s" % (commits.get("base") or "(unknown base)",
-                                    commits.get("head") or "nothing committed"))
-    if body.get("risk_tier"):
-        review_tier = body.get("review_tier")
-        add("Risk tier", "%s%s" % (body["risk_tier"],
-                                   " (review tier %s)" % review_tier
-                                   if review_tier and review_tier != body["risk_tier"]
-                                   else ""))
+    add("Commits", _report_commits_value(body))
+    add("Risk tier", _report_risk_tier_value(body))
     add("Tasks completed", body.get("tasks_completed"))
-
-    tests = body.get("tests") if isinstance(body.get("tests"), dict) else {}
-    if tests.get("command") or tests.get("result"):
-        detail = "`%s` — %s" % (tests.get("command") or "(command not recorded)",
-                                tests.get("result") or "(result not recorded)")
-        if tests.get("scope"):
-            detail += " (scope: %s)" % tests["scope"]
-        add("Tests", detail)
-    quality = body.get("quality") if isinstance(body.get("quality"), dict) else {}
-    if quality.get("status"):
-        add("Quality gate", "%s%s" % (quality["status"],
-                                      " — %s" % _one_line(quality.get("detail"))
-                                      if quality.get("detail") else ""))
-    critique = body.get("critique") if isinstance(body.get("critique"), dict) else {}
-    if critique.get("verdict"):
-        add("Iron Council", _council_summary(critique))
-    review = body.get("review") if isinstance(body.get("review"), dict) else {}
+    add("Tests", _report_tests_value(body))
+    add("Quality gate", _report_quality_value(body))
+    add("Iron Council", _report_council_value(body))
     if review:
-        parts = []
-        for key, label in (("confirmed", "confirmed"), ("refuted", "refuted"),
-                           ("evidence_failed", "evidence-failed"),
-                           ("fix_rounds", "fix round")):
-            value = review.get(key)
-            if value is None:
-                continue
-            plural = "s" if key == "fix_rounds" and value != 1 else ""
-            parts.append("%s %s%s" % (value, label, plural))
-        add("Review", ", ".join(parts))
+        add("Review", _review_summary(review))
     add("Agents used", body.get("agents_used"))
-    if body.get("started_at") or body.get("finished_at"):
-        add("Window", "%s → %s" % (body.get("started_at") or "(unknown)",
-                                   body.get("finished_at") or "(unknown)"))
+    add("Window", _report_window_value(body))
+    return lines
 
+
+def _report_commits_value(body):
+    """The `Commits` bullet's value, or None (PURE)."""
+    commits = body.get("commits") if isinstance(body.get("commits"), dict) else {}
+    if not (commits.get("base") or commits.get("head")):
+        return None
+    return "%s → %s" % (commits.get("base") or "(unknown base)", commits.get("head") or "nothing committed")
+
+
+def _report_risk_tier_value(body):
+    """The `Risk tier` bullet's value, or None (PURE)."""
+    if not body.get("risk_tier"):
+        return None
+    review_tier = body.get("review_tier")
+    suffix = ""
+    if review_tier and review_tier != body["risk_tier"]:
+        suffix = " (review tier %s)" % review_tier
+    return "%s%s" % (body["risk_tier"], suffix)
+
+
+def _report_tests_value(body):
+    """The `Tests` bullet's value, or None (PURE)."""
+    tests = body.get("tests") if isinstance(body.get("tests"), dict) else {}
+    if not (tests.get("command") or tests.get("result")):
+        return None
+    detail = "`%s` — %s" % (tests.get("command") or "(command not recorded)", tests.get("result") or "(result not recorded)")
+    if tests.get("scope"):
+        detail += " (scope: %s)" % tests["scope"]
+    return detail
+
+
+def _report_quality_value(body):
+    """The `Quality gate` bullet's value, or None (PURE)."""
+    quality = body.get("quality") if isinstance(body.get("quality"), dict) else {}
+    if not quality.get("status"):
+        return None
+    suffix = " — %s" % _one_line(quality.get("detail")) if quality.get("detail") else ""
+    return "%s%s" % (quality["status"], suffix)
+
+
+def _report_council_value(body):
+    """The `Iron Council` bullet's value, or None (PURE)."""
+    critique = body.get("critique") if isinstance(body.get("critique"), dict) else {}
+    if not critique.get("verdict"):
+        return None
+    return _council_summary(critique)
+
+
+def _report_window_value(body):
+    """The `Window` bullet's value, or None (PURE)."""
+    if not (body.get("started_at") or body.get("finished_at")):
+        return None
+    return "%s → %s" % (body.get("started_at") or "(unknown)", body.get("finished_at") or "(unknown)")
+
+
+def _review_summary(review):
+    """The `Review` bullet's value: counts of confirmed/refuted/etc (PURE)."""
+    parts = []
+    for key, label in (("confirmed", "confirmed"), ("refuted", "refuted"),
+                       ("evidence_failed", "evidence-failed"),
+                       ("fix_rounds", "fix round")):
+        value = review.get(key)
+        if value is None:
+            continue
+        plural = "s" if key == "fix_rounds" and value != 1 else ""
+        parts.append("%s %s%s" % (value, label, plural))
+    return ", ".join(parts)
+
+
+def _report_residual_lines(review):
+    """The `## Residual findings` section, or nothing when there is none (PURE)."""
     residual = [r for r in (review.get("residual") or []) if r]
-    if residual:
-        lines += ["", "## Residual findings", ""]
-        lines += ["- %s" % _one_line(item, 300) for item in residual]
+    if not residual:
+        return []
+    return ["", "## Residual findings", ""] + \
+        ["- %s" % _one_line(item, 300) for item in residual]
 
+
+def _report_split_lines(body):
+    """The `## Proposed split` section, or nothing when there is none (PURE)."""
     split = body.get("split") if isinstance(body.get("split"), dict) else {}
     children = [c for c in (split.get("children") or []) if isinstance(c, dict)]
-    if children:
-        lines += ["", "## Proposed split into %d children" % len(children), ""]
-        for position, child in enumerate(children):
-            refs = [str(r) for r in (child.get("internal_deps") or [])]
-            lines.append("%d. %s%s" % (position + 1,
-                                       _one_line(child.get("goal") or "(no goal)", 300),
-                                       " (after child %s)" % ", ".join(refs)
-                                       if refs else ""))
+    if not children:
+        return []
+    lines = ["", "## Proposed split into %d children" % len(children), ""]
+    for position, child in enumerate(children):
+        refs = [str(r) for r in (child.get("internal_deps") or [])]
+        lines.append("%d. %s%s" % (position + 1,
+                                   _one_line(child.get("goal") or "(no goal)", 300),
+                                   " (after child %s)" % ", ".join(refs)
+                                   if refs else ""))
+    return lines
 
+
+def _report_escalation_lines(body):
+    """The `## Escalations` section, or nothing when there are none (PURE)."""
     escalations = [e for e in (body.get("escalations") or []) if isinstance(e, dict)]
-    if escalations:
-        lines += ["", "## Escalations", ""]
-        for record in escalations:
-            lines.append("- **%s** `%s` — %s"
-                         % (record.get("status") or "OPEN", record.get("id") or "?",
-                            _one_line(record.get("title") or "(untitled)")))
-
-    lines += ["", "_Rendered from slice-%s-status.json; that sidecar is "
-                 "authoritative._" % slice_id, ""]
-    return "\n".join(lines)
+    if not escalations:
+        return []
+    lines = ["", "## Escalations", ""]
+    for record in escalations:
+        lines.append("- **%s** `%s` — %s"
+                     % (record.get("status") or "OPEN", record.get("id") or "?",
+                        _one_line(record.get("title") or "(untitled)")))
+    return lines
 
 
 def _council_summary(critique):
