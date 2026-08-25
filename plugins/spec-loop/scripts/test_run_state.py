@@ -1248,6 +1248,31 @@ class TestPinnedPayloadFacts(RunStateTestCase):
         stored = [e for e in self.events() if e["type"] == "council-verdict"][0]
         self.assertEqual(stored["payload"], payload)
 
+    def test_the_wave_emitted_council_verdict_shape_validates_and_renders(self):
+        # The payload slice-wave.workflow.js builds after run 20260825: the
+        # scope record sits beside `deferred[]`, never replacing it. The JS is
+        # not executed by any lane of this suite, so this is the seam where its
+        # emitted shape is actually asserted against the real renderer.
+        payload = {"verdict": "ENDORSE_WITH_CONCERNS",
+                   "panel": ["full-council", "risk"], "safety": False,
+                   "concerns_folded": 2, "deferred": ["dashboard charts"],
+                   "over_scope": {"flag": True, "reason": "dashboard UI work"}}
+        rs.persist_slice(self.run_dir, sidecar(events=[
+            {"scope": "s1", "type": "council-verdict", "payload": payload}]),
+            wave=1, ts=TS)
+        stored = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        log = self.read("decisions-log.md")
+        self.assertEqual(stored["payload"], payload)
+        self.assertIn("SCOPE-FLAGGED: dashboard UI work", log)
+
+    def test_the_wave_emitted_sidecar_critique_shape_is_accepted(self):
+        # state.critique omits over_scope entirely when no member recorded one,
+        # and carries {flag, reason} verbatim when one did.
+        rs.persist_slice(self.run_dir, sidecar(critique={
+            "verdict": "ENDORSE_WITH_CONCERNS", "concerns": 2,
+            "over_scope": {"flag": False, "reason": None}}), wave=1, ts=TS)
+        self.assertIn("scope: clean", self.read("slice-s1-report.md"))
+
     def test_a_deferred_event_marks_deferred_scope_with_over_scope_true(self):
         payload = {"title": "dashboard charts", "over_scope": True}
         rs.append_event(self.run_dir, TS, "s1", "deferred", payload)

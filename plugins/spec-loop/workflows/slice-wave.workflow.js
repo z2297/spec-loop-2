@@ -62,6 +62,12 @@ const CRITIQUE = {
     verdict: { enum: ['ENDORSE', 'ENDORSE_WITH_CONCERNS', 'OBJECT'] },
     mandates: { type: 'object' },
     safety: { type: 'object', additionalProperties: false, properties: { flag: { type: 'boolean' }, reason: { type: ['string', 'null'] } }, required: ['flag'] },
+    // RECORD-ONLY, and deliberately absent from `required` below: an absent
+    // over_scope means "no scope judgement was recorded", which is a different
+    // claim from flag:false (run_state.py renders the two differently, and
+    // run_metrics reports null vs 0). No branch in this file reads it — it is
+    // carried to the council-verdict payload and the sidecar and nowhere else.
+    over_scope: { type: 'object', additionalProperties: false, properties: { flag: { type: 'boolean' }, reason: { type: ['string', 'null'] } }, required: ['flag'] },
     split: { type: 'object', additionalProperties: false, properties: { recommended: { type: 'boolean' }, children: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { goal: { type: 'string' }, files: { type: 'array', items: { type: 'string' } }, subsystems: { type: 'array', items: { type: 'string' } }, internal_deps: { type: 'array', items: { type: 'integer' } } }, required: ['goal', 'files', 'subsystems', 'internal_deps'] } } }, required: ['recommended'] },
     fixable_by_replan: { type: 'boolean' },
     objection: { type: 'object', additionalProperties: false, properties: { reason: { type: 'string' }, question: { type: 'string' }, recommendation: { type: 'string' } }, required: ['reason', 'question', 'recommendation'] },
@@ -187,6 +193,18 @@ function qualityStatus(q) {
   if (!q) return 'FAIL'
   if ((q.violations || []).length) return 'FAIL'
   return q.summary_pass === true ? 'PASS' : 'FAIL'
+}
+
+// The panel's over-scope record for the council-verdict payload and the
+// sidecar, or null when no member recorded one (absent ≠ flag:false). A
+// flagged record wins over a clean one; the reason is KEPT — unlike
+// safety.reason, which is dropped at the source and recorded nowhere.
+// RECORD-ONLY: no caller may branch on this result. (PURE)
+function scopeRecord(verdicts) {
+  const has = v => v && v.over_scope && typeof v.over_scope.flag === 'boolean'
+  const v = verdicts.find(x => has(x) && x.over_scope.flag === true) || verdicts.find(has)
+  if (!v) return null
+  return { flag: v.over_scope.flag, reason: v.over_scope.reason === undefined ? null : v.over_scope.reason }
 }
 
 function esc(slice, trigger, title, context, question, options) {
@@ -394,13 +412,18 @@ async function runSlice(slice) {
       guard(slice, state)
       const verdicts = (await parallel(panel.map(([role, agentType, model, effort, lane]) => () =>
         dispatch(slice, state, `critic:${role}`, criticPrompt(slice, plan, lane), { agentType, schema: CRITIQUE, model, effort }))))
-        .map(v => v || { verdict: 'OBJECT', safety: { flag: false, reason: null }, concerns: [], objection: { reason: 'unreadable critic verdict (fail closed)', question: 'The plan critique could not be completed. Proceed anyway, or retry?', recommendation: 'retry the slice' }, fixable_by_replan: false })
+        .map(v => v || { verdict: 'OBJECT', safety: { flag: false, reason: null }, over_scope: null, concerns: [], objection: { reason: 'unreadable critic verdict (fail closed)', question: 'The plan critique could not be completed. Proceed anyway, or retry?', recommendation: 'retry the slice' }, fixable_by_replan: false })
       const objections = verdicts.filter(v => v.verdict === 'OBJECT')
       const safety = verdicts.find(v => v.safety.flag)
       const splitRec = verdicts.find(v => v.split && v.split.recommended && (v.split.children || []).length >= 2)
       const concerns = verdicts.flatMap(v => v.concerns)
+      const scope = scopeRecord(verdicts)
       state.critique = { verdict: safety || objections.length * 2 > verdicts.length ? 'OBJECT' : concerns.length ? 'ENDORSE_WITH_CONCERNS' : 'ENDORSE', concerns: concerns.length }
-      state.events.push({ scope: slice.id, type: 'council-verdict', payload: { verdict: state.critique.verdict, panel: panel.map(p => p[0]), safety: !!safety, concerns_folded: concerns.filter(c => c.disposition_hint === 'fold').length, deferred: concerns.filter(c => c.disposition_hint === 'defer').map(c => c.text) } })
+      // RECORD-ONLY: attached after the verdict is computed, never spread
+      // into the rollup literal above, so the verdict expression provably
+      // cannot consult it. Omitted entirely when no member judged scope.
+      if (scope) state.critique.over_scope = scope
+      state.events.push({ scope: slice.id, type: 'council-verdict', payload: { verdict: state.critique.verdict, panel: panel.map(p => p[0]), safety: !!safety, concerns_folded: concerns.filter(c => c.disposition_hint === 'fold').length, deferred: concerns.filter(c => c.disposition_hint === 'defer').map(c => c.text), ...(scope ? { over_scope: scope } : {}) } })
       if (splitRec && slice.depth < 2 && state.critique.verdict !== 'OBJECT') return done('SPLIT', { split: { children: splitRec.split.children } })
       if (state.critique.verdict === 'OBJECT') {
         const ob = (safety || objections[0])
