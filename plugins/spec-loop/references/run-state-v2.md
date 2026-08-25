@@ -24,6 +24,7 @@ objects and are never machine-load-bearing; metrics are null-honest.
   "mode": "workflow | inline",              // inline = slice-worker-fallback path
   "created_at": "<ISO-8601 UTC>",
   "shared_constraints": ["<run-wide must-not-regress constraints; [] if none>"],
+  "scope_ceiling": ["<things this run must not build; OPTIONAL, may be absent>"],
   "slices": [{
     "id": "s1",
     "goal": "<one shippable change>",
@@ -51,6 +52,14 @@ nothing else re-derives it. The `waves[]` array records what was actually
 dispatched (the durable pointer from run state to workflow journals), not a
 prediction. Split children use ids `<parent>.1`, `<parent>.2`, …, with
 `depth = parent.depth + 1`.
+
+`scope_ceiling` is **optional**: `dag.py validate_dag` checks it only when
+the key is present (a list of non-empty strings), and a `dag.json` without
+it is fully valid and fully mutable. That is deliberate asymmetry — the
+neighbouring run-level keys (`run_id`, `base_ref`, `merge_mode`,
+`shared_constraints`, …) are not validated at all, and making any run-level
+key required would make every pre-existing run un-resumable, because
+`_load_for_mutation` refuses to mutate a contract-invalid dag.
 
 ## `slice-<id>-status.json` — per-slice sidecar
 
