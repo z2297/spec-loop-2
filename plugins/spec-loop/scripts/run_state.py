@@ -302,14 +302,12 @@ def _top_level_sidecar_errors(body):
     """schema_version/id/status checks (PURE). Returns (errors, normalized_status)."""
     errors = []
     if body.get("schema_version") != SCHEMA_VERSION:
-        errors.append("schema_version must be %d (found %r)"
-                      % (SCHEMA_VERSION, body.get("schema_version")))
+        errors.append("schema_version must be %d (found %r)" % (SCHEMA_VERSION, body.get("schema_version")))
     if not _nonempty_str(body.get("id")):
         errors.append("id must be a non-empty slice id")
     status = body.get("status")
     if status not in SLICE_RESULT_STATUSES:
-        errors.append("status must be one of %s (found %r)"
-                      % ("/".join(SLICE_RESULT_STATUSES), status))
+        errors.append("status must be one of %s (found %r)" % ("/".join(SLICE_RESULT_STATUSES), status))
         status = None
     return errors, status
 
@@ -330,7 +328,7 @@ def _shape_errors(body):
 
 
 def _shape_type_errors(body):
-    """Type checks for the optional dict/list fields, the event list's own
+    """Type checks on the optional dict/list fields, the event list's own
     content, and the `branch` string field (PURE)."""
     errors = []
     for key, kind, noun in _SHAPE_TYPE_FIELDS:
@@ -346,12 +344,28 @@ def _shape_numeric_errors(body):
     """The integer fields and the tier-enum fields (PURE)."""
     errors = []
     for key in ("wave", "tasks_completed", "agents_used"):
-        if body.get(key) is not None and not _is_int(body[key]):
-            errors.append("%s must be an integer when present (found %r)" % (key, body[key]))
+        message = _int_field_error(body, key)
+        if message:
+            errors.append(message)
     for key in ("risk_tier", "review_tier"):
-        if body.get(key) is not None and body[key] not in RISK_TIERS:
-            errors.append("%s must be 1, 2 or 3 when present (found %r)" % (key, body[key]))
+        message = _tier_field_error(body, key)
+        if message:
+            errors.append(message)
     return errors
+
+
+def _int_field_error(body, key):
+    """The error for one integer field, or None when it is valid (PURE)."""
+    if body.get(key) is not None and not _is_int(body[key]):
+        return "%s must be an integer when present (found %r)" % (key, body[key])
+    return None
+
+
+def _tier_field_error(body, key):
+    """The error for one risk/review tier field, or None when valid (PURE)."""
+    if body.get(key) is not None and body[key] not in RISK_TIERS:
+        return "%s must be 1, 2 or 3 when present (found %r)" % (key, body[key])
+    return None
 
 
 def _critique_and_quality_errors(body):
@@ -679,12 +693,16 @@ def _report_window_value(body):
     return "%s → %s" % (body.get("started_at") or "(unknown)", body.get("finished_at") or "(unknown)")
 
 
+_REVIEW_SUMMARY_FIELDS = (
+    ("confirmed", "confirmed"), ("refuted", "refuted"),
+    ("evidence_failed", "evidence-failed"), ("fix_rounds", "fix round"),
+)
+
+
 def _review_summary(review):
     """The `Review` bullet's value: counts of confirmed/refuted/etc (PURE)."""
     parts = []
-    for key, label in (("confirmed", "confirmed"), ("refuted", "refuted"),
-                       ("evidence_failed", "evidence-failed"),
-                       ("fix_rounds", "fix round")):
+    for key, label in _REVIEW_SUMMARY_FIELDS:
         value = review.get(key)
         if value is None:
             continue
@@ -710,12 +728,16 @@ def _report_split_lines(body):
         return []
     lines = ["", "## Proposed split into %d children" % len(children), ""]
     for position, child in enumerate(children):
-        refs = [str(r) for r in (child.get("internal_deps") or [])]
-        lines.append("%d. %s%s" % (position + 1,
-                                   _one_line(child.get("goal") or "(no goal)", 300),
-                                   " (after child %s)" % ", ".join(refs)
-                                   if refs else ""))
+        lines.append(_report_split_child_line(position, child))
     return lines
+
+
+def _report_split_child_line(position, child):
+    """One numbered child line of the `## Proposed split` section (PURE)."""
+    refs = [str(r) for r in (child.get("internal_deps") or [])]
+    suffix = " (after child %s)" % ", ".join(refs) if refs else ""
+    goal = _one_line(child.get("goal") or "(no goal)", 300)
+    return "%d. %s%s" % (position + 1, goal, suffix)
 
 
 def _report_escalation_lines(body):
@@ -725,10 +747,16 @@ def _report_escalation_lines(body):
         return []
     lines = ["", "## Escalations", ""]
     for record in escalations:
-        lines.append("- **%s** `%s` — %s"
-                     % (record.get("status") or "OPEN", record.get("id") or "?",
-                        _one_line(record.get("title") or "(untitled)")))
+        lines.append(_report_escalation_line(record))
     return lines
+
+
+def _report_escalation_line(record):
+    """One bullet of the `## Escalations` section (PURE)."""
+    status = record.get("status") or "OPEN"
+    escalation_id = record.get("id") or "?"
+    title = _one_line(record.get("title") or "(untitled)")
+    return "- **%s** `%s` — %s" % (status, escalation_id, title)
 
 
 def _council_summary(critique):

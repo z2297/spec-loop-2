@@ -1781,21 +1781,28 @@ def _legacy_council_tally(council):
     return verdicts, safety_objections
 
 
+_LEGACY_ESCALATIONS_KEYS = ("basis", "total", "open", "answered", "by_trigger",
+                            "per_scope", "unkeyed_events")
+
+
 def _legacy_escalations_block(escalations, observed):
     """The `escalations` sub-block of the legacy safety metrics (PURE)."""
+    if not observed:
+        return dict.fromkeys(_LEGACY_ESCALATIONS_KEYS)
     return {
-        "basis": BASIS_LEGACY if observed else None,
-        "total": len(escalations) if observed else None,
-        "open": sum(1 for e in escalations if e["status"] == "OPEN")
-                if observed else None,
-        "answered": sum(1 for e in escalations if e["status"] == "ANSWERED")
-                    if observed else None,
-        "by_trigger": _tally(t for e in escalations for t in e["triggers"])
-                      if observed else None,
-        "per_scope": _tally(e["scope"] for e in escalations)
-                     if observed else None,
+        "basis": BASIS_LEGACY,
+        "total": len(escalations),
+        "open": _legacy_escalation_count(escalations, "OPEN"),
+        "answered": _legacy_escalation_count(escalations, "ANSWERED"),
+        "by_trigger": _tally(t for e in escalations for t in e["triggers"]),
+        "per_scope": _tally(e["scope"] for e in escalations),
         "unkeyed_events": None,
     }
+
+
+def _legacy_escalation_count(escalations, status):
+    """How many v1 escalation records carry the given `status` (PURE)."""
+    return sum(1 for e in escalations if e["status"] == status)
 
 
 def _legacy_council_block(council, verdicts, safety_objections):
