@@ -307,6 +307,8 @@ def validate_sidecar(body):
     if isinstance(critique, dict) and critique.get("verdict") not in VERDICTS:
         errors.append("critique.verdict must be one of %s (found %r)"
                       % ("/".join(VERDICTS), critique.get("verdict")))
+    if isinstance(critique, dict):
+        errors.extend(_over_scope_errors(critique.get("over_scope")))
     quality = body.get("quality")
     if isinstance(quality, dict) and quality.get("status") not in QUALITY_STATUSES:
         errors.append("quality.status must be one of %s (found %r)"
@@ -337,6 +339,31 @@ def validate_sidecar(body):
     elif status == "ESCALATED":
         if not body.get("escalations"):
             errors.append("ESCALATED requires a non-empty escalations list")
+    return errors
+
+
+def _over_scope_errors(block):
+    """Messages for a `critique.over_scope` record (PURE).
+
+    Absent — and an explicit `null` — mean "no scope judgement was recorded",
+    which is a different claim from `flag: false` and is therefore valid. When
+    the block IS present it must carry both halves of the record: a real
+    boolean `flag`, and a `reason` that is a string or null. Every problem is
+    reported; nothing short-circuits.
+    """
+    if block is None:
+        return []
+    if not isinstance(block, dict):
+        return ["critique.over_scope must be a JSON object when present "
+                "(found %r)" % (block,)]
+    errors = []
+    if not isinstance(block.get("flag"), bool):
+        errors.append("critique.over_scope.flag must be true or false "
+                      "(found %r)" % (block.get("flag"),))
+    reason = block.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        errors.append("critique.over_scope.reason must be a string or null "
+                      "when present (found %r)" % (reason,))
     return errors
 
 

@@ -255,6 +255,57 @@ class TestValidateSidecar(unittest.TestCase):
         body["split"]["children"] = [{"goal": "a", "internal_deps": 2}, {"goal": "b"}]
         self.assertMentions(body, "internal_deps")
 
+    def test_a_sidecar_without_an_over_scope_block_is_valid(self):
+        # over_scope is optional: absence means "no scope judgement recorded",
+        # which is not the same claim as flag=False.
+        body = sidecar()
+        self.assertNotIn("over_scope", body["critique"])
+        self.assertValid(body)
+
+    def test_an_over_scope_record_with_a_flag_and_a_reason_is_valid(self):
+        self.assertValid(sidecar(critique={
+            "verdict": "ENDORSE_WITH_CONCERNS", "concerns": 2,
+            "over_scope": {"flag": True, "reason": "adds a tier heuristic"}}))
+
+    def test_an_over_scope_record_may_carry_a_null_reason(self):
+        self.assertValid(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": False, "reason": None}}))
+
+    def test_a_null_over_scope_reads_as_absent_and_is_valid(self):
+        self.assertValid(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0, "over_scope": None}))
+
+    def test_over_scope_must_be_an_object(self):
+        self.assertMentions(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0, "over_scope": True}),
+            "critique.over_scope must be a JSON object")
+
+    def test_over_scope_flag_must_be_a_boolean(self):
+        self.assertMentions(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": "yes", "reason": None}}),
+            "critique.over_scope.flag")
+
+    def test_over_scope_without_a_flag_is_refused(self):
+        self.assertMentions(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0, "over_scope": {"reason": "x"}}),
+            "critique.over_scope.flag")
+
+    def test_over_scope_reason_must_be_a_string_or_null(self):
+        self.assertMentions(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": True, "reason": 7}}),
+            "critique.over_scope.reason")
+
+    def test_a_bad_flag_and_a_bad_reason_are_reported_together(self):
+        # Validation never short-circuits: one round-trip must show everything.
+        errors = rs.validate_sidecar(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": None, "reason": []}}))
+        self.assertEqual(len([e for e in errors
+                             if e.startswith("critique.over_scope.")]), 2)
+
 
 # --------------------------------------------------------------------------
 # renderers — pure
