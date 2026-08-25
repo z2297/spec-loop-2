@@ -80,10 +80,12 @@ V2_EVENT_OBJECTS = [
     ev("2026-07-30T10:00:00Z", "run", "run-created", run_id="20260730-v2"),
     ev("2026-07-30T10:00:30Z", "run", "baseline", tests="281 passed"),
     ev("2026-07-30T10:01:00Z", "intake", "council-verdict",
-       member="skeptic", verdict="ENDORSE", concerns=0, safety=False),
+       member="skeptic", verdict="ENDORSE", concerns=0, safety=False,
+       over_scope={"flag": False, "reason": None}),
     ev("2026-07-30T10:01:30Z", "intake", "council-verdict",
        member="guardian", verdict="OBJECT", concerns_folded=3, safety=True,
-       deferred=["P2: rename later", "P2: widen the fixture"]),
+       deferred=["P2: rename later", "P2: widen the fixture"],
+       over_scope={"flag": True, "reason": "adds a tier heuristic"}),
     ev("2026-07-30T10:02:00Z", "intake", "decision",
        title="reuse the existing helper",
        rationale="precedent — run 20260630-full-coverage answered this",
@@ -91,7 +93,8 @@ V2_EVENT_OBJECTS = [
     ev("2026-07-30T10:03:00Z", "s1", "decision",
        title="keep the function name", rationale="file convention",
        reversibility="moderate"),
-    ev("2026-07-30T10:04:00Z", "s1", "deferred", title="dashboard charts"),
+    ev("2026-07-30T10:04:00Z", "s1", "deferred", title="dashboard charts",
+       over_scope=True),
     ev("2026-07-30T10:05:00Z", "wave1", "wave-dispatched",
        index=1, slice_ids=["s1", "s2"]),
     ev("2026-07-30T11:10:00Z", "s1", "agent-dispatch",
@@ -667,6 +670,11 @@ class V2SafetyTests(unittest.TestCase):
         self.assertEqual(self.safety["precedent_reuse"],
                          {"count": 1, "rate": 0.5})
 
+    def test_over_scope_counters_read_the_recorded_scope_judgements(self):
+        council = self.safety["council"]
+        self.assertEqual(council["over_scope_flags"], 1)      # guardian flagged
+        self.assertEqual(council["over_scope_deferrals"], 1)  # one marked deferral
+
 
 class CouncilConcernsPrecedenceTests(unittest.TestCase):
     """Events are per-verdict; the sidecar critique is a per-slice rollup.
@@ -717,6 +725,21 @@ class CouncilConcernsPrecedenceTests(unittest.TestCase):
         council = compute_for({"events.jsonl": events})["safety"]["council"]
         self.assertIsNone(council["concerns_total"])
         self.assertIsNone(council["concerns_deferred"])
+
+    def test_a_clean_scope_judgement_is_an_honest_zero_not_a_null(self):
+        council = self.council_total(over_scope={"flag": False, "reason": None})
+        self.assertEqual(council["over_scope_flags"], 0)
+
+    def test_no_scope_judgement_at_all_stays_null(self):
+        # "no payload said over_scope" is not evidence that nothing was over scope.
+        self.assertIsNone(self.council_total(concerns=1)["over_scope_flags"])
+
+    def test_a_malformed_scope_record_is_not_counted_as_clean(self):
+        self.assertIsNone(
+            self.council_total(over_scope={"flag": "yes"})["over_scope_flags"])
+
+    def test_deferrals_without_a_scope_marker_stay_null(self):
+        self.assertIsNone(self.council_total(concerns=1)["over_scope_deferrals"])
 
     def test_critique_with_only_concerns_still_reaches_the_document(self):
         metrics = compute_for({"slice-s1-status.json": {
@@ -1102,6 +1125,13 @@ class NullHonestyTests(unittest.TestCase):
         self.assertIsNone(council["safety_objections"])
         self.assertIsNone(council["concerns_total"])
 
+    def test_over_scope_counters_are_null_on_an_uninstrumented_run(self):
+        council = compute_for({"slice-s1-status.json": {
+            "schema_version": 2, "id": "s1", "status": "DONE",
+            "critique": {"verdict": "OBJECT"}}})["safety"]["council"]
+        self.assertIsNone(council["over_scope_flags"])
+        self.assertIsNone(council["over_scope_deferrals"])
+
     def test_gate_events_without_a_status_leave_the_rate_null(self):
         events = "\n".join(json.dumps(e) for e in [
             ev("2026-07-30T10:00:00Z", "s1", "quality-gate", detail="ran"),
@@ -1309,6 +1339,11 @@ class LegacyComputeTests(unittest.TestCase):
         self.assertEqual(safety["council"]["safety_objections"], 0)
         self.assertEqual(safety["reversibility_mix"],
                          {"high": 5, "moderate": 1, "n/a": 1})
+
+    def test_the_legacy_prose_path_reports_no_scope_judgement(self):
+        council = self.metrics["safety"]["council"]
+        self.assertIsNone(council["over_scope_flags"])
+        self.assertIsNone(council["over_scope_deferrals"])
 
     def test_quality_from_prose(self):
         quality = self.metrics["quality"]

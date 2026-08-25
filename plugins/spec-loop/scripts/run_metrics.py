@@ -797,7 +797,9 @@ def _council_stats(parsed):
 
     ``safety_objections`` stays null unless at least one verdict payload
     carries a ``safety`` flag: "no payload said safety" is not evidence that no
-    SAFETY objection was raised."""
+    SAFETY objection was raised. ``over_scope_flags`` and
+    ``over_scope_deferrals`` are a record of what the council observed and
+    feed no threshold, gate or blocking decision."""
     verdict_events = _of_type(parsed["events"], "council-verdict")
     critiques = [sc["critique"] for sc in parsed["sidecars"] if sc["critique"]]
     sidecar_verdicts = [c["verdict"] for c in critiques if c["verdict"]]
@@ -805,7 +807,8 @@ def _council_stats(parsed):
         return {"basis": None, "verdicts": None, "object_rate": None,
                 "safety_objections": None, "concerns_total": None,
                 "concerns_deferred": None, "by_member": None,
-                "slice_verdicts": None}
+                "slice_verdicts": None, "over_scope_flags": None,
+                "over_scope_deferrals": None}
     verdicts = [_pstr(e, "verdict") for e in verdict_events]
     verdicts = [v.upper() for v in verdicts if v and v.upper() in COUNCIL_VERDICTS]
     safety_flagged = [e for e in verdict_events
@@ -822,7 +825,36 @@ def _council_stats(parsed):
                                            for e in verdict_events),
         "by_member": _tally(_pstr(e, "member") for e in verdict_events) or None,
         "slice_verdicts": _tally(sidecar_verdicts) or None,
+        "over_scope_flags": _flag_count(verdict_events, "over_scope"),
+        "over_scope_deferrals": _marked_count(
+            _of_type(parsed["events"], "deferred"), "over_scope"),
     }
+
+
+def _flag_count(events, key):
+    """How many payloads carried `{key: {flag: true}}`, or None (PURE).
+
+    Null-honest in the same way as ``safety_objections``: "no payload recorded
+    a scope judgement" is not evidence that nothing was over scope, and a
+    malformed record counts as no record rather than as a clean one."""
+    observed = [e for e in events if _has_bool_flag(e, key)]
+    if not observed:
+        return None
+    return sum(1 for e in observed if e["payload"][key]["flag"])
+
+
+def _has_bool_flag(event, key):
+    """True if `event`'s payload carries `{key: {flag: <bool>}}` (PURE)."""
+    block = event["payload"].get(key)
+    return isinstance(block, dict) and isinstance(block.get("flag"), bool)
+
+
+def _marked_count(events, key):
+    """How many payloads set the boolean marker `key` true, or None (PURE)."""
+    observed = [e for e in events if isinstance(e["payload"].get(key), bool)]
+    if not observed:
+        return None
+    return sum(1 for e in observed if e["payload"][key])
 
 
 def _concerns_total(verdict_events, critiques):
@@ -1692,6 +1724,8 @@ def _legacy_safety(events, escalations, decisions, observed):
             "concerns_deferred": None,
             "by_member": None,
             "slice_verdicts": None,
+            "over_scope_flags": None,
+            "over_scope_deferrals": None,
         },
         "reversibility_mix": _tally(e["reversibility"] for e in events) or None,
         "precedent_reuse": {"count": precedent if decisions else None,
