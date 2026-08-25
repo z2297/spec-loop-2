@@ -301,7 +301,8 @@ function fixPrompt(slice, plan, state, findings) {
 
 Mode: fix. Address EVERY finding below (plan for context: ${plan.plan_path}).
 Package for anchor checks: ${CTX.run_dir}/packages/${slice.id}-round${state.review.fix_rounds + 1}.md — a finding whose location/quote does not match the code may be REFUTED with file:line counter-evidence instead of a change. quality-gate findings: behavior-preserving refactors only.
-Covering tests + commit when done. Findings:
+Covering tests + commit when done.${answerFor(slice, 'quality-gate-block')}
+Findings:
 ${JSON.stringify(findings, null, 1)}`
 }
 
@@ -321,7 +322,7 @@ Reporter mode, full verification. In the worktree run the full suite exactly: ${
 (a " ; "-joined command is a segment list: run each segment as its own tool call, in order, all to completion; the suite passed only if every segment passed)
 Then the quality gate exactly:
   ${CTX.quality_gate_cmd} --base ${state.commits.base} --head HEAD --repo-dir "${slice.worktree}"
-Read both outputs; report what they actually say. quality.summary_pass is the gate JSON's summary.pass copied verbatim (null ONLY if the gate never produced parseable JSON — say why in detail); quality.violations is its summary.failures array verbatim; you never return a PASS/FAIL label. changed_files from git diff --name-only ${state.commits.base}..HEAD.`
+Read both outputs; report what they actually say. quality.summary_pass is the gate JSON's summary.pass copied verbatim (null ONLY if the gate never produced parseable JSON — say why in detail); quality.violations is its summary.failures array verbatim; you never return a PASS/FAIL label. changed_files from git diff --name-only ${state.commits.base}..HEAD.${answerFor(slice, 'quality-gate-block')}`
 }
 
 function debugFixPrompt(slice, plan, state, verify) {
@@ -430,10 +431,20 @@ async function runSlice(slice) {
       if (!r || r.status === 'NEEDS_CONTEXT' || r.status === 'BLOCKED')
         return escalated(slice, state, esc(slice, 'ambiguity', `task ${task.id} blocked`, (r && (r.blocker || (r.questions || []).join(' · '))) || 'terminal dispatch failure', `Task "${task.title}" cannot proceed. How should it resolve?`, []))
       state.tasksCompleted++
-      state.commits.head = r.commits.head
-      if (state.commits.base === null) state.commits.base = r.commits.base
-      touched.push(...r.touched_files)
-      state.implConcerns.push(...r.concerns, ...r.deviations.map(d => `deviation: ${d}`))
+      // TASK_RESULT requires only status/touched_files/concerns/deviations, so a
+      // task that legitimately changed nothing returns DONE with `commits`
+      // absent. Reading it unguarded threw a TypeError that the catch-all below
+      // re-labelled as a budget-exhausted 'wave interrupted' — run
+      // 20260825-scope-ceiling lost a wave to it after all five tasks had
+      // already committed. Guarded the way the fix and debug-fix sites already
+      // guard the identical access; `head` keeps its previous value, so a
+      // slice where NO task committed still leaves it null and falls into the
+      // 'plan produced no commits' escalation below.
+      const c = (r.commits && typeof r.commits === 'object') ? r.commits : {}
+      if (c.head) state.commits.head = c.head
+      if (state.commits.base === null && c.base) state.commits.base = c.base
+      touched.push(...(r.touched_files || []))
+      state.implConcerns.push(...(r.concerns || []), ...(r.deviations || []).map(d => `deviation: ${d}`))
     }
     if (!state.commits.head)
       return escalated(slice, state, esc(slice, 'ambiguity', 'plan produced no commits', 'All tasks completed but no commit was recorded.', 'Drop the slice or retry?', []))
