@@ -909,8 +909,8 @@ class TestPersistSlice(RunStateTestCase):
             "verdict": "ENDORSE", "concerns": 0, "over_scope": True})
         with self.assertRaises(rs.SidecarInvalid) as ctx:
             rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
-        self.assertErrorMentions(ctx.exception.errors,
-                                   "critique.over_scope must be a JSON object")
+        self.assertErrorMentions(
+            ctx.exception.errors, "critique.over_scope must be a JSON object")
         self.assertEqual(os.listdir(self.run_dir), ["dag.json"])
 
     def test_a_non_boolean_flag_is_refused_and_writes_nothing(self):
@@ -932,8 +932,9 @@ class TestPersistSlice(RunStateTestCase):
         self.assertEqual(os.listdir(self.run_dir), ["dag.json"])
 
     def assertErrorMentions(self, errors, needle):
-        self.assertTrue(any(needle in message for message in errors),
-                        "expected %r among %r" % (needle, errors))
+        self.assertTrue(
+            any(needle in message for message in errors),
+            "expected %r among %r" % (needle, errors))
 
 
 class TestOpenEscalations(RunStateTestCase):

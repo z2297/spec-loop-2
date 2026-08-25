@@ -554,16 +554,25 @@ def _scope_note(block):
     """
     if block is None:
         return None
-    if not isinstance(block, dict) or not isinstance(block.get("flag"), bool):
-        return "scope: unreadable"
-    reason = block.get("reason")
-    if reason is not None and not isinstance(reason, str):
+    if _scope_shape_unreadable(block):
         return "scope: unreadable"
     if not block["flag"]:
         return "scope: clean"
+    reason = block.get("reason")
     if isinstance(reason, str) and reason.strip():
         return "SCOPE-FLAGGED: %s" % _one_line(reason)
     return "SCOPE-FLAGGED"
+
+
+def _scope_shape_unreadable(block):
+    """True when a present over-scope record's own shape cannot be trusted:
+    a non-object, a non-boolean flag, or a reason that is neither a string
+    nor null (PURE). Kept separate so _scope_note's own branch count does
+    not grow every time this record's shape gains another guard."""
+    if not isinstance(block, dict) or not isinstance(block.get("flag"), bool):
+        return True
+    reason = block.get("reason")
+    return reason is not None and not isinstance(reason, str)
 
 
 def _first_text(payload):

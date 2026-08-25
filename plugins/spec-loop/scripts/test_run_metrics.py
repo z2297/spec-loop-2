@@ -742,14 +742,15 @@ class CouncilConcernsPrecedenceTests(unittest.TestCase):
     def test_deferrals_without_a_scope_marker_stay_null(self):
         # over_scope_deferrals is run-wide (safety, not safety.council): a
         # council-verdict event alone carries no `deferred` events at all.
-        events = json.dumps(ev("2026-07-30T10:00:00Z", "intake",
-                               "council-verdict", verdict="OBJECT", concerns=1))
-        self.assertIsNone(
-            compute_for({"events.jsonl": events})["safety"]["over_scope_deferrals"])
+        events = json.dumps(ev(
+            "2026-07-30T10:00:00Z", "intake", "council-verdict",
+            verdict="OBJECT", concerns=1))
+        safety = compute_for({"events.jsonl": events})["safety"]
+        self.assertIsNone(safety["over_scope_deferrals"])
 
     def test_deferred_events_without_the_scope_marker_stay_null(self):
-        events = json.dumps(ev("2026-07-30T10:00:00Z", "s1", "deferred",
-                               title="later"))
+        events = json.dumps(ev(
+            "2026-07-30T10:00:00Z", "s1", "deferred", title="later"))
         safety = compute_for({"events.jsonl": events})["safety"]
         self.assertIsNone(safety["over_scope_deferrals"])
 

@@ -763,9 +763,9 @@ def _safety_metrics(parsed):
     decisions_total = len(decisions) if parsed["has_events"] else None
     return {
         "basis": _basis(parsed["has_events"], bool(parsed["sidecars"])),
-        "escalations": _escalation_stats(escalations, observed,
-                                        parsed["escalation_basis"],
-                                        parsed["escalation_unkeyed"]),
+        "escalations": _escalation_stats(
+            escalations, observed, parsed["escalation_basis"],
+            parsed["escalation_unkeyed"]),
         "decisions_total": decisions_total,
         "deferrals_total": len(deferrals) if parsed["has_events"] else None,
         "over_scope_deferrals": _marked_count(deferrals, "over_scope"),
