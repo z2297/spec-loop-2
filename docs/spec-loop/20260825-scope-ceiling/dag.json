@@ -1,0 +1,71 @@
+{
+  "schema_version": 2,
+  "run_id": "20260825-scope-ceiling",
+  "base_ref": "spec-loop-run/20260825-scope-ceiling",
+  "base_sha": "f3eac927f12dc68fb7750f8e7815e30457628051",
+  "base_branch": "main",
+  "merge_mode": "single-branch",
+  "mode": "workflow",
+  "created_at": "2026-08-25T17:11:33Z",
+  "shared_constraints": [
+    "RECORD-ONLY FLAG: the over-scope flag must never appear in the verdict rollup (slice-wave.workflow.js:401), the split-suppression condition (:403), the objection selection (:405), or the replan veto (:408). A flag reaching any of those four turns recording into work-dropping - the outcome requirement 4 forbids.",
+    "NEVER A FINDING: over-scope is a top-level field parallel to CRITIQUE.safety, never a FINDING.category value. blocking() (:178-180) filters on severity alone and never consults category, so a scope finding at P1 or above would block at Tier 2 and Tier 3.",
+    "NEVER DELETE A FINDING (human decision, this run): blocking() output is untouched by anything in this run. Deferred scope is advisory prompt data only - no mechanical suppressor, no filter over the open[] blocking set, at any severity.",
+    "OPTIONAL SCHEMA FIELDS: the new CRITIQUE field must NOT join CRITIQUE.required (:70). Extend the :396 fail-closed default object with the new field BEFORE adding any read of it, and read it null-safely - an unguarded read throws, is caught at :520, and is mislabeled as a budget-exhausted 'wave interrupted' escalation.",
+    "ABSENT-TOLERANT DAG FIELD: scope_ceiling is optional and validated only when present (mirror the waves pattern at dag.py:171). _load_for_mutation (dag.py:585) refuses to mutate a contract-invalid dag, so a required key makes every pre-existing run un-resumable and hard-fails mark/record-wave/ingest-split mid-run.",
+    "COVERAGE MANIFEST: any edit that shifts line counts in dag.py or run_state.py requires re-verifying and correcting scripts/coverage_omit.txt in the SAME task. The run_state.py entry is already stale (822-823; the real __main__ shim is at 837-838) and validate_omit never checks that omitted lines are unhit, so an error here is silent.",
+    "TESTS SHIP WITH CODE: new script code carries its tests in the same task. Coverage floors are dag.py 94, run_state.py 95, total 90, with roughly 25-30 untested lines of headroom each; MIN_TESTS=150 fails closed.",
+    "NO NEW AGENT (human decision, this run): the weighted scope lane is a promoted mandate on the existing plan-critic. Do not create a 14th agent file, and do not change the council panel size at any tier - a counted extra member provably raises the objection threshold (n=1->2 kills plan-critic's solo Tier-2 veto; n=3->4 raises --thorough Tier 3 from 2 objections to 3).",
+    "DO NOT REPURPOSE council-verdict.deferred[]: it is a live tested consumer (run_metrics.py:821 concerns_deferred, test_run_metrics.py:86). Requirement 5's 'one durable record' means one human-facing record, not the removal of an existing machine channel.",
+    "OBSERVABLE, NOT DECORATION: carry {flag, reason} into the council-verdict payload, pin it under 'Pinned payload facts' in run-state-v2.md with a TestPinnedPayloadFacts case, render it unconditionally in _summarize, and add a null-honest counter beside safety_objections. safety.reason is dropped today at :402 and recorded nowhere - do not replicate that shape.",
+    "VERIFIABILITY CEILING: this run's loop resolves its agents, workflow, and scripts from the installed plugin cache, so no mechanism added by this run is exercised by this run. Push every assertable contract to the Python side; 'tested' must never mean 'read'.",
+    "RUN SCOPE CEILING (binding, do not build): tier-assignment heuristics or the tier->review-shape table itself; quality-gate thresholds, metrics, or blocking semantics; adding or removing any of escalation-gate's five triggers; dashboard UI/UX work; v1 migration paths; knowledge-graph schema changes; the peer-review or review-pr commands; any reordering of the wave pipeline's stages or its loop bounds."
+  ],
+  "slices": [
+    {
+      "id": "s1",
+      "goal": "Add an optional, absent-tolerant run-level scope_ceiling to the dag.json data model: a flat string list mirroring the existing shared_constraints[] precedent, validated by dag.py only when present, documented in the dag.json section of references/run-state-v2.md (including one docstring line noting the deliberate asymmetry that neighbouring run-level keys stay unvalidated), and covered by test_dag.py including the absent case and a case proving a ceiling-less dag.json still validates AND still marks. Re-verify the dag.py entry in scripts/coverage_omit.txt against the file's new length.",
+      "files": ["plugins/spec-loop/scripts/dag.py", "plugins/spec-loop/scripts/test_dag.py", "plugins/spec-loop/references/run-state-v2.md", "scripts/coverage_omit.txt"],
+      "subsystems": ["dag contract", "coverage gate"],
+      "deps": [],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "pending"
+    },
+    {
+      "id": "s2",
+      "goal": "Build the durable record channels for the over-scope flag and deferred scope, on the Python side where they can actually be tested: validate_sidecar accepts and type-checks the new critique scope field; _summarize renders the scope flag unconditionally so absent is distinguishable from clean; the council-verdict scope payload (flag AND reason) is pinned under 'Pinned payload facts' in run-state-v2.md with a TestPinnedPayloadFacts case; and run_metrics gains null-honest scope-flag and deferral counters beside safety_objections. Sole owner of the run_state.py entry in scripts/coverage_omit.txt - correct the stale 822-823 to the real shim location.",
+      "files": ["plugins/spec-loop/scripts/run_state.py", "plugins/spec-loop/scripts/test_run_state.py", "plugins/spec-loop/scripts/run_metrics.py", "plugins/spec-loop/scripts/test_run_metrics.py", "plugins/spec-loop/references/run-state-v2.md", "scripts/coverage_omit.txt"],
+      "subsystems": ["run-state persistence", "metrics", "coverage gate"],
+      "deps": ["s1"],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "pending"
+    },
+    {
+      "id": "s3",
+      "goal": "Sole owner of every slice-wave.workflow.js edit and of the council contract. Thread the run-level scope ceiling through packet() and CTX and add it to BOTH the ctx list and the slices[] list in commands/spec-loop.md (a ceiling in dag.json that reaches neither call site validates green, passes every test, and reaches no agent). Add the over-scope flag as an OPTIONAL CRITIQUE field, read null-safely, with the :396 fail-closed default extended first, and carry {flag, reason} into the council-verdict payload. Promote plan-critic's Scope mandate into the weighted scope lane that owns the flag, keeping the panel size unchanged at every tier. Emit one durable deferred event per defer-hinted concern, each payload carrying a summary key so decisions-log.md renders a legible line rather than a JSON blob. Make deferred scope advisory-only in the reviewer prompt - quoted data with explicit 'file a genuinely blocking finding regardless' framing, never a findings filter. State disposition_hint fold|defer as the router between requirement 4 (flag it, build it) and requirement 5 (log it, do not build it). Update guardian.md and skeptic.md verdict semantics for the optional field, risk-tiers.md's tier table, escalation-gate/SKILL.md to state that an over-scope flag is explicitly NOT a sixth trigger, pr-reviewer.md for the advisory deferral framing, and slice-worker-fallback.md so inline mode does not silently lose the mechanism.",
+      "files": ["plugins/spec-loop/workflows/slice-wave.workflow.js", "plugins/spec-loop/commands/spec-loop.md", "plugins/spec-loop/agents/plan-critic.md", "plugins/spec-loop/agents/guardian.md", "plugins/spec-loop/agents/skeptic.md", "plugins/spec-loop/agents/pr-reviewer.md", "plugins/spec-loop/agents/slice-worker-fallback.md", "plugins/spec-loop/references/risk-tiers.md", "plugins/spec-loop/skills/escalation-gate/SKILL.md"],
+      "subsystems": ["wave pipeline", "council contract", "controller"],
+      "deps": ["s2"],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "pending"
+    },
+    {
+      "id": "s4",
+      "goal": "Docs and CHANGELOG consolidation, sole owner of CHANGELOG.md and both READMEs to avoid a multi-way merge: the plugin README's pipeline and tier tables, references/migration-from-v1.md council-panel prose, and one ## [Unreleased] CHANGELOG entry describing the scope-ceiling field, the record-only over-scope flag, the promoted scope lane, and the deferred-scope event channel. State plainly that requirement 2's council weighting is the only lever that reduces scope-expansion effort and that the ceiling, flag, and deferral channels build durable recording and non-re-admission rather than prevention - 'done' must not be readable as 'scope creep no longer happens'.",
+      "files": ["plugins/spec-loop/README.md", "README.md", "plugins/spec-loop/references/migration-from-v1.md", "CHANGELOG.md"],
+      "subsystems": ["docs"],
+      "deps": ["s3"],
+      "risk_tier": 1,
+      "depth": 0,
+      "parent": null,
+      "status": "pending"
+    }
+  ],
+  "waves": []
+}
