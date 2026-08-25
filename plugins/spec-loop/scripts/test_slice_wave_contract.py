@@ -75,6 +75,24 @@ SCOPE_LOCAL = "const scope = scopeRecord(verdicts)"
 SCOPE_SPREAD = "...(scope ? { over_scope: scope } : {})"
 SCOPE_REASON_KEPT = "reason: v.over_scope.reason"
 SIDECAR_SCOPE_ATTACH = "if (scope) state.critique.over_scope = scope"
+DEFERRAL_HELPER = "function deferralEvents("
+DEFER_FILTER = "c.disposition_hint === 'defer'"
+DEFERRED_TYPE = "type: 'deferred'"
+DEFERRAL_EMIT = "deferralEvents(slice, concerns).forEach"
+DEFERRAL_PAYLOAD = "payload: { summary: c.text"
+DEFERRAL_MARKER = "...(c.over_scope ? { over_scope: true } : {})"
+DEFERRAL_MARKER_FALSE = "over_scope: false"
+CONCERN_MARKER = "over_scope: !!(v.over_scope && v.over_scope.flag === true)"
+DEFERRED_ARRAY = ("deferred: concerns.filter(c => c.disposition_hint === 'defer')"
+                  ".map(c => c.text)")
+STATE_DEFERRED_INIT = "deferred: []"
+STATE_DEFERRED = "state.deferred"
+REVIEW_PROMPT = "function reviewPrompt("
+GATE_PROMPT = "function gatePrompt("
+ADVISORY_NOT_A_FILTER = "NOT a findings filter"
+ADVISORY_FILE_ANYWAY = "file it regardless"
+BLOCKING_HELPER = "function blocking(findings, bar)"
+OPEN_SET = "let open = [...blocking(review.findings, bar), ...gateViolations]"
 
 # Driver for the one behavioural check in this module: the extracted
 # scopeRecord() source, applied to each supplied panel by real node. %s is the
@@ -85,6 +103,29 @@ console.log(JSON.stringify(cases.map(c => scopeRecord(c))))
 """
 CLEAN = {"over_scope": {"flag": False, "reason": None}}
 FLAGGED = {"over_scope": {"flag": True, "reason": "dashboard UI work"}}
+
+# Driver for the deferralEvents() behavioural check: the extracted function
+# source, then a JSON list of [slice, concerns] argument pairs.
+DEFERRAL_DRIVER = """%s
+const cases = %s
+console.log(JSON.stringify(cases.map(c => deferralEvents(c[0], c[1]))))
+"""
+# Concern fixtures for the behavioural check, and the one event a plain
+# deferral must produce. Module-level for the same reason the pinned snippets
+# are: nesting_depth is measured from raw indentation, so a hanging literal
+# inside a test body scores as real block nesting.
+SLICE = {"id": "s1"}
+FOLD_ME = {"text": "fold me", "disposition_hint": "fold"}
+DEFER_ME = {"text": "defer me", "disposition_hint": "defer"}
+NO_HINT = {"text": "no hint at all"}
+CHARTS = {"text": "dashboard charts", "disposition_hint": "defer"}
+MARKED = {"text": "flagged", "disposition_hint": "defer", "over_scope": True}
+UNMARKED = {"text": "clean", "disposition_hint": "defer", "over_scope": False}
+CHARTS_PAYLOAD = {"summary": "dashboard charts", "source": "plan-critique"}
+CHARTS_EVENT = {"scope": "s1", "type": "deferred", "payload": CHARTS_PAYLOAD}
+THREE_DEFERRALS = [{"text": "first", "disposition_hint": "defer"},
+                   {"text": "second", "disposition_hint": "defer"},
+                   {"text": "third", "disposition_hint": "defer"}]
 
 
 def wrapped_source():
@@ -309,6 +350,107 @@ class TestScopeRecordBehavesAndNotJustExists(WorkflowSourceTestCase):
         # would reach run_state.py as an absent key instead of an explicit null.
         got = self.scope_record([[{"over_scope": {"flag": True}}]])
         self.assertEqual(got, [{"flag": True, "reason": None}])
+
+
+class TestDeferredScopeIsARecordNotAFilter(WorkflowSourceTestCase):
+    """Requirement 5 asks for ONE durable human-facing record per deferred
+    concern. The record is prose data: it reaches the reviewer as quoted
+    context and it must be provably incapable of removing a finding, because
+    the blocking set is the one thing this run may not touch."""
+
+    def test_one_deferred_event_is_emitted_per_defer_hinted_concern(self):
+        helper = self.between(DEFERRAL_HELPER, HELPER_END)
+        self.assertIn(DEFER_FILTER, helper)
+        self.assertIn(DEFERRED_TYPE, helper)
+        self.assertIn(DEFERRAL_EMIT, self.src)
+
+    def test_the_payload_leads_with_a_summary_key(self):
+        # SUMMARY_TEXT_KEYS in run_state.py reads `summary` first, so the
+        # decisions-log line is prose instead of a JSON blob.
+        self.assertIn(DEFERRAL_PAYLOAD, self.between(DEFERRAL_HELPER, HELPER_END))
+
+    def test_the_scope_marker_is_a_bare_boolean_true_and_omitted_otherwise(self):
+        helper = self.between(DEFERRAL_HELPER, HELPER_END)
+        self.assertIn(DEFERRAL_MARKER, helper)
+        self.assertNotIn(DEFERRAL_MARKER_FALSE, helper)
+
+    def test_each_concern_remembers_its_own_members_scope_judgement(self):
+        self.assertIn(CONCERN_MARKER, self.src)
+
+    def test_the_council_verdict_deferred_array_is_not_repurposed(self):
+        # run_metrics.concerns_deferred is a live consumer of this array.
+        self.assertIn(DEFERRED_ARRAY, self.line_containing(COUNCIL_VERDICT_EVENT))
+
+    def test_the_prompt_only_deferred_list_is_initialised_with_the_state(self):
+        # An uninitialised state field is a TypeError in reviewPrompt for
+        # every tier-1 slice, which never runs Stage C at all.
+        self.assertIn(STATE_DEFERRED_INIT, self.line_containing("tasksCompleted: 0"))
+
+    def test_deferred_scope_reaches_the_reviewer_as_quoted_advisory_data(self):
+        review = self.between(REVIEW_PROMPT, GATE_PROMPT)
+        self.assertIn(STATE_DEFERRED, review)
+        self.assertIn(ADVISORY_NOT_A_FILTER, review)
+        self.assertIn(ADVISORY_FILE_ANYWAY, review)
+
+    def test_nothing_filters_the_blocking_set_on_a_deferral(self):
+        # NEVER DELETE A FINDING: blocking()'s output is untouched.
+        blocking = self.between(BLOCKING_HELPER, HELPER_END)
+        self.assertNotIn("defer", blocking)
+        self.assertNotIn("over_scope", blocking)
+        self.assertIn(OPEN_SET, self.src)
+
+
+class TestDeferralEventsBehavesAndNotJustExists(WorkflowSourceTestCase):
+    """The source assertions above prove the lines are present. This one
+    extracts deferralEvents() and runs it under real node, because the two
+    failures that matter are behavioural: emitting an event for a concern the
+    council wanted FOLDED (work silently dropped), and emitting the scope
+    marker on a concern nobody flagged (a false scope claim in the log)."""
+
+    def deferral_events(self, cases):
+        """deferralEvents() applied to each [slice, concerns] pair by node."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not available on this machine")
+        source = self.between(DEFERRAL_HELPER, HELPER_END) + "\n}"
+        fd, path = tempfile.mkstemp(suffix=".mjs")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                fh.write(DEFERRAL_DRIVER % (source, json.dumps(cases)))
+            proc = subprocess.run(
+                [node, path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            out = proc.stdout.decode()
+            self.assertEqual(proc.returncode, 0, "node failed:\n%s" % (out,))
+            return json.loads(out)
+        finally:
+            os.unlink(path)
+
+    def summaries(self, concerns):
+        """Every summary deferralEvents() builds for one panel's concerns."""
+        got = self.deferral_events([[SLICE, concerns]])[0]
+        return [e["payload"]["summary"] for e in got]
+
+    def test_only_defer_hinted_concerns_become_events(self):
+        # A fold concern is work to do now; an unhinted one is neither.
+        got = self.summaries([FOLD_ME, DEFER_ME, NO_HINT])
+        self.assertEqual(got, ["defer me"])
+
+    def test_a_deferred_concern_becomes_one_event_scoped_to_the_slice(self):
+        got = self.deferral_events([[SLICE, [CHARTS]]])[0]
+        self.assertEqual(got, [CHARTS_EVENT])
+
+    def test_the_marker_is_present_only_on_the_flagging_members_concern(self):
+        got = self.deferral_events([[SLICE, [MARKED, UNMARKED]]])[0]
+        self.assertIs(got[0]["payload"]["over_scope"], True)
+        self.assertNotIn("over_scope", got[1]["payload"])
+
+    def test_a_council_with_no_deferrals_emits_nothing_at_all(self):
+        got = self.deferral_events([[SLICE, [FOLD_ME]], [SLICE, []]])
+        self.assertEqual(got, [[], []])
+
+    def test_every_deferred_concern_gets_its_own_event_in_order(self):
+        got = self.summaries(THREE_DEFERRALS)
+        self.assertEqual(got, ["first", "second", "third"])
 
 
 if __name__ == "__main__":  # pragma: no cover

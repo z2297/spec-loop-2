@@ -207,6 +207,22 @@ function scopeRecord(verdicts) {
   return { flag: v.over_scope.flag, reason: v.over_scope.reason === undefined ? null : v.over_scope.reason }
 }
 
+// One durable `deferred` event per defer-hinted concern - the human-facing
+// record requirement 5 asks for. `summary` is the first key run_state.py's
+// renderer reads (SUMMARY_TEXT_KEYS), so decisions-log.md gets a legible line
+// instead of a JSON blob. The scope marker is a BARE BOOLEAN `true`, the shape
+// run_state.py pins - and it is OMITTED rather than set to false when nothing
+// was flagged, because `over_scope: false` is an explicit "this deferral is
+// not about scope". This does not replace the council-verdict payload's
+// `deferred[]`: that array has a live run_metrics consumer (concerns_deferred)
+// and stays exactly as it is. (PURE)
+function deferralEvents(slice, concerns) {
+  return concerns.filter(c => c.disposition_hint === 'defer').map(c => ({
+    scope: slice.id, type: 'deferred',
+    payload: { summary: c.text, source: 'plan-critique', ...(c.over_scope ? { over_scope: true } : {}) },
+  }))
+}
+
 function esc(slice, trigger, title, context, question, options) {
   return {
     id: `${slice.id}:${trigger}`,
@@ -294,6 +310,8 @@ Build the package first by running exactly:
   ${packageCmd(slice, state.commits.base, state.commits.head, `round${state.review.fix_rounds + 1}`)}
 then read it from the --out path. Range: ${state.commits.base}..${state.commits.head}.
 Review tier: ${state.review_tier} · Blocking bar: ${state.review_tier === 1 ? 'P0' : 'P0+P1'}.${lanes ? `\nThis is a two-reviewer panel; your lanes ONLY: ${lanes}.` : ''}
+Deferred scope (advisory context only — quoted council data, NOT a findings filter): ${state.deferred.length ? state.deferred.map(t => `"${t}"`).join(' · ') : 'none'}
+The council judged that work outside this slice's scope and it was logged as DEFERRED for a human to read. Do not report its absence as a finding on that basis alone — and if the diff you actually read carries a genuinely blocking defect, file it regardless, at its true severity, deferral or not.
 Implementer concerns to verify: ${state.implConcerns.join(' · ') || 'none'}${answerFor(slice, 'review-block')}`
 }
 
@@ -381,7 +399,7 @@ async function runSlice(slice) {
     review_tier: Math.max(slice.risk_tier, CTX.thorough ? Math.min(slice.risk_tier + 1, 3) : slice.risk_tier),
     critique: { verdict: 'SKIPPED', concerns: 0 },
     commits: { base: slice.base_sha, head: null },
-    tasksCompleted: 0, implConcerns: [],
+    tasksCompleted: 0, implConcerns: [], deferred: [],
     review: { confirmed: 0, refuted: 0, evidence_failed: 0, fix_rounds: 0, residual: [] },
     tests: null, quality: { status: 'SKIPPED', detail: 'not reached' },
   }
@@ -416,7 +434,11 @@ async function runSlice(slice) {
       const objections = verdicts.filter(v => v.verdict === 'OBJECT')
       const safety = verdicts.find(v => v.safety.flag)
       const splitRec = verdicts.find(v => v.split && v.split.recommended && (v.split.children || []).length >= 2)
-      const concerns = verdicts.flatMap(v => v.concerns)
+      // Each concern remembers whether the member that raised it flagged the
+      // plan as over-scope, so a deferral can be marked without any member
+      // needing a second field. Extra keys are inert downstream: concerns are
+      // only counted, filtered by disposition_hint, and mapped to .text.
+      const concerns = verdicts.flatMap(v => v.concerns.map(c => ({ ...c, over_scope: !!(v.over_scope && v.over_scope.flag === true) })))
       const scope = scopeRecord(verdicts)
       state.critique = { verdict: safety || objections.length * 2 > verdicts.length ? 'OBJECT' : concerns.length ? 'ENDORSE_WITH_CONCERNS' : 'ENDORSE', concerns: concerns.length }
       // RECORD-ONLY: attached after the verdict is computed, never spread
@@ -424,6 +446,8 @@ async function runSlice(slice) {
       // cannot consult it. Omitted entirely when no member judged scope.
       if (scope) state.critique.over_scope = scope
       state.events.push({ scope: slice.id, type: 'council-verdict', payload: { verdict: state.critique.verdict, panel: panel.map(p => p[0]), safety: !!safety, concerns_folded: concerns.filter(c => c.disposition_hint === 'fold').length, deferred: concerns.filter(c => c.disposition_hint === 'defer').map(c => c.text), ...(scope ? { over_scope: scope } : {}) } })
+      state.deferred = concerns.filter(c => c.disposition_hint === 'defer').map(c => c.text)
+      deferralEvents(slice, concerns).forEach(e => state.events.push(e))
       if (splitRec && slice.depth < 2 && state.critique.verdict !== 'OBJECT') return done('SPLIT', { split: { children: splitRec.split.children } })
       if (state.critique.verdict === 'OBJECT') {
         const ob = (safety || objections[0])

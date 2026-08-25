@@ -1322,6 +1322,66 @@ class TestPinnedPayloadFacts(RunStateTestCase):
 
 
 # --------------------------------------------------------------------------
+# the deferred events the wave itself emits
+# --------------------------------------------------------------------------
+
+def wave_deferrals():
+    """The two `deferred` events slice-wave.workflow.js emits for a mixed
+    council batch - one scope-marked, one plain (PURE)."""
+    scoped = {"summary": "dashboard charts for the new counter",
+              "source": "plan-critique", "over_scope": True}
+    plain = {"summary": "extra fixtures for the legacy path",
+             "source": "plan-critique"}
+    return [{"scope": "s1", "type": "deferred", "payload": scoped},
+            {"scope": "s1", "type": "deferred", "payload": plain}]
+
+
+class TestWaveEmittedDeferrals(RunStateTestCase):
+    """The shapes slice-wave.workflow.js emits for a defer-hinted council
+    concern. The JS is resolved at runtime from the installed plugin cache and
+    is executed by no lane of this suite, so this is the seam where its payload
+    contract meets the real renderer: one durable, legible record per deferred
+    concern, with the scope marker only where it was earned."""
+
+    def persist(self):
+        """Persist a slice whose council deferred two concerns."""
+        body = sidecar(events=wave_deferrals())
+        rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
+
+    def persisted_log(self):
+        """decisions-log.md after that slice was persisted."""
+        self.persist()
+        return self.read("decisions-log.md")
+
+    def test_a_scope_marked_deferral_renders_a_legible_scope_line(self):
+        line = "DEFERRED: SCOPE dashboard charts for the new counter"
+        self.assertIn(line, self.persisted_log())
+
+    def test_an_unmarked_deferral_renders_without_the_scope_marker(self):
+        log = self.persisted_log()
+        self.assertIn("DEFERRED: extra fixtures for the legacy path", log)
+        self.assertNotIn("SCOPE extra fixtures", log)
+
+    def test_the_summary_key_is_what_makes_the_line_prose_not_json(self):
+        # Regression guard for the payload key name: a payload carrying no key
+        # from SUMMARY_TEXT_KEYS renders as a one-line JSON blob instead.
+        self.assertNotIn('{"summary"', self.persisted_log())
+
+    def test_both_deferrals_are_appended_verbatim(self):
+        self.persist()
+        stored = [e for e in self.events() if e["type"] == "deferred"]
+        emitted = [e["payload"] for e in wave_deferrals()]
+        self.assertEqual([e["payload"] for e in stored], emitted)
+
+    def test_a_deferral_is_a_record_and_never_a_residual_finding(self):
+        # NEVER DELETE A FINDING, read from the other end: the deferral
+        # channel is events-only and leaves the review block alone.
+        self.persist()
+        report = self.read("slice-s1-report.md")
+        self.assertIn("P2: naming could be clearer", report)
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
