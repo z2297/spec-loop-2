@@ -672,8 +672,9 @@ class V2SafetyTests(unittest.TestCase):
 
     def test_over_scope_counters_read_the_recorded_scope_judgements(self):
         council = self.safety["council"]
-        self.assertEqual(council["over_scope_flags"], 1)      # guardian flagged
-        self.assertEqual(council["over_scope_deferrals"], 1)  # one marked deferral
+        self.assertEqual(council["over_scope_flags"], 1)  # guardian flagged
+        # over_scope_deferrals is run-wide (deferred events), not council-scoped.
+        self.assertEqual(self.safety["over_scope_deferrals"], 1)  # one marked deferral
 
 
 class CouncilConcernsPrecedenceTests(unittest.TestCase):
@@ -739,7 +740,18 @@ class CouncilConcernsPrecedenceTests(unittest.TestCase):
             self.council_total(over_scope={"flag": "yes"})["over_scope_flags"])
 
     def test_deferrals_without_a_scope_marker_stay_null(self):
-        self.assertIsNone(self.council_total(concerns=1)["over_scope_deferrals"])
+        # over_scope_deferrals is run-wide (safety, not safety.council): a
+        # council-verdict event alone carries no `deferred` events at all.
+        events = json.dumps(ev("2026-07-30T10:00:00Z", "intake",
+                               "council-verdict", verdict="OBJECT", concerns=1))
+        self.assertIsNone(
+            compute_for({"events.jsonl": events})["safety"]["over_scope_deferrals"])
+
+    def test_deferred_events_without_the_scope_marker_stay_null(self):
+        events = json.dumps(ev("2026-07-30T10:00:00Z", "s1", "deferred",
+                               title="later"))
+        safety = compute_for({"events.jsonl": events})["safety"]
+        self.assertIsNone(safety["over_scope_deferrals"])
 
     def test_critique_with_only_concerns_still_reaches_the_document(self):
         metrics = compute_for({"slice-s1-status.json": {
@@ -1126,11 +1138,11 @@ class NullHonestyTests(unittest.TestCase):
         self.assertIsNone(council["concerns_total"])
 
     def test_over_scope_counters_are_null_on_an_uninstrumented_run(self):
-        council = compute_for({"slice-s1-status.json": {
+        safety = compute_for({"slice-s1-status.json": {
             "schema_version": 2, "id": "s1", "status": "DONE",
-            "critique": {"verdict": "OBJECT"}}})["safety"]["council"]
-        self.assertIsNone(council["over_scope_flags"])
-        self.assertIsNone(council["over_scope_deferrals"])
+            "critique": {"verdict": "OBJECT"}}})["safety"]
+        self.assertIsNone(safety["council"]["over_scope_flags"])
+        self.assertIsNone(safety["over_scope_deferrals"])
 
     def test_gate_events_without_a_status_leave_the_rate_null(self):
         events = "\n".join(json.dumps(e) for e in [
@@ -1341,9 +1353,9 @@ class LegacyComputeTests(unittest.TestCase):
                          {"high": 5, "moderate": 1, "n/a": 1})
 
     def test_the_legacy_prose_path_reports_no_scope_judgement(self):
-        council = self.metrics["safety"]["council"]
-        self.assertIsNone(council["over_scope_flags"])
-        self.assertIsNone(council["over_scope_deferrals"])
+        safety = self.metrics["safety"]
+        self.assertIsNone(safety["council"]["over_scope_flags"])
+        self.assertIsNone(safety["over_scope_deferrals"])
 
     def test_quality_from_prose(self):
         quality = self.metrics["quality"]

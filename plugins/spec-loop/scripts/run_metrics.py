@@ -57,7 +57,9 @@ differently, the dial goes null rather than wrong, and
                        id (pinned), trigger, title, status, opened, answered_at
   escalation-answered  id (pinned), answered_at
   decision             reversibility, rationale
-  council-verdict      safety (pinned bool), verdict, member,
+  council-verdict      safety (pinned bool), verdict, member, over_scope
+                       (pinned optional record: {flag: bool, reason:
+                       string|null} — record-only, never a threshold),
                        concerns | (concerns_folded + deferred[]) — concerns is
                        a complete count; the workflow instead reports the
                        disposition split, whose SUM is the same quantity (a
@@ -65,6 +67,9 @@ differently, the dial goes null rather than wrong, and
                        critique.concerns is the fallback only when no verdict
                        event carried a count — never summed with them: one is
                        per-verdict, the other a per-slice rollup
+  deferred             over_scope (pinned bool marker; true means the
+                       deferred work was judged out of the slice's scope),
+                       title, detail — otherwise free-form and null-honest
   quality-gate         status | result, refactor_passes
   review-summary       findings, refuted_by_fixer, confirmed, refuted,
                        evidence_failed
@@ -743,7 +748,14 @@ def _sources(parsed):
 
 def _safety_metrics(parsed):
     """Escalation pressure, autonomy, and council verdicts — how often the
-    loop had to interrupt the human, and how often it was told to stop."""
+    loop had to interrupt the human, and how often it was told to stop.
+
+    ``over_scope_deferrals`` lives here rather than inside ``council``: its
+    population is every run-wide ``deferred`` event, the same population as
+    ``deferrals_total`` right beside it, not the council-verdict/critique
+    population every other key in the ``council`` sub-block shares. Keeping
+    it beside ``deferrals_total`` means a reader of ``council`` never has to
+    guess which denominator one of its keys quietly used instead."""
     observed = parsed["has_events"] or bool(parsed["sidecars"])
     escalations = parsed["escalations"]
     decisions = _of_type(parsed["events"], "decision")
@@ -756,6 +768,7 @@ def _safety_metrics(parsed):
                                         parsed["escalation_unkeyed"]),
         "decisions_total": decisions_total,
         "deferrals_total": len(deferrals) if parsed["has_events"] else None,
+        "over_scope_deferrals": _marked_count(deferrals, "over_scope"),
         "autonomy_ratio": _autonomy_ratio(decisions_total, escalations, observed),
         "escalation_answer_latency_s": _answer_latency(escalations),
         "council": _council_stats(parsed),
@@ -797,17 +810,18 @@ def _council_stats(parsed):
 
     ``safety_objections`` stays null unless at least one verdict payload
     carries a ``safety`` flag: "no payload said safety" is not evidence that no
-    SAFETY objection was raised. ``over_scope_flags`` and
-    ``over_scope_deferrals`` are a record of what the council observed and
-    feed no threshold, gate or blocking decision. Split into small PURE
-    helpers by concern so this function's own branching stays flat as the
-    stats grow new fields."""
+    SAFETY objection was raised. ``over_scope_flags`` is a record of what the
+    council observed and feeds no threshold, gate or blocking decision. Its
+    run-wide sibling ``over_scope_deferrals`` lives one level up, in
+    ``safety`` beside ``deferrals_total`` — it counts ``deferred`` events, a
+    different population than every other key here, so it does not belong in
+    this block. Split into small PURE helpers by concern so this function's
+    own branching stays flat as the stats grow new fields."""
     verdict_events = _of_type(parsed["events"], "council-verdict")
     critiques = _sidecar_critiques(parsed)
     if not verdict_events and not critiques:
         return _empty_council_stats()
     verdicts = _normalized_verdicts(verdict_events)
-    deferred_events = _of_type(parsed["events"], "deferred")
     return {
         "basis": _basis(bool(verdict_events), bool(critiques)),
         "verdicts": _tally(verdicts) if verdict_events else None,
@@ -818,7 +832,6 @@ def _council_stats(parsed):
         "by_member": _tally(_pstr(e, "member") for e in verdict_events) or None,
         "slice_verdicts": _tally(_sidecar_verdicts(critiques)) or None,
         "over_scope_flags": _flag_count(verdict_events, "over_scope"),
-        "over_scope_deferrals": _marked_count(deferred_events, "over_scope"),
     }
 
 
@@ -843,8 +856,7 @@ def _empty_council_stats():
     return {"basis": None, "verdicts": None, "object_rate": None,
             "safety_objections": None, "concerns_total": None,
             "concerns_deferred": None, "by_member": None,
-            "slice_verdicts": None, "over_scope_flags": None,
-            "over_scope_deferrals": None}
+            "slice_verdicts": None, "over_scope_flags": None}
 
 
 def _normalized_verdicts(verdict_events):
@@ -1732,6 +1744,7 @@ def _legacy_safety(events, escalations, decisions, observed):
         "escalations": _legacy_escalations_block(escalations, observed),
         "decisions_total": len(decisions) if observed else None,
         "deferrals_total": None,
+        "over_scope_deferrals": None,
         "autonomy_ratio": _legacy_autonomy_ratio(decisions, escalations, observed),
         "escalation_answer_latency_s": _answer_latency(escalations),
         "council": _legacy_council_block(council, verdicts, safety_objections),
@@ -1817,7 +1830,6 @@ def _legacy_council_block(council, verdicts, safety_objections):
         "by_member": None,
         "slice_verdicts": None,
         "over_scope_flags": None,
-        "over_scope_deferrals": None,
     }
 
 

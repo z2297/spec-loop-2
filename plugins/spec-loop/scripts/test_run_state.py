@@ -464,6 +464,16 @@ class TestDecisionLine(unittest.TestCase):
         line = self.line("council-verdict", payload)
         self.assertIn("scope: unreadable", line)
 
+    def test_a_flagged_record_with_a_malformed_reason_is_unreadable_not_silent(self):
+        # A valid boolean flag with a non-string, non-null reason must not
+        # fall through to the bare "SCOPE-FLAGGED" line dropping the reason
+        # silently — _scope_note's own docstring promises "scope: unreadable"
+        # for anything malformed, so the reason and the flag are read together.
+        payload = {"verdict": "ENDORSE", "over_scope": {"flag": True, "reason": 7}}
+        line = self.line("council-verdict", payload)
+        self.assertIn("scope: unreadable", line)
+        self.assertNotIn("SCOPE-FLAGGED", line)
+
     def test_the_safety_prefix_and_the_scope_note_coexist(self):
         record = {"flag": True, "reason": "dashboards"}
         payload = {"verdict": "OBJECT", "concerns": 2, "safety": True}
@@ -887,6 +897,43 @@ class TestPersistSlice(RunStateTestCase):
         with self.assertRaises(rs.SidecarInvalid):
             rs.persist_slice(self.run_dir, sidecar(status="PROBABLY_FINE"),
                              wave=1, ts=TS)
+
+    # A malformed critique.over_scope record STAYS FAIL-CLOSED: the binding
+    # ruling on this run is that the defect was the missing tests, never the
+    # strictness. Each variant below must both raise SidecarInvalid AND leave
+    # the run dir untouched — the fixture's dag.json is the only file present,
+    # exactly as test_invalid_sidecar_is_refused_and_writes_nothing pins above.
+
+    def test_a_non_object_over_scope_record_is_refused_and_writes_nothing(self):
+        body = sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0, "over_scope": True})
+        with self.assertRaises(rs.SidecarInvalid) as ctx:
+            rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
+        self.assertErrorMentions(ctx.exception.errors,
+                                   "critique.over_scope must be a JSON object")
+        self.assertEqual(os.listdir(self.run_dir), ["dag.json"])
+
+    def test_a_non_boolean_flag_is_refused_and_writes_nothing(self):
+        body = sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": "yes", "reason": None}})
+        with self.assertRaises(rs.SidecarInvalid) as ctx:
+            rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
+        self.assertErrorMentions(ctx.exception.errors, "critique.over_scope.flag")
+        self.assertEqual(os.listdir(self.run_dir), ["dag.json"])
+
+    def test_a_non_string_non_null_reason_is_refused_and_writes_nothing(self):
+        body = sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": True, "reason": 7}})
+        with self.assertRaises(rs.SidecarInvalid) as ctx:
+            rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
+        self.assertErrorMentions(ctx.exception.errors, "critique.over_scope.reason")
+        self.assertEqual(os.listdir(self.run_dir), ["dag.json"])
+
+    def assertErrorMentions(self, errors, needle):
+        self.assertTrue(any(needle in message for message in errors),
+                        "expected %r among %r" % (needle, errors))
 
 
 class TestOpenEscalations(RunStateTestCase):

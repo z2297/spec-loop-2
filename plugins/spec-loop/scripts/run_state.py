@@ -556,9 +556,11 @@ def _scope_note(block):
         return None
     if not isinstance(block, dict) or not isinstance(block.get("flag"), bool):
         return "scope: unreadable"
+    reason = block.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        return "scope: unreadable"
     if not block["flag"]:
         return "scope: clean"
-    reason = block.get("reason")
     if isinstance(reason, str) and reason.strip():
         return "SCOPE-FLAGGED: %s" % _one_line(reason)
     return "SCOPE-FLAGGED"
