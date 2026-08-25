@@ -913,6 +913,39 @@ class TestCli(DagCliTestCase):
         self.assertTrue(any("scope_ceiling" in e for e in payload["errors"]))
         self.assertEqual(self.raw(), before)
 
+    def test_mark_preserves_a_present_well_formed_scope_ceiling(self):
+        # Regression pin (run 20260825-scope-ceiling): the ABSENT case and the
+        # MALFORMED-REFUSAL case are covered above, but nothing previously
+        # asserted that `mark` carries a present, valid scope_ceiling through
+        # the rewrite unchanged. Later slices of this run read the ceiling
+        # back out of dag.json after mid-run mutations.
+        ceiling = ["do not touch the tier table", "no dashboard UI work"]
+        self.write(make_dag(scope_ceiling=ceiling))
+        code, _, _ = self.cli("mark", "--slice", "s1", "--status", "complete")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read()["scope_ceiling"], ceiling)
+
+    def test_record_wave_preserves_a_present_well_formed_scope_ceiling(self):
+        # Regression pin (run 20260825-scope-ceiling): same property as above,
+        # for the record-wave rewrite path.
+        ceiling = ["do not touch the tier table", "no dashboard UI work"]
+        self.write(make_dag(scope_ceiling=ceiling))
+        code, _, _ = self.cli("record-wave", "--index", "1", "--slice-ids", "s1")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read()["scope_ceiling"], ceiling)
+
+    def test_ingest_split_preserves_a_present_well_formed_scope_ceiling(self):
+        # Regression pin (run 20260825-scope-ceiling): same property as above,
+        # for the ingest-split rewrite path.
+        ceiling = ["do not touch the tier table", "no dashboard UI work"]
+        self.write(make_dag(scope_ceiling=ceiling))
+        path = os.path.join(self.root, "split.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"children": [{"goal": "a"}, {"goal": "b"}]}, fh)
+        code, _, _ = self.cli("ingest-split", "--slice", "s1", "--file", path)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read()["scope_ceiling"], ceiling)
+
     def test_unknown_subcommand_is_usage_error(self):
         with self.assertRaises(SystemExit):
             self.cli("frobnicate")
