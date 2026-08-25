@@ -17,8 +17,13 @@
 #      loop plus its KeyboardInterrupt/finally shutdown cannot run to completion
 #      inside a unit test (it would block forever), so those lines never execute.
 #
-# Line numbers verified against source on 2026-07-30 (spec-loop 2 script
-# inventory); re-verify whenever these files change length. Plugin scripts live
+# Line numbers verified against source on 2026-08-25 (run 20260825-scope-ceiling
+# s3): every entry re-read against its file's own `if __name__` / exit lines, not
+# against any number quoted in a plan or a report. That check found two stale
+# ranges (quality_gate.py 1104-1105 and spec_loop_guard.py 240-241 had drifted
+# from their shims at 1118-1119 and 250-251) and corrected them; validate_omit
+# cannot catch that class of error, because it never asserts an omitted line is
+# unhit. Re-verify whenever these files change length. Plugin scripts live
 # in plugins/spec-loop/scripts/ but keys stay scripts/<name>.py because
 # measure_coverage.normalize_key canonicalizes either scripts/ dir.
 
@@ -27,11 +32,11 @@ scripts/dashboard_launcher.py:558-559    # __main__ entry shim (if __name__/sys.
 scripts/dashboard_server.py:1645-1646    # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/knowledge_graph.py:1211-1212     # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/pr_resolver.py:488-489           # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/quality_gate.py:1104-1105        # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
+scripts/quality_gate.py:1118-1119        # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/release.py:194-195               # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/review_package.py:131-132        # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/run_metrics.py:2174-2175         # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/run_state.py:1088-1089           # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/spec_loop_guard.py:240-241       # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
+scripts/spec_loop_guard.py:250-251       # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/validate_marketplace.py:417-418  # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
 scripts/worktrees.py:385-386             # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
