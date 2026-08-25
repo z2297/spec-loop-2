@@ -261,7 +261,7 @@ const packet = (slice) => [
 ].filter(Boolean).join('\n')
 
 const answerFor = (slice, trigger) => {
-  const a = (A.answers || {})[`${slice.id}:${trigger}`]
+  const a = humanAnswer(`${slice.id}:${trigger}`)
   return a ? `\nHUMAN ANSWER to your earlier "${trigger}" escalation (apply it, do not re-raise): ${a}` : ''
 }
 
@@ -273,7 +273,7 @@ const answerFor = (slice, trigger) => {
 // answer for a human resuming the escalation to see in the transcript
 // without instructing the reporter to change what it reports.
 const answerContext = (slice, trigger) => {
-  const a = (A.answers || {})[`${slice.id}:${trigger}`]
+  const a = humanAnswer(`${slice.id}:${trigger}`)
   return a ? `\nHUMAN ANSWER on the earlier "${trigger}" escalation, for context only — it does NOT change what you report: the suite result and quality.summary_pass/violations stay verbatim from the real output: ${a}` : ''
 }
 
