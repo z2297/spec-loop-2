@@ -111,6 +111,41 @@ class TestValidate(unittest.TestCase):
     def test_slices_must_be_a_list(self):
         self.assertErrorMentions(dagmod.validate_dag(make_dag(slices={})), "slices")
 
+    def test_scope_ceiling_is_absent_from_a_well_formed_dag_and_that_is_valid(self):
+        d = make_dag()
+        self.assertNotIn("scope_ceiling", d)
+        self.assertEqual(dagmod.validate_dag(d), [])
+
+    def test_scope_ceiling_of_non_empty_strings_is_valid(self):
+        d = make_dag(scope_ceiling=["do not touch the tier table",
+                                    "no dashboard UI work"])
+        self.assertEqual(dagmod.validate_dag(d), [])
+
+    def test_scope_ceiling_may_be_an_empty_list(self):
+        self.assertEqual(dagmod.validate_dag(make_dag(scope_ceiling=[])), [])
+
+    def test_scope_ceiling_must_be_a_list(self):
+        self.assertErrorMentions(
+            dagmod.validate_dag(make_dag(scope_ceiling="no dashboard work")),
+            "scope_ceiling must be a list")
+
+    def test_scope_ceiling_rejects_a_non_string_entry(self):
+        errors = dagmod.validate_dag(make_dag(scope_ceiling=["ok", 7]))
+        self.assertErrorMentions(errors, "scope_ceiling entry 1")
+
+    def test_scope_ceiling_rejects_a_blank_entry(self):
+        errors = dagmod.validate_dag(make_dag(scope_ceiling=["   "]))
+        self.assertErrorMentions(errors, "scope_ceiling entry 0")
+
+    def test_scope_ceiling_reports_every_bad_entry_without_short_circuiting(self):
+        errors = dagmod.validate_dag(make_dag(scope_ceiling=[None, "ok", ""]))
+        self.assertEqual(
+            len([e for e in errors if e.startswith("scope_ceiling entry")]), 2)
+
+    def test_a_null_scope_ceiling_is_reported_as_a_bad_list_not_ignored(self):
+        self.assertErrorMentions(dagmod.validate_dag(make_dag(scope_ceiling=None)),
+                                 "scope_ceiling must be a list")
+
     def test_duplicate_slice_ids(self):
         d = make_dag(slices=[sl("s1"), sl("s1")])
         self.assertErrorMentions(dagmod.validate_dag(d), "duplicate slice id")
@@ -842,6 +877,30 @@ class TestCli(DagCliTestCase):
         code, payload, _ = self.cli("mark", "--slice", "s1", "--status", "complete")
         self.assertEqual(code, 1)
         self.assertIn("schema_version", " ".join(payload["errors"]))
+        self.assertEqual(self.raw(), before)
+
+    def test_a_dag_without_scope_ceiling_validates_and_still_marks(self):
+        # scope_ceiling is optional: a pre-existing run with no ceiling must stay
+        # contract-valid, so _load_for_mutation still lets `mark` through
+        # (run 20260825-scope-ceiling).
+        body = make_dag()
+        self.assertNotIn("scope_ceiling", body)
+        self.write(body)
+        code, payload, _ = self.cli("validate")
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        code, _, _ = self.cli("mark", "--slice", "s1", "--status", "complete")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read()["slices"][0]["status"], "complete")
+        self.assertNotIn("scope_ceiling", self.read())
+
+    def test_a_dag_with_a_malformed_scope_ceiling_refuses_to_mark(self):
+        self.write(make_dag(scope_ceiling="not a list"))
+        before = self.raw()
+        code, payload, _ = self.cli("mark", "--slice", "s1", "--status", "complete")
+        self.assertEqual(code, 1)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any("scope_ceiling" in e for e in payload["errors"]))
         self.assertEqual(self.raw(), before)
 
     def test_unknown_subcommand_is_usage_error(self):

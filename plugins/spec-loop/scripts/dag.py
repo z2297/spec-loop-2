@@ -158,7 +158,15 @@ def deps_of(item):
 # --------------------------------------------------------------------------
 
 def validate_dag(dag):
-    """Return every contract violation in `dag` as a list of messages."""
+    """Return every contract violation in `dag` as a list of messages.
+
+    Run-level keys are deliberately asymmetric: `scope_ceiling` is checked only
+    when present, while its neighbours (`run_id`, `base_ref`, `merge_mode`,
+    `shared_constraints`, ...) stay unvalidated. Absence must never be an error:
+    `_load_for_mutation` refuses to mutate a contract-invalid dag, so making any
+    run-level key required would make every pre-existing run un-resumable and
+    hard-fail mark/record-wave/ingest-split mid-run.
+    """
     if not isinstance(dag, dict):
         return ["dag.json must contain a JSON object"]
 
@@ -170,6 +178,15 @@ def validate_dag(dag):
         errors.append("slices must be a list")
     if "waves" in dag and not isinstance(dag.get("waves"), list):
         errors.append("waves must be a list")
+    if "scope_ceiling" in dag:
+        ceiling = dag.get("scope_ceiling")
+        if not isinstance(ceiling, list):
+            errors.append("scope_ceiling must be a list of strings")
+        else:
+            for position, entry in enumerate(ceiling):
+                if not isinstance(entry, str) or not entry.strip():
+                    errors.append("scope_ceiling entry %d must be a non-empty string "
+                                  "(found %r)" % (position, entry))
 
     seen = set()
     for position, item in enumerate(slices_of(dag)):
