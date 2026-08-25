@@ -47,16 +47,24 @@ WRAP_TAIL = "\n}\n"
 # Anchors and pinned source lines (see the module docstring for why these are
 # constants and not literals inside the test bodies).
 TASK_RESULT_REQUIRED = "required: ['status', 'touched_files', 'concerns', 'deviations']"
-TASK_LOOP_START = "for (const task of plan.tasks || [])"
+# The task-result-handling region: taskNeedsRetry() through the end of
+# stageTasks()'s loop, right before the "no commits at all" escalation below
+# it. All of a TASK_RESULT's optional reads (commits/touched_files/concerns/
+# deviations) are guarded somewhere in this span, split across runTask() and
+# its small helpers rather than inlined in one loop body.
+TASK_LOOP_START = "function taskNeedsRetry(r) {"
 TASK_LOOP_END = "if (!state.commits.head)"
 NO_COMMITS_ESCALATION = "'plan produced no commits'"
 GUARDED_LOCAL = "const c = (r.commits && typeof r.commits === 'object') ? r.commits : {}"
 GUARDED_HEAD = "if (c.head) state.commits.head = c.head"
 GUARDED_BASE = "if (state.commits.base === null && c.base) state.commits.base = c.base"
-GUARDED_TOUCHED = "touched.push(...(r.touched_files || []))"
+GUARDED_TOUCHED = "touched: r.touched_files || []"
 GUARDED_CONCERNS = "...(r.concerns || [])"
 GUARDED_DEVIATIONS = "...(r.deviations || []).map("
 GATE_ANSWER = "answerFor(slice, 'quality-gate-block')"
+GATE_ANSWER_CONTEXT = "answerContext(slice, 'quality-gate-block')"
+ANSWER_CONTEXT_START = "const answerContext = (slice, trigger) => {"
+ANSWER_CONTEXT_END = "\n}\n"
 ANSWERABLE_TRIGGERS = ("ambiguity", "material-assumption", "review-block",
                        "council-objection", "quality-gate-block")
 CRITIQUE_REQUIRED = "required: ['verdict', 'safety', 'concerns']"
@@ -64,9 +72,9 @@ FAIL_CLOSED_DEFAULT = "unreadable critic verdict (fail closed)"
 OVER_SCOPE_DEFAULT = "over_scope: null"
 OVER_SCOPE_SCHEMA = "over_scope: { type: 'object'"
 CRITIQUE_ROLLUP = "state.critique = { verdict:"
-SPLIT_SUPPRESSION = "if (splitRec && slice.depth < 2"
-OBJECTION_SELECTION = "const ob = (safety || objections[0])"
-REPLAN_VETO = "if (!safety && ob.fixable_by_replan"
+SPLIT_SUPPRESSION = "return (rec && depth < 2 && verdict !== 'OBJECT') ? rec : null"
+OBJECTION_SELECTION = "ob: (safety || objections[0])"
+REPLAN_VETO = "if (safety || !ob.fixable_by_replan || state.replanned)"
 FINDING_CATEGORIES = "category: { enum: ["
 COUNCIL_VERDICT_EVENT = "type: 'council-verdict'"
 SCOPE_HELPER = "function scopeRecord("
@@ -187,7 +195,9 @@ class TestOptionalTaskResultReadsAreGuarded(WorkflowSourceTestCase):
     reported as a resource failure."""
 
     def task_loop(self):
-        """The Stage-T task loop body, where every task-result read happens."""
+        """The Stage-T task-result-handling region (runTask() and its small
+        helpers, through stageTasks()'s loop), where every task-result read
+        happens."""
         return self.between(TASK_LOOP_START, TASK_LOOP_END)
 
     def test_commits_is_not_required_by_the_task_result_schema(self):
@@ -221,7 +231,14 @@ class TestOptionalTaskResultReadsAreGuarded(WorkflowSourceTestCase):
 class TestQualityGateBlockAnswersHaveAnInjectionPath(WorkflowSourceTestCase):
     """A quality-gate-block escalation had no answerFor() site, so a human
     answer could not be carried by the re-dispatch: this run's controller
-    hand-resolved one twice."""
+    hand-resolved one twice. The fix loop (fixPrompt) can legitimately act on
+    such an answer, so it gets the real answerFor() (apply it). The Stage-Z
+    reporter (verifyPrompt -> spec-loop:verifier) cannot: it is transcription
+    -only ("you never return a PASS/FAIL label"), so an "apply it" answer
+    there has no lawful effect except a mis-transcribed false pass. It gets
+    answerContext() instead: the human's answer is still carried into the
+    resumed dispatch (so it is not silently lost / re-asked), but worded as
+    context only, never as an instruction to change what gets reported."""
 
     def test_every_human_answerable_trigger_has_at_least_one_injection_site(self):
         for trigger in ANSWERABLE_TRIGGERS:
@@ -233,9 +250,14 @@ class TestQualityGateBlockAnswersHaveAnInjectionPath(WorkflowSourceTestCase):
         fix = self.between("function fixPrompt(", "function reReviewPrompt(")
         self.assertIn(GATE_ANSWER, fix)
 
-    def test_the_verify_prompt_carries_the_gate_answer(self):
+    def test_the_verify_prompt_carries_the_gate_answer_as_context_only(self):
         verify = self.between("function verifyPrompt(", "function debugFixPrompt(")
-        self.assertIn(GATE_ANSWER, verify)
+        self.assertIn(GATE_ANSWER_CONTEXT, verify)
+        self.assertNotIn(GATE_ANSWER, verify)
+
+    def test_the_context_only_answer_never_instructs_the_reporter_to_apply_it(self):
+        answer_context_fn = self.between(ANSWER_CONTEXT_START, ANSWER_CONTEXT_END)
+        self.assertNotIn("apply it", answer_context_fn)
 
     def test_budget_exhausted_is_still_not_injected_anywhere(self):
         # It asks for a resource, not a decision (escalation-gate SKILL.md):
