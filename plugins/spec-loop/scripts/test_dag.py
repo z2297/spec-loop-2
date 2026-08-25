@@ -204,6 +204,16 @@ class TestValidate(unittest.TestCase):
         ])
         self.assertErrorMentions(dagmod.validate_dag(d), "depth")
 
+    def test_child_with_an_unusable_depth_is_not_compared_to_its_parent(self):
+        """A non-integer depth is reported once, as a type error only: the
+        parent-depth+1 comparison is skipped rather than guessing an offset."""
+        d = make_dag(slices=[
+            sl("s1", status="split"), sl("s1.1", depth="one", parent="s1"),
+        ])
+        errors = [e for e in dagmod.validate_dag(d) if "depth" in e]
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("non-negative integer", errors[0])
+
     def test_unknown_slice_status(self):
         d = make_dag(slices=[sl("s1", status="FAILED")])
         self.assertErrorMentions(dagmod.validate_dag(d), "status")
