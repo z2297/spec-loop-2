@@ -251,8 +251,10 @@ class TestTheRunScopeCeilingReachesEveryAgent(WorkflowSourceTestCase):
         # Regression: `(CTX.scope_ceiling || []).length` was null-safe but not
         # type-safe - truthy for a non-empty STRING too, and the very next
         # read (`.map(...)`) is undefined on a string, throwing a TypeError
-        # that the catch-all mislabels as a budget escalation. packet() must
-        # never touch `CTX.scope_ceiling` directly; only the helper may.
+        # that the catch-all now classifies as 'internal-error' - before crash
+        # classification such errors were mislabeled as a budget escalation.
+        # packet() must never touch `CTX.scope_ceiling` directly; only the
+        # helper may.
         packet = self.between(PACKET_START, PACKET_END)
         self.assertNotIn("CTX.scope_ceiling", packet)
         self.assertIn(SCOPE_CEILING_READ, packet)

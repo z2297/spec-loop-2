@@ -43,8 +43,13 @@ is handed to you, use it verbatim rather than reconstructing it.
 
 Replan **≤1** · per-task implementer retry **≤1** · fix rounds **≤2** · total agent
 dispatches capped by tier: **10 / 18 / 32** for Tier 1 / 2 / 3. Count every dispatch,
-including re-reviews. Hitting a cap or a bound with work outstanding is a `budget-exhausted`
-escalation, not a reason to continue unbounded or to declare done without evidence.
+including re-reviews. A bound is never a reason to continue unbounded or to declare done
+without evidence — but exhausting one is not a resource problem. Only two things here are
+`budget-exhausted`: the tier agent cap, and the per-stage token floor (the wave budget left is
+below what a single stage needs). Every loop bound escalates instead as the thing that actually
+stalled — a spent replan as `council-objection`, a spent task retry as `ambiguity` or the
+blocker the task reported (Pipeline 3), findings surviving both fix rounds as `review-block`,
+or `quality-gate-block` when the survivors are gate violations.
 
 ## Pipeline
 
@@ -147,10 +152,11 @@ one of the seven triggers (`ambiguity`, `material-assumption`, `review-block`,
 the precise question, options with one marked `recommended`, and `if_unanswered`.
 Proceed-and-log stays the default — surface only genuine ambiguity or a material assumption
 touching behavior, public contracts, persisted data, security, or an external integration. A
-slice with any open escalation returns `ESCALATED`. `budget-exhausted` is only for a cap or a
-bound (see Loop bounds); an unhandled exception or a stage that died with no result is
-`internal-error`, and its context must name the last stage/role dispatched before the failure —
-you cannot know which stage threw, so do not claim one — plus the real error text.
+slice with any open escalation returns `ESCALATED`. `budget-exhausted` is only for the tier
+agent cap or the per-stage token floor (see Loop bounds), never for a spent loop bound; an
+unhandled exception or a stage that died with no result is `internal-error`, and its context
+must name the last stage/role dispatched before the failure — you cannot know which stage
+threw, so do not claim one — plus the real error text.
 
 ## Return
 

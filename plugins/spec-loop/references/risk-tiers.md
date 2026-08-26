@@ -86,7 +86,9 @@ overlay). Any match promotes `review_tier` to 3 and records a `decision` event w
 Everything the tier decides funnels into exactly two of `escalation-gate`'s five triggers:
 `review-block` (blocking findings survive the fix loop, or verification cannot pass) and
 `quality-gate-block` (gate violations survive it). The `budget-exhausted` record the per-slice
-agent cap emits is mechanical, not a judgment — the caps in the table above are its only source.
+agent cap emits is mechanical, not a judgment — and the caps in the table above are only one of
+its two sources; the other is the loop's per-stage token floor, which no tier setting changes.
+A spent loop bound is neither: it escalates as whatever actually stalled (`run-state-v2.md`).
 
 An over-scope record (`critique.over_scope`) is **not** in that funnel. It is record-only:
 it is carried into the `council-verdict` event and the sidecar, counted null-honestly by
