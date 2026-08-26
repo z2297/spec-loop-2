@@ -63,6 +63,44 @@ All notable changes to the spec-loop plugin are documented here. The format is
   it reports — the suite result and `quality.summary_pass`/`violations` stay verbatim from
   the real output.
 
+### Scope and limits of this change
+
+Read this before reading "Added" as "scope creep no longer happens". Of everything added
+above, exactly one thing reduces the effort spent expanding scope: the **weighted scope lane
+on `plan-critic`**, which makes the critic look at the run's ceiling and the slice goal and
+say so. The ceiling, the `over_scope` record, the `deferred` channel and both counters do not
+prevent anything — they build durable **recording**, and non-re-admission only in the sense
+that recording buys: a scope judgement is written down with its reason, survives into
+`events.jsonl`, the sidecar and `decisions-log.md`, and is visible to the reviewer and the
+human, so deferred work cannot quietly come back unremarked. Nothing stops it coming back.
+The record blocks nothing, filters no finding, suppresses no split and raises no objection. Work the council judges out of scope and asks
+not to be built is a `defer`-hinted concern, logged as a `deferred` event; the record itself
+is explicitly "flag it and still build it" when the goal genuinely asks for it.
+
+The mechanism was exercised on live input by the run that added it, which is the strongest
+available evidence for both halves of that claim. The two workflow defects fixed above were
+themselves an approved, recorded scope increase. In the same run the council found two more
+defects of the same class in `workflows/slice-wave.workflow.js` — an unguarded
+`plan.escalation.*` read on the ESCALATE branch (:479), which turns a planner returning
+`ESCALATE` with no `escalation` object into the same mislabelled "wave interrupted"
+`TypeError`, and a `plan.split` pass-through on the SPLIT branch (:478) that hands `undefined`
+downstream to fail sidecar validation there instead. Both are one-line guards; both were
+**deferred rather than fixed**, because they fell outside the approved increase. They are
+logged with `file:line` evidence and are deliberately still unbuilt. That is the mechanism
+working as designed, and it is also the plainest possible demonstration that recording a
+scope judgement is not the same as acting on it.
+
+Verifiability ceiling: nothing this change added to `workflows/slice-wave.workflow.js` has
+ever been executed. The loop resolves its workflow from the installed plugin cache, so the
+merged file takes effect only after a plugin reinstall — the run that wrote it ran a patched
+copy of that cache, not this file. That JS carries no coverage gate (`measure_coverage.py`
+measures Python only). Its guarantees rest on a real `node` parse of the source plus
+source-text assertions that prove a guard, a helper call or a schema field is *present*, and
+on three pure helpers (`scopeRecord`, `deferralEvents`, `scopeCeilingList`) extracted from
+that source and executed under real `node` in isolation. Presence is not behaviour, and three
+pure helpers are not the pipeline — treat every runtime claim about the workflow in this entry
+as reviewed and asserted, not observed.
+
 ## [2.1.0] - 2026-08-10
 Runtime and trust fixes from the 2026-08-06/07 production-run analysis
 (Groundworks.Jobs): active runtime was ~3–5h for 3–5 slices, but one run read
