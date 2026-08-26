@@ -428,6 +428,7 @@ function guard(slice, state) {
 }
 
 async function dispatch(slice, state, role, prompt, opts) {
+  state.stage = role
   guard(slice, state)
   state.agentsUsed++
   const r = await agent(prompt, { ...opts, label: `${slice.id}:${role}`, phase: `wave ${A.wave_index}` })
@@ -449,7 +450,7 @@ const TASK_LANE = { transcribe: { model: 'haiku', effort: 'low' }, standard: { m
 
 function initSliceState(slice) {
   return {
-    agentsUsed: 0, events: [], escalations: [],
+    agentsUsed: 0, stage: null, events: [], escalations: [],
     review_tier: Math.max(slice.risk_tier, CTX.thorough ? Math.min(slice.risk_tier + 1, 3) : slice.risk_tier),
     critique: { verdict: 'SKIPPED', concerns: 0 },
     commits: { base: slice.base_sha, head: null },

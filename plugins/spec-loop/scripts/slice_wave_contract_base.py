@@ -109,6 +109,8 @@ DEFERRED_ARRAY = (
     ".map(c => c.text)")
 STATE_DEFERRED_INIT = "deferred: []"
 STATE_DEFERRED = "state.deferred"
+STATE_STAGE_INIT = "stage: null"
+STAGE_ASSIGNMENT = "state.stage = role"
 STAGE_CRITIQUE_START = "async function stageCritique(slice, state, plan) {"
 STAGE_CRITIQUE_END = "// Stage T helpers"
 SPLIT_RETURN = "if (splitRec) return { stop: doneResult(slice, state, 'SPLIT'"

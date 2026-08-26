@@ -30,7 +30,8 @@ from slice_wave_contract_base import (
     NO_COMMITS_ESCALATION, OBJECTION_SELECTION, OVER_SCOPE_DEFAULT,
     OVER_SCOPE_SCHEMA, REPLAN_VETO, SCOPE_DRIVER, SCOPE_HELPER, SCOPE_LOCAL,
     SCOPE_REASON_KEPT, SCOPE_SPREAD, SIDECAR_SCOPE_ATTACH,
-    SPLIT_SUPPRESSION, TASK_LOOP_END, TASK_LOOP_START, TASK_RESULT_REQUIRED,
+    SPLIT_SUPPRESSION, STAGE_ASSIGNMENT, STATE_STAGE_INIT, TASK_LOOP_END,
+    TASK_LOOP_START, TASK_RESULT_REQUIRED,
     WorkflowSourceTestCase, wrapped_source,
 )
 
@@ -251,6 +252,22 @@ class TestScopeRecordBehavesAndNotJustExists(WorkflowSourceTestCase):
         # would reach run_state.py as an absent key instead of an explicit null.
         got = self.scope_record([[{"over_scope": {"flag": True}}]])
         self.assertEqual(got, [{"flag": True, "reason": None}])
+
+
+class TestTheCrashRecordCanNameTheStageInFlight(WorkflowSourceTestCase):
+    """A crash record that carries only an exception string sent run
+    20260825-scope-ceiling's controller looking for a budget problem. The
+    cheapest honest signal for "what was in flight" is the last dispatched
+    role, which dispatch() already receives."""
+
+    def test_slice_state_initialises_a_stage_field(self):
+        init = self.between("function initSliceState(slice) {", "function doneResult(")
+        self.assertIn(STATE_STAGE_INIT, init)
+
+    def test_dispatch_records_the_role_it_is_about_to_run(self):
+        fn = self.between("async function dispatch(slice, state, role, prompt, opts) {",
+                          "// ── The slice pipeline")
+        self.assertIn(STAGE_ASSIGNMENT, fn)
 
 
 if __name__ == "__main__":  # pragma: no cover
