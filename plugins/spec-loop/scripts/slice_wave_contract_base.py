@@ -5,8 +5,8 @@ suite: it is resolved at runtime from the installed plugin cache. Its
 correctness has therefore rested entirely on review, and this run paid for
 that twice - an unguarded optional-field read aborted a whole wave and was
 mislabelled as a budget escalation (both the read and the mislabelling are now
-pinned here). The two ``test_slice_wave_contract*.py`` modules that import this
-one are the cheapest honest coverage available:
+pinned here). The three ``test_slice_wave_contract*.py`` modules that import
+this one are the cheapest honest coverage available:
 they parse the file with node (a real parse, not a substring) and pin the
 handful of source facts whose loss is a known, observed outage - the
 null-guards on TASK_RESULT.commits and its sibling optional arrays, the
@@ -41,8 +41,9 @@ stays under the quality gate's 300-line class_lines threshold; this file
 carries no tests of its own (its class exposes no `test_*` method), so
 `unittest discover -p 'test_*.py'` never collects it directly.
 
-Usage: imported by test_slice_wave_contract.py and
-test_slice_wave_contract_scope.py; not runnable on its own.
+Usage: imported by test_slice_wave_contract.py,
+test_slice_wave_contract_scope.py, and test_slice_wave_contract_crash.py;
+not runnable on its own.
 """
 
 import unittest

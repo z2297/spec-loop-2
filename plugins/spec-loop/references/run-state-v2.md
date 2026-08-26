@@ -110,9 +110,11 @@ prose about the slice.
 }
 ```
 
-`budget-exhausted` is a structural resource limit (agent cap, stage token floor);
-`internal-error` is a machine failure — an unhandled exception in the loop or an agent
-contract, or a slice that returned no result. Neither is a judgment trigger.
+`budget-exhausted` is raised only by the loop's two structural guards (agent cap, stage
+token floor); `internal-error` is the catch-all for every other failure — unhandled
+exceptions, agent-contract failures, host- or agent-layer resource failures (e.g. a
+rejected agent call on a hard token or rate limit), and a slice that returned no result.
+Neither is a judgment trigger.
 
 ## `events.jsonl` — the machine channel
 
