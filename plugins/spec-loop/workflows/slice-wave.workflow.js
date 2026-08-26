@@ -634,13 +634,13 @@ async function runTask(slice, state, plan, task) {
   state.tasksCompleted++
   // TASK_RESULT requires only status/touched_files/concerns/deviations, so a
   // task that legitimately changed nothing returns DONE with `commits`
-  // absent. Reading it unguarded threw a TypeError that the catch-all below
-  // re-labelled as a budget-exhausted 'wave interrupted' — run
-  // 20260825-scope-ceiling lost a wave to it after all five tasks had
-  // already committed. Guarded the way the fix and debug-fix sites already
-  // guard the identical access; `head` keeps its previous value, so a slice
-  // where NO task committed still leaves it null and falls into the 'plan
-  // produced no commits' escalation below.
+  // absent. Reading it unguarded threw a TypeError that would now be
+  // classified as an 'internal-error' by the catch-all; run 20260825-scope-
+  // ceiling lost a wave to this defect before crash classification was added.
+  // Guarded the way the fix and debug-fix sites already guard the identical
+  // access; `head` keeps its previous value, so a slice where NO task
+  // committed still leaves it null and falls into the 'plan produced no commits'
+  // escalation below.
   mergeTaskCommits(state, r)
   state.implConcerns.push(...(r.concerns || []), ...(r.deviations || []).map(d => `deviation: ${d}`))
   return { touched: r.touched_files || [] }

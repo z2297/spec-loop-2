@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Contract checks: guarded task-result reads, quality-gate-block answer
-injection, and the record-only `over_scope` critique field.
+injection, the record-only `over_scope` critique field, and the `internal-error`
+classification of machine failures.
 
 See `slice_wave_contract_base.py` for the module-wide rationale (why this
 is source-text assertion, why snippets are named constants, and the two
@@ -61,10 +62,10 @@ class TestTheFileStillParses(unittest.TestCase):
 class TestOptionalTaskResultReadsAreGuarded(WorkflowSourceTestCase):
     """Regression, run 20260825-scope-ceiling wave 2: TASK_RESULT does not
     require `commits`, so a task that legitimately committed nothing returned
-    DONE with the key absent. `state.commits.head = r.commits.head` threw a
-    TypeError, the catch-all re-labelled it 'wave interrupted' /
-    budget-exhausted, and a wave whose five tasks had all committed was
-    reported as a resource failure."""
+    DONE with the key absent. An unguarded `state.commits.head = r.commits.head`
+    threw a TypeError, which is now correctly classified as 'internal-error' by
+    the crash handler. Before crash classification, such errors were mislabeled
+    as budget-exhausted, causing misdirected diagnosis."""
 
     def task_loop(self):
         """The Stage-T task-result-handling region (runTask() and its small
@@ -149,8 +150,9 @@ class TestOverScopeIsRecordOnly(WorkflowSourceTestCase):
 
     def test_the_fail_closed_default_supplies_the_field(self):
         # Extended BEFORE any read exists: an unguarded read of a missing
-        # optional field throws, is swallowed by the catch-all, and is
-        # mislabelled as a budget escalation - the defect that killed wave 2.
+        # optional field throws, is swallowed by the catch-all, and is now
+        # correctly classified as 'internal-error' - before crash classification,
+        # such errors were mislabeled as budget escalation, which killed wave 2.
         default = self.line_containing(FAIL_CLOSED_DEFAULT)
         self.assertIn(OVER_SCOPE_DEFAULT, default)
 

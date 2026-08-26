@@ -4,8 +4,9 @@ The wave workflow is JavaScript and is not run by any lane of this repo's
 suite: it is resolved at runtime from the installed plugin cache. Its
 correctness has therefore rested entirely on review, and this run paid for
 that twice - an unguarded optional-field read aborted a whole wave and was
-mislabelled as a budget escalation. The two ``test_slice_wave_contract*.py``
-modules that import this one are the cheapest honest coverage available:
+mislabelled as a budget escalation (both the read and the mislabelling are now
+pinned here). The two ``test_slice_wave_contract*.py`` modules that import this
+one are the cheapest honest coverage available:
 they parse the file with node (a real parse, not a substring) and pin the
 handful of source facts whose loss is a known, observed outage - the
 null-guards on TASK_RESULT.commits and its sibling optional arrays, the
