@@ -1254,7 +1254,7 @@ class EscalationSourceTests(unittest.TestCase):
 
     def test_a_malformed_id_yields_no_made_up_trigger(self):
         # The id's second segment is only accepted when it is one of the
-        # contract's six triggers, so a hand-edited id cannot surface garbage.
+        # contract's known triggers, so a hand-edited id cannot surface garbage.
         def build(run_dir):
             write_dag_v2(run_dir, [slice_obj("s1")])
             write_events(run_dir, [
