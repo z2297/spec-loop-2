@@ -32,7 +32,7 @@ from slice_wave_contract_base import (
     GUARDED_HEAD, GUARDED_LOCAL, GUARDED_TOUCHED, HELPER_END,
     NO_COMMITS_ESCALATION, OBJECTION_SELECTION, OVER_SCOPE_DEFAULT,
     OVER_SCOPE_SCHEMA, REPLAN_VETO, SCOPE_DRIVER, SCOPE_HELPER, SCOPE_LOCAL,
-    SCOPE_REASON_KEPT, SCOPE_SPREAD, SIDECAR_SCOPE_ATTACH,
+    SCOPE_REASON_KEPT, SCOPE_SPREAD, SIDECAR_SCOPE_ATTACH, SLICE_LOST_RECORD,
     SPLIT_SUPPRESSION, STAGE_ASSIGNMENT, STATE_STAGE_INIT, TASK_LOOP_END,
     TASK_LOOP_START, TASK_RESULT_REQUIRED,
     WorkflowSourceTestCase, wrapped_source,
@@ -327,6 +327,17 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         # ANSWERABLE_TRIGGERS.
         self.assertNotIn("answerFor(slice, 'internal-error')", self.src)
         self.assertNotIn("internal-error", str(ANSWERABLE_TRIGGERS))
+
+    def test_a_lost_slice_is_an_internal_error_too(self):
+        # parallel() resolved the thunk to null: the slice died with no result
+        # at all, outside runSlice's try/catch. Same one classification, per
+        # the run's human-decided single-value constraint; the honest 'slice
+        # lost' title and its own question are kept.
+        wave_entry = self.between(
+            "const results = await parallel(", "log(`wave ")
+        self.assertIn(SLICE_LOST_RECORD, wave_entry)
+        self.assertIn("Re-run the wave to retry this slice?", wave_entry)
+        self.assertNotIn("'budget-exhausted'", wave_entry)
 
 
 if __name__ == "__main__":  # pragma: no cover
