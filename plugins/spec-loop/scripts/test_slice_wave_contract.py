@@ -23,9 +23,12 @@ import unittest
 
 from slice_wave_contract_base import (
     ANSWER_CONTEXT_END, ANSWER_CONTEXT_START, ANSWERABLE_TRIGGERS, CLEAN,
-    COUNCIL_VERDICT_EVENT, CRITIQUE_REQUIRED, CRITIQUE_ROLLUP,
+    COUNCIL_VERDICT_EVENT, CRASH_CLASSIFIED_PASSTHROUGH, CRASH_OPTION_RETRY,
+    CRASH_OPTION_SKIP, CRASH_OPTION_STOP, CRASH_STAGE_FALLBACK, CRASH_TRIGGER,
+    CRITIQUE_REQUIRED, CRITIQUE_ROLLUP,
     FAIL_CLOSED_DEFAULT, FINDING_CATEGORIES, FLAGGED, GATE_ANSWER,
-    GATE_ANSWER_CONTEXT, GUARDED_BASE, GUARDED_CONCERNS, GUARDED_DEVIATIONS,
+    GATE_ANSWER_CONTEXT, GUARD_BUDGET_TRIGGER, GUARDED_BASE, GUARDED_CONCERNS,
+    GUARDED_DEVIATIONS,
     GUARDED_HEAD, GUARDED_LOCAL, GUARDED_TOUCHED, HELPER_END,
     NO_COMMITS_ESCALATION, OBJECTION_SELECTION, OVER_SCOPE_DEFAULT,
     OVER_SCOPE_SCHEMA, REPLAN_VETO, SCOPE_DRIVER, SCOPE_HELPER, SCOPE_LOCAL,
@@ -265,9 +268,65 @@ class TestTheCrashRecordCanNameTheStageInFlight(WorkflowSourceTestCase):
         self.assertIn(STATE_STAGE_INIT, init)
 
     def test_dispatch_records_the_role_it_is_about_to_run(self):
-        fn = self.between("async function dispatch(slice, state, role, prompt, opts) {",
-                          "// ── The slice pipeline")
+        fn = self.between(
+            "async function dispatch(slice, state, role, prompt, opts) {",
+            "// ── The slice pipeline")
         self.assertIn(STAGE_ASSIGNMENT, fn)
+
+
+class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
+    """Regression, run 20260825-scope-ceiling: the catch-all relabelled every
+    unclassified JS exception as `budget-exhausted` 'wave interrupted', so a
+    TypeError read as a resource limit and the controller spent ~85 and ~76
+    minutes diagnosing in the wrong direction (the HUMAN answered both in
+    ~1 min - the cost was misdirected diagnosis, not human waiting). The
+    catch-all now says machine failure, names the stage in flight, and offers
+    controller actions instead of 'raise budget/caps'."""
+
+    def crash_fallback(self):
+        return self.between(
+            "function runSliceError(slice, state, e) {",
+            "async function runSlice(slice) {")
+
+    def test_the_catch_all_emits_internal_error_not_budget_exhausted(self):
+        fallback = self.crash_fallback()
+        self.assertIn(CRASH_TRIGGER, fallback)
+        self.assertNotIn(GUARD_BUDGET_TRIGGER, fallback)
+
+    def test_a_classified_throw_still_passes_through_unchanged(self):
+        # The two structural guards throw {escRecord} with their own
+        # budget-exhausted record; reclassifying those would be a regression.
+        self.assertIn(CRASH_CLASSIFIED_PASSTHROUGH, self.crash_fallback())
+
+    def test_the_crash_record_names_the_stage_in_flight(self):
+        fallback = self.crash_fallback()
+        self.assertIn(CRASH_STAGE_FALLBACK, fallback)
+        self.assertIn("${stage}", fallback)
+
+    def test_the_crash_record_carries_the_real_exception_text(self):
+        self.assertIn("String((e && e.message) || e)", self.crash_fallback())
+
+    def test_the_options_are_controller_actions_not_resource_requests(self):
+        fallback = self.crash_fallback()
+        self.assertIn(CRASH_OPTION_RETRY, fallback)
+        self.assertIn(CRASH_OPTION_SKIP, fallback)
+        self.assertIn(CRASH_OPTION_STOP, fallback)
+        self.assertNotIn("Raise budget/caps", fallback)
+
+    def test_the_structural_guards_keep_their_budget_exhausted_wording(self):
+        guard = self.between(
+            "function guard(slice, state) {", "async function dispatch(")
+        self.assertIn("agent cap reached", guard)
+        self.assertIn("token budget exhausted", guard)
+        self.assertEqual(guard.count(GUARD_BUDGET_TRIGGER), 2)
+
+    def test_internal_error_is_not_injected_into_any_prompt(self):
+        # Mirror of test_budget_exhausted_is_still_not_injected_anywhere: a
+        # crash answer is a controller action (retry / skip / stop), so there
+        # is nothing for an agent prompt to apply. It is deliberately NOT in
+        # ANSWERABLE_TRIGGERS.
+        self.assertNotIn("answerFor(slice, 'internal-error')", self.src)
+        self.assertNotIn("internal-error", str(ANSWERABLE_TRIGGERS))
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -852,9 +852,23 @@ async function runStages(slice, state) {
   return stageVerify(slice, state, plan)
 }
 
+// An unclassified throw is a MACHINE failure, not a resource limit and not a
+// judgment call: the two structural guards above throw {escRecord} with their
+// own budget-exhausted record, so anything reaching the fallback is a bug in
+// the loop or in an agent contract. It is reported as such, naming the stage
+// that was in flight and the real exception, because run 20260825-scope-ceiling
+// showed the cost of a mislabelled crash is misdirected DIAGNOSIS. Retry of the
+// crashed stage is deliberately a human/controller decision, not automatic.
 function runSliceError(slice, state, e) {
   if (e && e.escRecord) return escalated(slice, state, e.escRecord)
-  return escalated(slice, state, esc(slice, 'budget-exhausted', 'wave interrupted', String((e && e.message) || e), 'The wave hit a hard limit. Raise budget/caps and resume, or accept committed work?', []))
+  const stage = state.stage || 'before any agent was dispatched'
+  return escalated(slice, state, esc(slice, 'internal-error',
+    `slice crashed in ${stage}`,
+    `An unhandled exception aborted the slice. Stage/role in flight: ${stage}. Error: ${String((e && e.message) || e)}. This is a loop or agent-contract bug, NOT a cap or budget limit — ${state.tasksCompleted} task(s) had already completed and any committed work is on the branch.`,
+    'Retry this slice, skip it and continue the run, or stop the run to diagnose the exception?',
+    [{ label: 'Retry this slice', detail: 'Re-dispatch the wave for this slice; committed work on its branch is kept.', recommended: true },
+     { label: 'Skip this slice', detail: 'Leave it ESCALATED and continue with the independent slices.' },
+     { label: 'Stop the run', detail: 'Halt so the exception can be diagnosed before more agents are spent.' }]))
 }
 
 async function runSlice(slice) {
