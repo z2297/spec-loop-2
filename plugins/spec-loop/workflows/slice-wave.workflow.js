@@ -863,14 +863,17 @@ async function runStages(slice, state) {
 // showed the cost of a mislabelled crash is misdirected DIAGNOSIS. state.stage
 // is the most recent dispatch, not a per-throw stage (it is never cleared, and
 // concurrent fan-outs overwrite it), so the record says "after", not "in", and
-// says so explicitly. Retry of the crashed stage is deliberately a
+// says so explicitly. The context string leads with the real exception text,
+// ahead of the fixed classification sentence, so render_escalation()'s
+// 400-char truncation (run_state.py) can never eat the variable-length
+// diagnostic payload. Retry of the crashed stage is deliberately a
 // human/controller decision, not automatic.
 function runSliceError(slice, state, e) {
   if (e && e.escRecord) return escalated(slice, state, e.escRecord)
   const stage = state.stage || 'before any agent was dispatched'
   return escalated(slice, state, esc(slice, 'internal-error',
     `slice crashed after ${stage}`,
-    `An unhandled exception aborted the slice. Last stage/role dispatched before the failure: ${stage}. The loop records the most recent dispatch, not a per-throw stage, so the failure may have happened after that role finished, or in a sibling of a concurrent fan-out — treat it as a starting point, not a culprit. Error: ${String((e && e.message) || e)}. This is a loop or agent-contract bug, NOT a cap or budget limit — ${state.tasksCompleted} task(s) had already completed and any committed work is on the branch.`,
+    `Error: ${String((e && e.message) || e)}. This is a loop or agent-contract bug, NOT a cap or budget limit — ${state.tasksCompleted} task(s) had already completed and any committed work is on the branch. Last stage/role dispatched before the failure: ${stage}. The loop records the most recent dispatch, not a per-throw stage, so the failure may have happened after that role finished, or in a sibling of a concurrent fan-out — treat it as a starting point, not a culprit.`,
     'Retry this slice, skip it and continue the run, or stop the run to diagnose the exception?',
     [{ label: 'Retry this slice', detail: 'Re-dispatch the wave for this slice; committed work on its branch is kept.', recommended: true },
      { label: 'Skip this slice', detail: 'Leave it ESCALATED and continue with the independent slices.' },
