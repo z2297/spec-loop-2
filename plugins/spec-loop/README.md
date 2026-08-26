@@ -47,7 +47,7 @@ slice, in deterministic JS:
 | Stage | Who | Model / effort |
 |---|---|---|
 | Plan (+ right-size gate) | `slice-planner` | session / low |
-| Critique — Tier 2 | `plan-critic` (all five council mandates) | session / low |
+| Critique — Tier 2 | `plan-critic` (all five council mandates; the Scope lane is weighted and owns the over-scope record) | session / low |
 | Critique — Tier 3 | + `guardian` (risk-only SAFETY veto); `--thorough` adds `skeptic` | session / high |
 | Implement (sequential per task) | `implementer` | haiku / sonnet / session by task lane |
 | Review ∥ quality gate | `pr-reviewer` (two lanes at Tier 3) ∥ `verifier` running `quality_gate.py` | tier-scaled ∥ haiku |
@@ -67,6 +67,15 @@ glob (auth, migrations, security paths — configurable). An answered
 escalation re-invokes the wave with ONLY its non-terminal slices (merged work
 never re-enters) and the journal cache: the escalated slices' completed
 stages replay free where the cache holds; only the answered stage runs live.
+
+A run may also declare an optional run-level `scope_ceiling` — things this run must not
+build — which is prefixed verbatim to every agent's prompt. The council records a scope
+judgement against it as `critique.over_scope`, and that record is **record-only**: it
+blocks nothing, filters no finding, suppresses no split and raises no escalation trigger.
+The weighting on the critic's Scope lane is the only part of this that reduces
+scope-expansion effort; the ceiling and the record exist to make a judgement durable and
+readable, not to prevent the work. Contracts:
+`references/risk-tiers.md` and `references/run-state-v2.md`.
 
 ## Runtime expectations (Opus 5)
 
@@ -126,6 +135,9 @@ committed `runbook.md`. Contract: `references/run-state-v2.md`. While a run's
 blocks pushes, broad staging (`git add -A`), commits/merges on
 `main`/`master`, and quality-gate config edits. Markers, not vibes: the run
 ends when the human's publish choice is recorded.
+Work the council judged out of scope and asked not to be built is logged as its own
+`deferred` event and rendered into `decisions-log.md`; a malformed scope record fails the
+sidecar closed rather than reading as clean.
 
 ## Components
 
@@ -137,9 +149,10 @@ ends when the human's publish choice is recorded.
   verifier, runbook-writer, peer-reviewer, slice-worker-fallback.
 - **Skills (5)**: escalation-gate, using-spec-loop, test-driven-development,
   systematic-debugging, verification-before-completion.
-- **Scripts (12 + tests)**: dag, worktrees, run_state, review_package,
+- **Scripts (11 runtime + tests)**: dag, worktrees, run_state, review_package,
   quality_gate, knowledge_graph, run_metrics, pr_resolver, spec_loop_guard,
-  dashboard_server, dashboard_launcher (+ dashboard_assets).
+  dashboard_server, dashboard_launcher (+ dashboard_assets, and the
+  `slice_wave_contract_base` test-support module).
 
 ## Migrating from v1
 

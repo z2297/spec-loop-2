@@ -1,0 +1,287 @@
+{
+  "schema_version": 2,
+  "run_id": "20260825-scope-ceiling",
+  "run_schema_detected": 2,
+  "generated_at": "2026-08-26T02:38:40+00:00",
+  "sources": {
+    "dag": true,
+    "dag_schema_version": 2,
+    "events": 142,
+    "events_skipped": 0,
+    "events_truncated": false,
+    "event_types": {
+      "agent-dispatch": 56,
+      "baseline": 1,
+      "council-verdict": 5,
+      "decision": 17,
+      "deferred": 8,
+      "escalation-answered": 9,
+      "escalation-opened": 11,
+      "integration-check": 4,
+      "phase5-gate": 3,
+      "quality-gate": 7,
+      "review-summary": 11,
+      "run-created": 1,
+      "wave-collected": 4,
+      "wave-dispatched": 5
+    },
+    "sidecars": 4,
+    "runbook": true
+  },
+  "safety": {
+    "basis": "events-jsonl+sidecar-v2",
+    "escalations": {
+      "basis": "events-jsonl+sidecar-v2",
+      "total": 7,
+      "open": 0,
+      "answered": 7,
+      "by_trigger": {
+        "budget-exhausted": 2,
+        "council-objection": 2,
+        "material-assumption": 1,
+        "quality-gate-block": 2
+      },
+      "per_scope": {
+        "intake": 2,
+        "run": 1,
+        "s1": 1,
+        "s2": 2,
+        "s3": 1
+      },
+      "unkeyed_events": 0
+    },
+    "decisions_total": 17,
+    "deferrals_total": 8,
+    "over_scope_deferrals": 3,
+    "autonomy_ratio": 0.7083,
+    "escalation_answer_latency_s": null,
+    "council": {
+      "basis": "events-jsonl+sidecar-v2",
+      "verdicts": {
+        "ENDORSE_WITH_CONCERNS": 4,
+        "OBJECT": 1
+      },
+      "object_rate": 0.2,
+      "safety_objections": 1,
+      "concerns_total": 62,
+      "concerns_deferred": 8,
+      "by_member": null,
+      "slice_verdicts": {
+        "ENDORSE_WITH_CONCERNS": 3,
+        "SKIPPED": 1
+      },
+      "over_scope_flags": null
+    },
+    "reversibility_mix": {
+      "high": 3,
+      "moderate": 8,
+      "n/a": 2,
+      "trivial": 4
+    },
+    "precedent_reuse": {
+      "count": 3,
+      "rate": 0.1765
+    }
+  },
+  "quality": {
+    "basis": "events-jsonl+sidecar-v2",
+    "quality_gate": {
+      "basis": "events-jsonl+sidecar-v2",
+      "measurements": 7,
+      "scopes": 4,
+      "first_pass": 1,
+      "first_pass_rate": 0.25,
+      "refactor_passes_total": null,
+      "failures": 6,
+      "final_status_counts": {
+        "FAIL": 3,
+        "PASS": 1
+      }
+    },
+    "review": {
+      "basis": "events-jsonl+sidecar-v2",
+      "counters": {
+        "confirmed": 33,
+        "refuted": 9,
+        "evidence_failed": 0,
+        "fix_rounds": 6,
+        "residual": 17
+      },
+      "verified_findings": 42,
+      "refuted_rate": 0.2143,
+      "evidence_failed_drop_rate": 0.0,
+      "fix_rounds_total": 6,
+      "residual_total": 17,
+      "findings_total": 10,
+      "reviewer_dispatches": 7,
+      "findings_per_reviewer_dispatch": 1.4,
+      "refuted_by_fixer": null,
+      "refuted_by_fixer_rate": null,
+      "block_escalations": 0
+    },
+    "merges": {
+      "basis": "events-jsonl",
+      "count": 0,
+      "commits": null
+    },
+    "splits": {
+      "basis": "dag-json",
+      "total_slices": 4,
+      "split_parents": 0,
+      "split_rate": 0.0,
+      "max_depth": 0,
+      "remediation_slices": 0,
+      "risk_tiers": {
+        "1": 1,
+        "2": 2,
+        "3": 1
+      }
+    },
+    "integration": {
+      "basis": "events-jsonl",
+      "checks": [
+        {
+          "scope": "wave1",
+          "result": null
+        },
+        {
+          "scope": "wave2",
+          "result": null
+        },
+        {
+          "scope": "wave3",
+          "result": null
+        },
+        {
+          "scope": "wave4",
+          "result": null
+        }
+      ],
+      "check_failures": 0,
+      "gate": "PASS",
+      "remediation_slices": 0
+    },
+    "requirement_coverage": {
+      "basis": "runbook-table",
+      "delivered": 5,
+      "partial": 0,
+      "deferred": 0,
+      "rate": 1.0
+    },
+    "slice_outcomes": {
+      "basis": "sidecar-v2",
+      "counts": {
+        "DONE": 4
+      }
+    },
+    "tests": {
+      "basis": "sidecar-v2",
+      "results": {
+        "All 6 segments passed: marketplace validation OK; 106 unit tests in scripts; 1132 unit tests in plugins/spec-loop/scripts (3 skipped); 1238 tests in coverage suite with floors met (96.7% coverage); 48 Node tests for dashboard assets; claude plugin validation passed.": 1,
+        "GREEN - controller-measured first-hand at 2fec12a, all six segments as separate invocations: marketplace OK; scripts/ Ran 106 tests OK; plugins/spec-loop/scripts/ Ran 1132 tests OK; coverage PASS all floors met, TOTAL 96.7% (5972/6173) against a 90 floor; node 48/48; claude plugin validate passed. Additionally: the workflow JS parses under node --check when wrapper-wrapped, and the coverage manifest was audited entry by entry - all 13 correct.": 1,
+        "GREEN - controller-measured first-hand at 7932366, all six segments run as separate invocations: marketplace validation OK; scripts/ Ran 106 tests OK; plugins/spec-loop/scripts/ Ran 1031 tests OK; coverage PASS all per-file and total floors met, dag.py 99.8% (515/516) against a 94 floor and TOTAL 96.6% (5805/6008) against a 90 floor; node 48 tests 48 pass 0 fail; claude plugin validate Validation passed.": 1,
+        "GREEN - controller-measured first-hand at ece9588, all six segments run as separate invocations: marketplace validation OK; scripts/ Ran 106 tests OK; plugins/spec-loop/scripts/ Ran 1074 tests OK; coverage PASS all floors met, run_state.py 100.0% (671/671) against a 95 floor, run_metrics.py 98.6% (1303/1321) against 93, TOTAL 96.7% (5972/6174) against 90; node 48 tests 48 pass 0 fail; claude plugin validate Validation passed. Coverage manifest independently re-audited at HEAD: run_state.py 1088-1089, run_metrics.py 2174-2175, dag.py 786-787 all correct against the shipped files, and only s2 two entries differ from the base.": 1
+      }
+    }
+  },
+  "performance": {
+    "basis": "dag-json+events-jsonl",
+    "run_wall_clock_s": 33690.0,
+    "started_at": "2026-08-25T17:11:33+00:00",
+    "finished_at": "2026-08-26T02:33:03+00:00",
+    "slices": null,
+    "waves": [
+      {
+        "wave": 1,
+        "slices": 1,
+        "status": "collected",
+        "dispatched_via_workflow": true,
+        "agent_count": 11,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 2360.6
+      },
+      {
+        "wave": 2,
+        "slices": 1,
+        "status": "collected",
+        "dispatched_via_workflow": true,
+        "agent_count": 7,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 3034.9
+      },
+      {
+        "wave": 3,
+        "slices": 1,
+        "status": "collected",
+        "dispatched_via_workflow": true,
+        "agent_count": 7,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 3432.5
+      },
+      {
+        "wave": 4,
+        "slices": 1,
+        "status": "collected",
+        "dispatched_via_workflow": true,
+        "agent_count": 10,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 2096.3
+      }
+    ],
+    "agents": {
+      "basis": "events-jsonl",
+      "count": 56,
+      "timed": 0,
+      "total_s": null,
+      "by_agent": null,
+      "by_model": null,
+      "by_role": null,
+      "by_effort": {
+        "high": 19,
+        "low": 19,
+        "medium": 18
+      }
+    },
+    "engine_active_s": null,
+    "human_wait_s": null
+  },
+  "tokens": {
+    "basis": "wave-collected-events",
+    "totals": null,
+    "dispatches": 56,
+    "dispatches_with_tokens": 0,
+    "coverage_rate": 0.0,
+    "by_model": null,
+    "by_role": null,
+    "by_agent": null,
+    "by_scope": null,
+    "wave_totals": {
+      "basis": "wave-collected-events",
+      "total": 2111606,
+      "waves": [
+        {
+          "wave": 1,
+          "subagent_tokens": 444449
+        },
+        {
+          "wave": 2,
+          "subagent_tokens": 535335
+        },
+        {
+          "wave": 3,
+          "subagent_tokens": 700986
+        },
+        {
+          "wave": 4,
+          "subagent_tokens": 430836
+        }
+      ],
+      "waves_reporting": 4,
+      "waves_total": 4
+    }
+  }
+}

@@ -7,6 +7,100 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+### Added
+- **Run-level scope ceiling** — an optional `scope_ceiling` list in `dag.json` (validated
+  only when present; a run without one stays fully valid and mutable), threaded through
+  `ctx` and prefixed to **every** agent prompt by the wave's shared packet as a binding
+  "do NOT build these" block. The read is type-safe, not merely null-safe: an array passes
+  through, a lone non-empty string is coerced to a one-element list (a realistic return
+  from an LLM controller populating `ctx` from prose), and any other non-array value reads
+  as absent rather than throwing. Shape: `references/run-state-v2.md`.
+- **Record-only `critique.over_scope`** — an optional `{flag, reason}` field on the
+  council verdict contract, owned by plan-critic's weighted scope lane. It is carried
+  into the `council-verdict` event and the slice sidecar untouched by any control-flow
+  branch: it never blocks, never suppresses a split, never raises an objection, and is
+  never a finding.
+- **One durable `deferred` event per defer-hinted concern** — each `defer`-hinted council
+  concern now emits its own `deferred` event (`{summary, source: "plan-critique"}`, plus a
+  bare-boolean `over_scope: true` marker when applicable), read by the reviewer as advisory
+  context only — never a findings filter.
+- **Weighted scope lane on plan-critic** — plan-critic's existing Scope mandate now owns the
+  over-scope record; no new agent, no change to any panel size or objection threshold.
+- **Fail-closed sidecar validation and honest rendering of the scope record** — a present
+  `critique.over_scope` must carry a real boolean `flag` and a string-or-null `reason`; a
+  malformed record invalidates the whole sidecar (`persist_slice` raises and writes nothing)
+  rather than being quietly ignored. Absent and explicit `null` are both valid and mean "no
+  scope judgement was recorded" — which is a different claim from `flag: false`, and the two
+  render differently. One shared renderer produces four distinct human outcomes and collapses
+  none of them into another: nothing at all when no judgement was recorded, `scope: clean` for
+  `flag: false`, `SCOPE-FLAGGED` plus the reason when one was given, and `scope: unreadable`
+  when a present record's own shape cannot be trusted. The decisions-log verdict line and the
+  slice report's `Iron Council` value share that renderer, so the two human surfaces cannot
+  disagree; a `deferred` event whose payload marks `over_scope: true` renders with a `SCOPE `
+  prefix in the decisions log.
+- **Null-honest scope counters in `run_metrics.py`** — `safety.over_scope_deferrals` counts
+  `deferred` events carrying that boolean marker, and therefore lives at the `safety` top
+  level beside `deferrals_total`, **not** inside `safety.council`, whose every other key
+  shares the council-verdict population. Both counters are null-honest:
+  `safety.council.over_scope_flags` counts flagged `council-verdict` payloads and stays `null`
+  when no payload carried a boolean flag, because "no payload recorded a scope judgement" is
+  not evidence that nothing was over scope — and a malformed record counts as no record rather
+  than as a clean one. The legacy v1-prose channel reports both as `null`; it never carried a
+  scope judgement. Both feed reporting only: neither feeds a threshold, a gate or a blocking
+  decision.
+
+### Fixed
+- **Wave-aborting unguarded `commits` read** — a task that legitimately committed nothing
+  returns `DONE` with `commits` absent (not required by `TASK_RESULT`); the Stage-T loop's
+  unguarded `r.commits.head` read threw a `TypeError` that the catch-all mislabelled as a
+  budget-exhausted "wave interrupted" escalation. The read is now guarded the way the
+  fix/debug-fix sites already guard it.
+- **Missing `quality-gate-block` answer injection** — no prompt builder had a site for a
+  human's answer to a quality-gate escalation, so the answer could not reach the
+  re-dispatched slice. `fixPrompt` now carries it through `answerFor` ("apply it, do not
+  re-raise"); `verifyPrompt` carries it through a new context-only sibling `answerContext`,
+  which shows the answer without instructing a transcription-only reporter to change what
+  it reports — the suite result and `quality.summary_pass`/`violations` stay verbatim from
+  the real output.
+
+### Scope and limits of this change
+
+Read this before reading "Added" as "scope creep no longer happens". Of everything added
+above, exactly one thing reduces the effort spent expanding scope: the **weighted scope lane
+on `plan-critic`**, which makes the critic look at the run's ceiling and the slice goal and
+say so. The ceiling, the `over_scope` record, the `deferred` channel and both counters do not
+prevent anything — they build durable **recording**, and non-re-admission only in the sense
+that recording buys: a scope judgement is written down with its reason, survives into
+`events.jsonl`, the sidecar and `decisions-log.md`, and is visible to the reviewer and the
+human, so deferred work cannot quietly come back unremarked. Nothing stops it coming back.
+The record blocks nothing, filters no finding, suppresses no split and raises no objection. Work the council judges out of scope and asks
+not to be built is a `defer`-hinted concern, logged as a `deferred` event; the record itself
+is explicitly "flag it and still build it" when the goal genuinely asks for it.
+
+The mechanism was exercised on live input by the run that added it, which is the strongest
+available evidence for both halves of that claim. The two workflow defects fixed above were
+themselves an approved, recorded scope increase. In the same run the council found two more
+defects of the same class in `workflows/slice-wave.workflow.js` — an unguarded
+`plan.escalation.*` read on the ESCALATE branch (:479), which turns a planner returning
+`ESCALATE` with no `escalation` object into the same mislabelled "wave interrupted"
+`TypeError`, and a `plan.split` pass-through on the SPLIT branch (:478) that hands `undefined`
+downstream to fail sidecar validation there instead. Both are one-line guards; both were
+**deferred rather than fixed**, because they fell outside the approved increase. They are
+logged with `file:line` evidence and are deliberately still unbuilt. That is the mechanism
+working as designed, and it is also the plainest possible demonstration that recording a
+scope judgement is not the same as acting on it.
+
+Verifiability ceiling: nothing this change added to `workflows/slice-wave.workflow.js` has
+ever been executed. The loop resolves its workflow from the installed plugin cache, so the
+merged file takes effect only after a plugin reinstall — the run that wrote it ran a patched
+copy of that cache, not this file. That JS carries no coverage gate (`measure_coverage.py`
+measures Python only). Its guarantees rest on a real `node` parse of the source plus
+source-text assertions that prove a guard, a helper call or a schema field is *present*, and
+on three pure helpers (`scopeRecord`, `deferralEvents`, `scopeCeilingList`) extracted from
+that source and executed under real `node` in isolation. Presence is not behaviour, and three
+pure helpers are not the pipeline — treat every runtime claim about the workflow in this entry
+as reviewed and asserted, not observed.
+
 ## [2.1.0] - 2026-08-10
 Runtime and trust fixes from the 2026-08-06/07 production-run analysis
 (Groundworks.Jobs): active runtime was ~3–5h for 3–5 slices, but one run read

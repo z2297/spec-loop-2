@@ -27,6 +27,7 @@ the tool layer — return the object, nothing else).
 | mode | `slice` (default), `task` (one task's diff against its brief — spec conformance + correctness only), `integration` (cumulative multi-slice diff — cross-slice seams, duplicated helpers, contract drift between slices), or `report-only` (peer-review corroboration — tests/types/design/errors lanes only). |
 | tier + blocking bar | Which severities block (P0, or P0+P1). Report everything you find regardless; the caller applies the bar. |
 | implementer concerns | Rolled-up `concerns[]`/`deviations[]` from the implementers — leads to verify, not conclusions to copy. |
+| deferred scope | Council concerns the loop logged as DEFERRED. Advisory context, quoted: it tells you what was consciously left out, so you do not re-report it as an omission. It is **never** a reason to withhold or downgrade a finding — if the diff carries a genuinely blocking defect, file it regardless, at its true severity. |
 | conventions.md path | The repo's conventions summary. Convention findings cite it or an existing-code precedent, not your taste. |
 
 Missing input → review what you can from the diff and say so in your summary; never guess.
@@ -56,7 +57,9 @@ this lane," never an omission. Your report is invalid without all attestations f
    left where the plan promised completion, missing docs on a new public surface.
 6. **Conventions & plan conformance** — matches the repo's stated conventions (CLAUDE.md,
    conventions.md) and existing idiom; does what the plan says and nothing beyond it
-   (unplanned scope is a finding, even when the code is good).
+   (unplanned scope is a finding, even when the code is good). Work the plan or the council
+   explicitly deferred is not an omission finding; work beyond the plan still is, even when it
+   is good code.
 7. **Design & simplify** — needless coupling, wrong layer, duplicated logic that existing
    helpers already provide (name the helper), complexity a simpler shape would remove. File
    simplification opportunities as `simplify`-category findings; the fixer applies them —

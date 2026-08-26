@@ -24,6 +24,7 @@ objects and are never machine-load-bearing; metrics are null-honest.
   "mode": "workflow | inline",              // inline = slice-worker-fallback path
   "created_at": "<ISO-8601 UTC>",
   "shared_constraints": ["<run-wide must-not-regress constraints; [] if none>"],
+  "scope_ceiling": ["<things this run must not build; OPTIONAL, may be absent>"],
   "slices": [{
     "id": "s1",
     "goal": "<one shippable change>",
@@ -52,6 +53,14 @@ dispatched (the durable pointer from run state to workflow journals), not a
 prediction. Split children use ids `<parent>.1`, `<parent>.2`, …, with
 `depth = parent.depth + 1`.
 
+`scope_ceiling` is **optional**: `dag.py validate_dag` checks it only when
+the key is present (a list of non-empty strings), and a `dag.json` without
+it is fully valid and fully mutable. That is deliberate asymmetry — the
+neighbouring run-level keys (`run_id`, `base_ref`, `merge_mode`,
+`shared_constraints`, …) are not validated at all, and making any run-level
+key required would make every pre-existing run un-resumable, because
+`_load_for_mutation` refuses to mutate a contract-invalid dag.
+
 ## `slice-<id>-status.json` — per-slice sidecar
 
 Persisted by the controller (via `run_state.py persist-slice`) from the
@@ -67,7 +76,8 @@ prose about the slice.
   "commits": { "base": "<sha>", "head": "<sha>" },   // null head if nothing committed
   "risk_tier": 2,
   "review_tier": 2,             // may exceed risk_tier via surface auto-promotion
-  "critique": { "verdict": "ENDORSE | ENDORSE_WITH_CONCERNS | OBJECT | SKIPPED", "concerns": 2 },
+  "critique": { "verdict": "ENDORSE | ENDORSE_WITH_CONCERNS | OBJECT | SKIPPED", "concerns": 2,
+                "over_scope": { "flag": false, "reason": null } },  // OPTIONAL; absent ≠ flag:false
   "tasks_completed": 4,
   "review": { "confirmed": 1, "refuted": 2, "evidence_failed": 0,
               "fix_rounds": 1, "residual": ["P2: ..."] },
@@ -135,7 +145,31 @@ best-effort):
   duration_ms}` — the honest wave-level token/duration channel while
   per-dispatch stamps are unavailable. Optional, null-honest.
 - **`council-verdict`** payload carries `safety: bool` — whether the verdict
-  involved a SAFETY flag (the one objection that halts alone).
+  involved a SAFETY flag (the one objection that halts alone) — and the
+  OPTIONAL `over_scope: {flag: bool, reason: string|null}` record. `over_scope`
+  keeps BOTH halves: unlike `safety`, whose reason is dropped at the source, the
+  reason is durable here. It is **record-only**: no verdict, gate, veto or
+  blocking decision reads it, and it is never a finding. Absent means no scope
+  judgement was recorded and is NOT equivalent to `flag: false`; both render
+  distinctly in `decisions-log.md` (`scope: clean` vs nothing at all).
+- **`deferred`** payload is null-honest and otherwise free-form, with one pinned
+  key: `over_scope: true` (a bare boolean). This is MEMBER-level attribution, NOT a
+  per-concern judgement: it marks that the council member who raised this concern
+  separately flagged the WHOLE PLAN as over-scope, not that this specific concern is
+  itself out of scope. A member who flags the plan over-scope while separately
+  raising an unrelated `disposition_hint: 'defer'` concern causes that unrelated
+  concern to carry the same marker too — there is no per-concern `over_scope` field
+  in the council schema to attribute it more precisely. The wave emits ONE such
+  event per `defer`-hinted council concern, ONLY on the path where the plan
+  proceeds to execution — a SPLIT return discards the plan and re-critiques per
+  child, and an unresolved OBJECT escalation means the plan never ran, so either
+  case emits ZERO deferred events for that batch — payload `{summary, source:
+  "plan-critique"}` plus the marker when it applies — `summary` is read first by the
+  decisions-log renderer, so the line is legible prose rather than a JSON blob.
+  Advisory prose data only: it suppresses no finding, filters no blocking set, and
+  drops no work. The controller also emits `deferred` at intake, and
+  `council-verdict.deferred[]` remains the machine channel `run_metrics.concerns_deferred`
+  counts.
 - **`escalation-opened`** payload is the full EscalationRecord, including its
   `id`; `escalation-answered` pairs by that `id` (never by scope alone — one
   slice can open several).

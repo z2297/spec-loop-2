@@ -255,6 +255,57 @@ class TestValidateSidecar(unittest.TestCase):
         body["split"]["children"] = [{"goal": "a", "internal_deps": 2}, {"goal": "b"}]
         self.assertMentions(body, "internal_deps")
 
+    def test_a_sidecar_without_an_over_scope_block_is_valid(self):
+        # over_scope is optional: absence means "no scope judgement recorded",
+        # which is not the same claim as flag=False.
+        body = sidecar()
+        self.assertNotIn("over_scope", body["critique"])
+        self.assertValid(body)
+
+    def test_an_over_scope_record_with_a_flag_and_a_reason_is_valid(self):
+        self.assertValid(sidecar(critique={
+            "verdict": "ENDORSE_WITH_CONCERNS", "concerns": 2,
+            "over_scope": {"flag": True, "reason": "adds a tier heuristic"}}))
+
+    def test_an_over_scope_record_may_carry_a_null_reason(self):
+        self.assertValid(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": False, "reason": None}}))
+
+    def test_a_null_over_scope_reads_as_absent_and_is_valid(self):
+        self.assertValid(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0, "over_scope": None}))
+
+    def test_over_scope_must_be_an_object(self):
+        self.assertMentions(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0, "over_scope": True}),
+            "critique.over_scope must be a JSON object")
+
+    def test_over_scope_flag_must_be_a_boolean(self):
+        self.assertMentions(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": "yes", "reason": None}}),
+            "critique.over_scope.flag")
+
+    def test_over_scope_without_a_flag_is_refused(self):
+        self.assertMentions(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0, "over_scope": {"reason": "x"}}),
+            "critique.over_scope.flag")
+
+    def test_over_scope_reason_must_be_a_string_or_null(self):
+        self.assertMentions(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": True, "reason": 7}}),
+            "critique.over_scope.reason")
+
+    def test_a_bad_flag_and_a_bad_reason_are_reported_together(self):
+        # Validation never short-circuits: one round-trip must show everything.
+        errors = rs.validate_sidecar(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": None, "reason": []}}))
+        scoped = [e for e in errors if e.startswith("critique.over_scope.")]
+        self.assertEqual(len(scoped), 2)
+
 
 # --------------------------------------------------------------------------
 # renderers — pure
@@ -381,6 +432,88 @@ class TestDecisionLine(unittest.TestCase):
     def test_non_object_payload_is_tolerated(self):
         self.assertIn("just text", self.line("decision", "just text"))
 
+    def test_a_flagged_scope_record_is_named_in_the_council_line(self):
+        record = {"flag": True, "reason": "adds a tier heuristic"}
+        payload = {"verdict": "ENDORSE", "concerns": 1, "over_scope": record}
+        line = self.line("council-verdict", payload)
+        self.assertIn("SCOPE-FLAGGED: adds a tier heuristic", line)
+
+    def test_a_flagged_scope_record_without_a_reason_still_says_flagged(self):
+        record = {"flag": True, "reason": None}
+        payload = {"verdict": "ENDORSE", "over_scope": record}
+        self.assertIn("SCOPE-FLAGGED", self.line("council-verdict", payload))
+
+    def test_a_clean_scope_record_is_rendered_not_swallowed(self):
+        # Unconditional rendering: "the council looked and found nothing" must
+        # be visible, otherwise it is indistinguishable from "nobody looked".
+        record = {"flag": False, "reason": None}
+        payload = {"verdict": "ENDORSE", "over_scope": record}
+        self.assertIn("scope: clean", self.line("council-verdict", payload))
+
+    def test_an_absent_scope_record_renders_no_scope_phrase_at_all(self):
+        line = self.line("council-verdict", {"verdict": "ENDORSE", "concerns": 0})
+        self.assertNotIn("scope", line.lower())
+
+    def test_a_malformed_scope_record_is_reported_as_unreadable(self):
+        payload = {"verdict": "ENDORSE", "over_scope": {"flag": "yes"}}
+        line = self.line("council-verdict", payload)
+        self.assertIn("scope: unreadable", line)
+
+    def test_a_non_object_scope_record_is_reported_as_unreadable(self):
+        payload = {"verdict": "ENDORSE", "over_scope": True}
+        line = self.line("council-verdict", payload)
+        self.assertIn("scope: unreadable", line)
+
+    def test_a_flagged_record_with_a_malformed_reason_is_unreadable_not_silent(self):
+        # A valid boolean flag with a non-string, non-null reason must not
+        # fall through to the bare "SCOPE-FLAGGED" line dropping the reason
+        # silently — _scope_note's own docstring promises "scope: unreadable"
+        # for anything malformed, so the reason and the flag are read together.
+        payload = {"verdict": "ENDORSE", "over_scope": {"flag": True, "reason": 7}}
+        line = self.line("council-verdict", payload)
+        self.assertIn("scope: unreadable", line)
+        self.assertNotIn("SCOPE-FLAGGED", line)
+
+    def test_the_safety_prefix_and_the_scope_note_coexist(self):
+        record = {"flag": True, "reason": "dashboards"}
+        payload = {"verdict": "OBJECT", "concerns": 2, "safety": True}
+        payload["over_scope"] = record
+        line = self.line("council-verdict", payload)
+        self.assertIn("SAFETY OBJECT (2 concerns)", line)
+        self.assertIn("SCOPE-FLAGGED: dashboards", line)
+
+    def test_a_scope_marked_deferral_is_marked_in_the_decisions_log(self):
+        payload = {"title": "dashboard charts", "over_scope": True}
+        line = self.line("deferred", payload)
+        self.assertIn("DEFERRED: SCOPE dashboard charts", line)
+
+    def test_an_ordinary_deferral_is_unmarked(self):
+        line = self.line("deferred", {"title": "dashboard charts"})
+        self.assertIn("DEFERRED: dashboard charts", line)
+        self.assertNotIn("SCOPE", line)
+
+    def test_a_deferral_marked_false_is_not_a_scope_deferral(self):
+        # over_scope: false is an explicit "not a scope deferral"; only the
+        # boolean true earns the marker.
+        payload = {"title": "dashboard charts", "over_scope": False}
+        line = self.line("deferred", payload)
+        self.assertIn("DEFERRED: dashboard charts", line)
+        self.assertNotIn("SCOPE", line)
+
+    def test_a_non_string_verdict_is_still_rendered_not_crashed_on(self):
+        # decision_line renders arbitrary events.jsonl payloads, so the
+        # extracted _verdict_summary must stay as type-tolerant as the
+        # %-formatted expression it replaced.
+        line = self.line("council-verdict", {"verdict": 7, "concerns": "many"})
+        self.assertIn("COUNCIL-VERDICT: 7 (many concerns)", line)
+
+    def test_the_scope_marker_is_only_read_on_deferred_events(self):
+        # over_scope on some other event type is not a rendering instruction.
+        payload = {"summary": "use the CSV writer", "over_scope": True}
+        line = self.line("decision", payload)
+        self.assertIn("DECISION: use the CSV writer", line)
+        self.assertNotIn("SCOPE", line)
+
 
 class TestRenderReport(unittest.TestCase):
     def test_done_report(self):
@@ -434,6 +567,38 @@ class TestRenderReport(unittest.TestCase):
 
     def test_report_points_at_the_authoritative_sidecar(self):
         self.assertIn("slice-s1-status.json", rs.render_report(sidecar()))
+
+    def test_the_report_names_a_flagged_scope_beside_the_council_verdict(self):
+        text = rs.render_report(sidecar(critique={
+            "verdict": "ENDORSE_WITH_CONCERNS", "concerns": 2,
+            "over_scope": {"flag": True, "reason": "adds a tier heuristic"}}))
+        self.assertIn("Iron Council", text)
+        self.assertIn("SCOPE-FLAGGED: adds a tier heuristic", text)
+
+    def test_the_report_names_a_clean_scope_verdict_too(self):
+        text = rs.render_report(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": False, "reason": None}}))
+        self.assertIn("scope: clean", text)
+
+    def test_the_report_says_nothing_about_scope_when_none_was_recorded(self):
+        # The Tests line has always printed the unrelated "(scope: full)"
+        # test-scope field, so the unrecorded-scope contract is asserted
+        # against the Iron Council line itself, not the whole document.
+        text = rs.render_report(sidecar())
+        self.assertEqual(
+            [ln for ln in text.splitlines() if "Iron Council" in ln],
+            ["- **Iron Council:** ENDORSE_WITH_CONCERNS (2 concerns)"])
+        self.assertNotIn("SCOPE", text)
+
+    def test_a_non_string_council_verdict_is_still_rendered_in_the_report(self):
+        text = rs.render_report(sidecar(critique={"verdict": 7, "concerns": 1}))
+        self.assertIn("**Iron Council:** 7 (1 concerns)", text)
+
+    def test_a_malformed_scope_record_is_named_unreadable_in_the_report(self):
+        text = rs.render_report(sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0, "over_scope": {"reason": "x"}}))
+        self.assertIn("scope: unreadable", text)
 
 
 # --------------------------------------------------------------------------
@@ -733,6 +898,44 @@ class TestPersistSlice(RunStateTestCase):
             rs.persist_slice(self.run_dir, sidecar(status="PROBABLY_FINE"),
                              wave=1, ts=TS)
 
+    # A malformed critique.over_scope record STAYS FAIL-CLOSED: the binding
+    # ruling on this run is that the defect was the missing tests, never the
+    # strictness. Each variant below must both raise SidecarInvalid AND leave
+    # the run dir untouched — the fixture's dag.json is the only file present,
+    # exactly as test_invalid_sidecar_is_refused_and_writes_nothing pins above.
+
+    def test_a_non_object_over_scope_record_is_refused_and_writes_nothing(self):
+        body = sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0, "over_scope": True})
+        with self.assertRaises(rs.SidecarInvalid) as ctx:
+            rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
+        self.assertErrorMentions(
+            ctx.exception.errors, "critique.over_scope must be a JSON object")
+        self.assertEqual(os.listdir(self.run_dir), ["dag.json"])
+
+    def test_a_non_boolean_flag_is_refused_and_writes_nothing(self):
+        body = sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": "yes", "reason": None}})
+        with self.assertRaises(rs.SidecarInvalid) as ctx:
+            rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
+        self.assertErrorMentions(ctx.exception.errors, "critique.over_scope.flag")
+        self.assertEqual(os.listdir(self.run_dir), ["dag.json"])
+
+    def test_a_non_string_non_null_reason_is_refused_and_writes_nothing(self):
+        body = sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": True, "reason": 7}})
+        with self.assertRaises(rs.SidecarInvalid) as ctx:
+            rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
+        self.assertErrorMentions(ctx.exception.errors, "critique.over_scope.reason")
+        self.assertEqual(os.listdir(self.run_dir), ["dag.json"])
+
+    def assertErrorMentions(self, errors, needle):
+        self.assertTrue(
+            any(needle in message for message in errors),
+            "expected %r among %r" % (needle, errors))
+
 
 class TestOpenEscalations(RunStateTestCase):
     def open_one(self, escalation_id, ts=TS, **over):
@@ -1017,6 +1220,76 @@ class TestPinnedPayloadFacts(RunStateTestCase):
                         {"verdict": "OBJECT", "concerns": 1, "safety": True})
         self.assertIn("SAFETY OBJECT", self.read("decisions-log.md"))
 
+    def test_council_verdict_carries_the_whole_over_scope_record_not_just_a_bool(self):
+        # safety drops its reason and records it nowhere; over_scope must not
+        # repeat that — flag AND reason are both durable.
+        record = {"flag": True, "reason": "adds a tier-assignment heuristic"}
+        rs.persist_slice(self.run_dir, sidecar(critique={
+            "verdict": "OBJECT", "concerns": 3, "over_scope": record}),
+            wave=1, ts=TS)
+        verdict = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        self.assertEqual(verdict["payload"]["over_scope"], record)
+
+    def test_a_clean_over_scope_record_survives_persistence(self):
+        rs.persist_slice(self.run_dir, sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": False, "reason": None}}), wave=1, ts=TS)
+        verdict = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        self.assertIs(verdict["payload"]["over_scope"]["flag"], False)
+        self.assertIn("scope: clean", self.read("decisions-log.md"))
+
+    def test_a_returned_council_verdict_event_keeps_over_scope_byte_for_byte(self):
+        payload = {"verdict": "ENDORSE_WITH_CONCERNS", "panel": ["plan-critic"],
+                   "safety": False, "concerns_folded": 1, "deferred": ["P2: later"],
+                   "over_scope": {"flag": True, "reason": "dashboard UI work"}}
+        rs.persist_slice(self.run_dir, sidecar(events=[
+            {"scope": "s1", "type": "council-verdict", "payload": payload}]),
+            wave=1, ts=TS)
+        stored = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        self.assertEqual(stored["payload"], payload)
+
+    def test_the_wave_emitted_council_verdict_shape_validates_and_renders(self):
+        # The payload slice-wave.workflow.js builds after run 20260825: the
+        # scope record sits beside `deferred[]`, never replacing it. The JS is
+        # not executed by any lane of this suite, so this is the seam where its
+        # emitted shape is actually asserted against the real renderer.
+        payload = {"verdict": "ENDORSE_WITH_CONCERNS",
+                   "panel": ["full-council", "risk"], "safety": False,
+                   "concerns_folded": 2, "deferred": ["dashboard charts"],
+                   "over_scope": {"flag": True, "reason": "dashboard UI work"}}
+        rs.persist_slice(self.run_dir, sidecar(events=[
+            {"scope": "s1", "type": "council-verdict", "payload": payload}]),
+            wave=1, ts=TS)
+        stored = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        log = self.read("decisions-log.md")
+        self.assertEqual(stored["payload"], payload)
+        self.assertIn("SCOPE-FLAGGED: dashboard UI work", log)
+
+    def test_the_wave_emitted_sidecar_critique_shape_is_accepted(self):
+        # state.critique omits over_scope entirely when no member recorded one,
+        # and carries {flag, reason} verbatim when one did.
+        rs.persist_slice(self.run_dir, sidecar(critique={
+            "verdict": "ENDORSE_WITH_CONCERNS", "concerns": 2,
+            "over_scope": {"flag": False, "reason": None}}), wave=1, ts=TS)
+        self.assertIn("scope: clean", self.read("slice-s1-report.md"))
+
+    def test_a_deferred_event_marks_deferred_scope_with_over_scope_true(self):
+        payload = {"title": "dashboard charts", "over_scope": True}
+        rs.append_event(self.run_dir, TS, "s1", "deferred", payload)
+        stored = self.events()[0]["payload"]
+        decisions_log = self.read("decisions-log.md")
+        self.assertEqual(stored, payload)
+        self.assertIn("DEFERRED: SCOPE dashboard charts", decisions_log)
+
+    def test_over_scope_never_changes_the_recorded_verdict(self):
+        # Record-only: the flag is not a vote and not a finding.
+        rs.persist_slice(self.run_dir, sidecar(critique={
+            "verdict": "ENDORSE", "concerns": 0,
+            "over_scope": {"flag": True, "reason": "out of the run ceiling"}}),
+            wave=1, ts=TS)
+        verdict = [e for e in self.events() if e["type"] == "council-verdict"][0]
+        self.assertEqual(verdict["payload"]["verdict"], "ENDORSE")
+
     def test_agent_dispatch_payload_is_passed_through_verbatim(self):
         payload = {"role": "implementer", "model": "claude-opus-5", "effort": "high",
                    "agent_type": "sdd-implementer",
@@ -1046,6 +1319,66 @@ class TestPinnedPayloadFacts(RunStateTestCase):
         stored = json.loads(self.read("slice-s1-status.json"))
         self.assertEqual(stored["started_at"], TS)
         self.assertEqual(stored["finished_at"], LATER)
+
+
+# --------------------------------------------------------------------------
+# the deferred events the wave itself emits
+# --------------------------------------------------------------------------
+
+def wave_deferrals():
+    """The two `deferred` events slice-wave.workflow.js emits for a mixed
+    council batch - one scope-marked, one plain (PURE)."""
+    scoped = {"summary": "dashboard charts for the new counter",
+              "source": "plan-critique", "over_scope": True}
+    plain = {"summary": "extra fixtures for the legacy path",
+             "source": "plan-critique"}
+    return [{"scope": "s1", "type": "deferred", "payload": scoped},
+            {"scope": "s1", "type": "deferred", "payload": plain}]
+
+
+class TestWaveEmittedDeferrals(RunStateTestCase):
+    """The shapes slice-wave.workflow.js emits for a defer-hinted council
+    concern. The JS is resolved at runtime from the installed plugin cache and
+    is executed by no lane of this suite, so this is the seam where its payload
+    contract meets the real renderer: one durable, legible record per deferred
+    concern, with the scope marker only where it was earned."""
+
+    def persist(self):
+        """Persist a slice whose council deferred two concerns."""
+        body = sidecar(events=wave_deferrals())
+        rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
+
+    def persisted_log(self):
+        """decisions-log.md after that slice was persisted."""
+        self.persist()
+        return self.read("decisions-log.md")
+
+    def test_a_scope_marked_deferral_renders_a_legible_scope_line(self):
+        line = "DEFERRED: SCOPE dashboard charts for the new counter"
+        self.assertIn(line, self.persisted_log())
+
+    def test_an_unmarked_deferral_renders_without_the_scope_marker(self):
+        log = self.persisted_log()
+        self.assertIn("DEFERRED: extra fixtures for the legacy path", log)
+        self.assertNotIn("SCOPE extra fixtures", log)
+
+    def test_the_summary_key_is_what_makes_the_line_prose_not_json(self):
+        # Regression guard for the payload key name: a payload carrying no key
+        # from SUMMARY_TEXT_KEYS renders as a one-line JSON blob instead.
+        self.assertNotIn('{"summary"', self.persisted_log())
+
+    def test_both_deferrals_are_appended_verbatim(self):
+        self.persist()
+        stored = [e for e in self.events() if e["type"] == "deferred"]
+        emitted = [e["payload"] for e in wave_deferrals()]
+        self.assertEqual([e["payload"] for e in stored], emitted)
+
+    def test_a_deferral_is_a_record_and_never_a_residual_finding(self):
+        # NEVER DELETE A FINDING, read from the other end: the deferral
+        # channel is events-only and leaves the review block alone.
+        self.persist()
+        report = self.read("slice-s1-report.md")
+        self.assertIn("P2: naming could be clearer", report)
 
 
 # --------------------------------------------------------------------------

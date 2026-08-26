@@ -69,10 +69,14 @@ Do not act. Return an `EscalationRecord` and let the controller batch it:
 When uncertain whether something is "material": if a reasonable reviewer could reject the slice
 over it, it is material → surface it.
 
-The enum lives in `slice-wave.workflow.js` (`ESCALATION.trigger`), whose sixth value —
-`budget-exhausted` — is **not** a sixth judgment trigger: the workflow's guard emits it when a
-structural cap is hit (agent cap, stage token floor, lost slice). It asks for a resource, not a
-decision; no layer *decides* to raise it.
+The enum lives in `slice-wave.workflow.js` (`ESCALATION.trigger`). Two things that are
+deliberately NOT judgment triggers, and must never be turned into one: `budget-exhausted` (the
+workflow's guard emits it when a structural cap is hit — agent cap, stage token floor, lost
+slice; it asks for a resource, not a decision) and the council's **over-scope flag**
+(`critique.over_scope.flag`). The flag is a record: it is carried into the `council-verdict`
+payload and the slice sidecar with its reason, and it raises no escalation, changes no verdict,
+suppresses no split, and blocks nothing. There are exactly five triggers; an over-scope flag is
+not a sixth.
 
 ### Precedent check (before returning any SURFACE escalation)
 
@@ -97,7 +101,7 @@ The controller repeats this check over every open record at the wave boundary.
 
 ### Not triggers (autonomous by design)
 
-Two things that look like stopping points but are handled by the loop itself, keeping the bar at
+Three things that look like stopping points but are handled by the loop itself, keeping the bar at
 exactly the five triggers above:
 
 - **Slice split.** A slice that turns out to be two-or-more independently shippable changes
@@ -107,6 +111,11 @@ exactly the five triggers above:
 - **Integration remediation.** A merge conflict or red integration check opens a remediation
   slice that runs the normal pipeline; the human is reached only if that slice exhausts its own
   fix budget (trigger 3).
+- **Over-scope and deferred scope.** A plan that exceeds the run's scope ceiling is flagged
+  (`over_scope`) and, when the goal genuinely asks for it, still built; work the council
+  asks not to be built is a `defer`-hinted concern recorded as one `deferred` event per
+  concern. Both are records for the human to read at the runbook, not questions — and
+  neither ever suppresses a finding.
 
 ## Batching rule (critical for non-blocking operation)
 

@@ -32,6 +32,12 @@ mid-slice by the surface check below. Everything in this table keys off `review_
 | Simplify polish | none | none | one `simplifier` pass (sonnet/low), non-blocking, skipped when `ctx.polish === false` |
 | Per-slice agent cap | 10 | 18 | 32 |
 
+The panel composition above is fixed: the run's scope ceiling is judged by plan-critic's
+weighted **scope lane**, a mandate on the existing member, not a fourteenth agent. Panel
+size is load-bearing — a counted extra member raises the objection threshold (a solo
+Tier-2 plan-critic loses its veto at n=2; `--thorough` Tier 3 would need 3 objections
+instead of 2).
+
 At Tier 1 and 2 the single reviewer's model may be overridden by config
 (`models.reviewer`); the Tier-3 pair is fixed. Findings below the bar are never
 verified and never fixed — they are recorded as the sidecar's `review.residual`.
@@ -81,3 +87,9 @@ Everything the tier decides funnels into exactly two of `escalation-gate`'s five
 `review-block` (blocking findings survive the fix loop, or verification cannot pass) and
 `quality-gate-block` (gate violations survive it). The `budget-exhausted` record the per-slice
 agent cap emits is mechanical, not a judgment — the caps in the table above are its only source.
+
+An over-scope record (`critique.over_scope`) is **not** in that funnel. It is record-only:
+it is carried into the `council-verdict` event and the sidecar, counted null-honestly by
+`run_metrics.py`, and read by a human — it raises no trigger, blocks nothing, and is never
+a finding. Work the council judged out of scope and asked not to be built is a
+`defer`-hinted concern, recorded as a `deferred` event.
