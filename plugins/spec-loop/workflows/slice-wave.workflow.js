@@ -223,6 +223,35 @@ function deferralEvents(slice, concerns) {
   }))
 }
 
+// Called only on the path where `plan` actually proceeds to execution — a
+// SPLIT return discards the plan (and every grafted child re-critiques and
+// records its own deferrals), and an escalation return means the plan never
+// ran. Recording here unconditionally would give "ONE durable record per
+// defer-hinted concern" a plan that was discarded (SPLIT, duplicated across
+// children) or one that never executed (escalation, then re-appended on
+// every resume — persist_slice/append_event do no de-duplication).
+function recordDeferrals(slice, state, concerns) {
+  state.deferred = concerns.filter(c => c.disposition_hint === 'defer').map(c => c.text)
+  deferralEvents(slice, concerns).forEach(e => state.events.push(e))
+}
+
+// Type-safe read of the optional run-level ceiling. Null-safe alone is not
+// enough: `(CTX.scope_ceiling || []).length` is truthy for a non-empty
+// STRING too, and a bare `.map(...)` on that string throws — the exact
+// class of defect this slice exists to eliminate, reproduced in the field
+// it added. The producer is an LLM controller populating `ctx` from prose,
+// so a lone string in place of a one-element list is a realistic input,
+// not a hypothetical: it is coerced to `[string]` rather than dropped or
+// thrown on, since the content is clearly meant as ceiling text. Anything
+// else non-array (number, object, boolean) is treated as absent — there is
+// no reasonable single-value coercion for those. (PURE)
+function scopeCeilingList(ctx) {
+  const raw = ctx.scope_ceiling
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string' && raw) return [raw]
+  return []
+}
+
 function esc(slice, trigger, title, context, question, options) {
   return {
     id: `${slice.id}:${trigger}`,
@@ -254,8 +283,8 @@ const packet = (slice) => [
   `Run dir: ${CTX.run_dir}`,
   `Conventions: ${CTX.conventions_path}`,
   `Shared constraints (binding, verbatim):\n${(CTX.shared_constraints || []).map(c => `- ${c}`).join('\n') || '- none'}`,
-  (CTX.scope_ceiling || []).length
-    ? `Run scope ceiling (binding — do NOT build these; if your goal appears to require one, say so in your return and your report, and never silently build it):\n${CTX.scope_ceiling.map(c => `- ${c}`).join('\n')}`
+  scopeCeilingList(CTX).length
+    ? `Run scope ceiling (binding — do NOT build these; if your goal appears to require one, say so in your return and your report, and never silently build it):\n${scopeCeilingList(CTX).map(c => `- ${c}`).join('\n')}`
     : '',
   slice.kg_snippet ? `Prior knowledge (graph context):\n${slice.kg_snippet}` : '',
 ].filter(Boolean).join('\n')
@@ -520,6 +549,19 @@ async function resolveCouncilObjection(slice, state, ctx) {
   return (revised && revised.status === 'PLANNED') ? { plan: revised } : { stop: councilObjectionEscalation(slice, state, ob, safety) }
 }
 
+// Resolves an OBJECT verdict and records deferrals only if the resolution
+// actually lets the plan proceed (see the comment on recordDeferrals above)
+// — pulled out of stageCritique so that one extra branch is not counted
+// against its own cognitive-complexity budget (stageCritique is already at
+// the pre-existing file's inherited complexity baseline; every new branch
+// this slice adds goes into a small named helper, per this run's own rule).
+async function resolveObjectionAndRecord(slice, state, ctx) {
+  const { plan, ob, safety, concerns } = ctx
+  const resolved = await resolveCouncilObjection(slice, state, { plan, ob, safety })
+  if (!resolved.stop) recordDeferrals(slice, state, concerns)
+  return resolved
+}
+
 // Stage C — critique (tier ≥ 2)
 async function stageCritique(slice, state, plan) {
   if (state.review_tier < 2) return { plan }
@@ -536,12 +578,10 @@ async function stageCritique(slice, state, plan) {
   // consult it. Omitted entirely when no member judged scope.
   if (scope) state.critique.over_scope = scope
   recordCouncilVerdict(slice, state, { panel, safety, concerns, scope })
-  state.deferred = concerns.filter(c => c.disposition_hint === 'defer').map(c => c.text)
-  deferralEvents(slice, concerns).forEach(e => state.events.push(e))
   const splitRec = findSplitRecommendation(verdicts, slice.depth, state.critique.verdict)
   if (splitRec) return { stop: doneResult(slice, state, 'SPLIT', { split: { children: splitRec.split.children } }) }
-  if (state.critique.verdict !== 'OBJECT') return { plan }
-  return resolveCouncilObjection(slice, state, { plan, ob: (safety || objections[0]), safety })
+  if (state.critique.verdict !== 'OBJECT') { recordDeferrals(slice, state, concerns); return { plan } }
+  return resolveObjectionAndRecord(slice, state, { plan, ob: (safety || objections[0]), safety, concerns })
 }
 
 // Stage T helpers — one task attempt (with the lane-lift retry) and the
@@ -558,7 +598,14 @@ function taskBlockReason(r) {
 function mergeTaskCommits(state, r) {
   const c = (r.commits && typeof r.commits === 'object') ? r.commits : {}
   if (c.head) state.commits.head = c.head
-  if (state.commits.base === null && c.base) state.commits.base = c.base
+  // `state.commits.base` is initialised to `slice.base_sha` (never `null`),
+  // so an `=== null` check here was dead: it could never adopt a
+  // task-reported base. The real failure it should guard is `slice.base_sha`
+  // being absent — `base` then stays `undefined` and every packageCmd/git
+  // diff string below interpolates the literal text "undefined" with no
+  // guard anywhere else. A falsy check catches that real case (and an
+  // empty-string base_sha) without ever overwriting a real sha already set.
+  if (!state.commits.base && c.base) state.commits.base = c.base
 }
 
 async function attemptTask(slice, state, plan, task) {
