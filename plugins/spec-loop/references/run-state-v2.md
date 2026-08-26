@@ -98,7 +98,7 @@ prose about the slice.
 ```jsonc
 {
   "id": "s1:review-block",     // "<slice-id>:<trigger>[:<round>]" — stable across resumes
-  "trigger": "ambiguity | material-assumption | review-block | council-objection | quality-gate-block | budget-exhausted",
+  "trigger": "ambiguity | material-assumption | review-block | council-objection | quality-gate-block | budget-exhausted | internal-error",
   "title": "<short title>",
   "context": "<what the loop was doing and why it cannot decide>",
   "question": "<the precise question>",
@@ -109,6 +109,12 @@ prose about the slice.
   "answer": null, "answered_at": null
 }
 ```
+
+`budget-exhausted` is raised only by the loop's two structural guards (agent cap, stage
+token floor); `internal-error` is the catch-all for every other failure — unhandled
+exceptions, agent-contract failures, host- or agent-layer resource failures (e.g. a
+rejected agent call on a hard token or rate limit), and a slice that returned no result.
+Neither is a judgment trigger.
 
 ## `events.jsonl` — the machine channel
 

@@ -5,10 +5,12 @@ injection, and the record-only `over_scope` critique field.
 See `slice_wave_contract_base.py` for the module-wide rationale (why this
 is source-text assertion, why snippets are named constants, and the two
 known-and-deliberately-unguarded instances this module does NOT claim to
-cover). `test_slice_wave_contract_scope.py` is this module's sibling,
-covering the deferred-event and run-scope-ceiling concerns - split out
-purely to keep each module's whole-file `class_lines` under the quality
-gate's 300-line threshold; no test here depends on anything in the sibling.
+cover). Two siblings carry the rest of the same contract:
+`test_slice_wave_contract_scope.py` (deferred events, run scope ceiling)
+and `test_slice_wave_contract_crash.py` (the `internal-error`
+classification of machine failures) - split out purely to keep each
+module's whole-file `class_lines` under the quality gate's 300-line
+threshold; no test here depends on anything in a sibling.
 
 Usage:
     python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_slice_wave_contract.py'
@@ -25,13 +27,13 @@ from slice_wave_contract_base import (
     ANSWER_CONTEXT_END, ANSWER_CONTEXT_START, ANSWERABLE_TRIGGERS, CLEAN,
     COUNCIL_VERDICT_EVENT, CRITIQUE_REQUIRED, CRITIQUE_ROLLUP,
     FAIL_CLOSED_DEFAULT, FINDING_CATEGORIES, FLAGGED, GATE_ANSWER,
-    GATE_ANSWER_CONTEXT, GUARDED_BASE, GUARDED_CONCERNS, GUARDED_DEVIATIONS,
-    GUARDED_HEAD, GUARDED_LOCAL, GUARDED_TOUCHED, HELPER_END,
-    NO_COMMITS_ESCALATION, OBJECTION_SELECTION, OVER_SCOPE_DEFAULT,
-    OVER_SCOPE_SCHEMA, REPLAN_VETO, SCOPE_DRIVER, SCOPE_HELPER, SCOPE_LOCAL,
-    SCOPE_REASON_KEPT, SCOPE_SPREAD, SIDECAR_SCOPE_ATTACH,
-    SPLIT_SUPPRESSION, TASK_LOOP_END, TASK_LOOP_START, TASK_RESULT_REQUIRED,
-    WorkflowSourceTestCase, wrapped_source,
+    GATE_ANSWER_CONTEXT, GUARDED_BASE, GUARDED_CONCERNS,
+    GUARDED_DEVIATIONS, GUARDED_HEAD, GUARDED_LOCAL, GUARDED_TOUCHED,
+    HELPER_END, NO_COMMITS_ESCALATION, OBJECTION_SELECTION,
+    OVER_SCOPE_DEFAULT, OVER_SCOPE_SCHEMA, REPLAN_VETO, SCOPE_DRIVER,
+    SCOPE_HELPER, SCOPE_LOCAL, SCOPE_REASON_KEPT, SCOPE_SPREAD,
+    SIDECAR_SCOPE_ATTACH, SPLIT_SUPPRESSION, TASK_LOOP_END, TASK_LOOP_START,
+    TASK_RESULT_REQUIRED, WorkflowSourceTestCase, wrapped_source,
 )
 
 
@@ -57,10 +59,10 @@ class TestTheFileStillParses(unittest.TestCase):
 class TestOptionalTaskResultReadsAreGuarded(WorkflowSourceTestCase):
     """Regression, run 20260825-scope-ceiling wave 2: TASK_RESULT does not
     require `commits`, so a task that legitimately committed nothing returned
-    DONE with the key absent. `state.commits.head = r.commits.head` threw a
-    TypeError, the catch-all re-labelled it 'wave interrupted' /
-    budget-exhausted, and a wave whose five tasks had all committed was
-    reported as a resource failure."""
+    DONE with the key absent. An unguarded `state.commits.head = r.commits.head`
+    threw a TypeError, which is now correctly classified as 'internal-error' by
+    the crash handler. Before crash classification, such errors were mislabeled
+    as budget-exhausted, causing misdirected diagnosis."""
 
     def task_loop(self):
         """The Stage-T task-result-handling region (runTask() and its small
@@ -145,8 +147,9 @@ class TestOverScopeIsRecordOnly(WorkflowSourceTestCase):
 
     def test_the_fail_closed_default_supplies_the_field(self):
         # Extended BEFORE any read exists: an unguarded read of a missing
-        # optional field throws, is swallowed by the catch-all, and is
-        # mislabelled as a budget escalation - the defect that killed wave 2.
+        # optional field throws, is swallowed by the catch-all, and is now
+        # correctly classified as 'internal-error' - before crash classification,
+        # such errors were mislabeled as budget escalation, which killed wave 2.
         default = self.line_containing(FAIL_CLOSED_DEFAULT)
         self.assertIn(OVER_SCOPE_DEFAULT, default)
 

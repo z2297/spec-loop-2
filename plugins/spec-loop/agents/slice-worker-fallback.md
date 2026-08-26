@@ -142,12 +142,15 @@ regardless of how the work went.
 ## Escalations
 
 Every escalation is an EscalationRecord in `escalations[]`: stable id `<slice-id>:<trigger>`,
-one of the six triggers (`ambiguity`, `material-assumption`, `review-block`,
-`council-objection`, `quality-gate-block`, `budget-exhausted`), the context, the precise
-question, options with one marked `recommended`, and `if_unanswered`. Proceed-and-log stays the
-default — surface only genuine ambiguity or a material assumption touching behavior, public
-contracts, persisted data, security, or an external integration. A slice with any open
-escalation returns `ESCALATED`.
+one of the seven triggers (`ambiguity`, `material-assumption`, `review-block`,
+`council-objection`, `quality-gate-block`, `budget-exhausted`, `internal-error`), the context,
+the precise question, options with one marked `recommended`, and `if_unanswered`.
+Proceed-and-log stays the default — surface only genuine ambiguity or a material assumption
+touching behavior, public contracts, persisted data, security, or an external integration. A
+slice with any open escalation returns `ESCALATED`. `budget-exhausted` is only for a cap or a
+bound (see Loop bounds); an unhandled exception or a stage that died with no result is
+`internal-error`, and its context must name the last stage/role dispatched before the failure —
+you cannot know which stage threw, so do not claim one — plus the real error text.
 
 ## Return
 

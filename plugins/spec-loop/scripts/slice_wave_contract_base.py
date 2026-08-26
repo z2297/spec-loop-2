@@ -4,8 +4,9 @@ The wave workflow is JavaScript and is not run by any lane of this repo's
 suite: it is resolved at runtime from the installed plugin cache. Its
 correctness has therefore rested entirely on review, and this run paid for
 that twice - an unguarded optional-field read aborted a whole wave and was
-mislabelled as a budget escalation. The two ``test_slice_wave_contract*.py``
-modules that import this one are the cheapest honest coverage available:
+mislabelled as a budget escalation (both the read and the mislabelling are now
+pinned here). The three ``test_slice_wave_contract*.py`` modules that import
+this one are the cheapest honest coverage available:
 they parse the file with node (a real parse, not a substring) and pin the
 handful of source facts whose loss is a known, observed outage - the
 null-guards on TASK_RESULT.commits and its sibling optional arrays, the
@@ -40,8 +41,9 @@ stays under the quality gate's 300-line class_lines threshold; this file
 carries no tests of its own (its class exposes no `test_*` method), so
 `unittest discover -p 'test_*.py'` never collects it directly.
 
-Usage: imported by test_slice_wave_contract.py and
-test_slice_wave_contract_scope.py; not runnable on its own.
+Usage: imported by test_slice_wave_contract.py,
+test_slice_wave_contract_scope.py, and test_slice_wave_contract_crash.py;
+not runnable on its own.
 """
 
 import unittest
@@ -109,6 +111,37 @@ DEFERRED_ARRAY = (
     ".map(c => c.text)")
 STATE_DEFERRED_INIT = "deferred: []"
 STATE_DEFERRED = "state.deferred"
+STATE_STAGE_INIT = "stage: null"
+STAGE_ASSIGNMENT = "state.stage = role"
+DISPATCH_GUARD_CALL = "guard(slice, state)"
+CRASH_STAGE_CONTEXT = "Last stage/role dispatched before the failure: ${stageText}"
+CRASH_STAGE_PRECISION = "the most recent dispatch, not a per-throw stage"
+CRASH_STAGE_OVERCLAIM = "in flight"
+CRASH_TRIGGER = "esc(slice, 'internal-error',"
+CRASH_STAGE_FALLBACK = (
+    "const stageText = stage || "
+    "'none (the crash happened before any agent was dispatched)'")
+CRASH_TITLE_BRANCH = (
+    "const title = stage ? `slice crashed after ${stage}` "
+    ": 'slice crashed before any agent was dispatched'")
+CRASH_TITLE_UNGRAMMATICAL = "crashed after ${stageText}"
+CRASH_CLASSIFIED_PASSTHROUGH = "if (e && e.escRecord) return escalated(slice, state, e.escRecord)"
+CRASH_OPTION_RETRY = "label: 'Retry this slice'"
+CRASH_OPTION_SKIP = "label: 'Skip this slice'"
+CRASH_OPTION_STOP = "label: 'Stop the run'"
+CRASH_OPTION_CONTROLLER_ACTS = (
+    "The CONTROLLER must act on this at the next dispatch")
+CRASH_ERROR_FIRST = "`Error: ${String((e && e.message) || e)}."
+# The only cause the fallback can PROVE: the two structural guards raise their
+# own {escRecord}, handled one line above, so the crash is not from them.
+CRASH_CLASSIFICATION_SENTENCE = "Neither of the loop's two structural guards fired"
+CRASH_HOST_LAYER_CAVEAT = "host- or agent-layer resource failure"
+# The mirror-image overclaim this module now forbids: asserting "bug, NOT a
+# budget limit" is as unprovable as the old "budget" assertion it replaced.
+CRASH_CAUSE_OVERCLAIM = "This is a loop or agent-contract bug"
+CRASH_BUDGET_DENIAL_OVERCLAIM = "NOT a cap or budget limit"
+GUARD_BUDGET_TRIGGER = "esc(slice, 'budget-exhausted',"
+SLICE_LOST_RECORD = "esc(A.slices[i], 'internal-error', 'slice lost',"
 STAGE_CRITIQUE_START = "async function stageCritique(slice, state, plan) {"
 STAGE_CRITIQUE_END = "// Stage T helpers"
 SPLIT_RETURN = "if (splitRec) return { stop: doneResult(slice, state, 'SPLIT'"

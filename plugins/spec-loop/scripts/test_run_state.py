@@ -196,6 +196,17 @@ class TestValidateSidecar(unittest.TestCase):
         body = sidecar("ESCALATED", escalations=[escalation(trigger="vibes")])
         self.assertMentions(body, "trigger")
 
+    def test_escalation_trigger_accepts_internal_error(self):
+        # A machine failure is a first-class trigger: run_state.py:204 is
+        # fail-closed, so an unlisted value would falsely fail the sidecar.
+        body = sidecar("ESCALATED", escalations=[
+            escalation(id="s1:internal-error", trigger="internal-error")])
+        self.assertValid(body)
+
+    def test_escalation_trigger_still_rejects_a_bogus_value(self):
+        body = sidecar("ESCALATED", escalations=[escalation(trigger="kaboom")])
+        self.assertMentions(body, "trigger")
+
     def test_escalation_needs_options(self):
         body = sidecar("ESCALATED", escalations=[escalation(options=[])])
         self.assertMentions(body, "options")

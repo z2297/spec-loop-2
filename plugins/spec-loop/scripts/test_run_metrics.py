@@ -454,6 +454,23 @@ class EscalationPairingTests(unittest.TestCase):
         self.assertEqual([r["trigger"] for r in result["records"]],
                          ["other", None])
 
+    def test_internal_error_buckets_as_itself_not_other(self):
+        # _normalize_trigger degrades unknowns to "other"; a crash must keep
+        # its own by_trigger key so mislabelled resource limits stay visible.
+        opened = ev(
+            "2026-07-30T10:00:00Z", "a", "escalation-opened",
+            id="a:internal-error", trigger="internal-error")
+        result = self.records_for(json.dumps(opened))
+        triggers = [r["trigger"] for r in result["records"]]
+        self.assertEqual(triggers, ["internal-error"])
+
+    def test_internal_error_is_substring_safe_against_every_other_trigger(self):
+        # run_metrics.py:1692 (_legacy_match_triggers) matches by containment.
+        others = [t for t in rm.ESCALATION_TRIGGERS if t != "internal-error"]
+        for other in others:
+            self.assertNotIn(other, "internal-error")
+            self.assertNotIn("internal-error", other)
+
     def test_union_counts_a_duplicated_record_once(self):
         metrics = compute_for(v2_files(), run_id="20260730-v2")
         self.assertEqual(metrics["safety"]["escalations"]["total"], 2)
