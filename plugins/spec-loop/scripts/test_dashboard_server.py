@@ -1245,10 +1245,13 @@ class EscalationSourceTests(unittest.TestCase):
         self.assertEqual(e["trigger"], "budget-exhausted")
 
     def test_internal_error_parses_out_of_an_escalation_id(self):
+        # The id's second segment is the trigger by contract, so a crash id
+        # must resolve — _trigger_from_id gates on ESCALATION_TRIGGERS.
         def build(run_dir):
             write_dag_v2(run_dir, [slice_obj("s1")])
-            write_events(run_dir, [("s1", "escalation-opened",
-                                    {"id": "s1:internal-error"})])
+            write_events(run_dir, [
+                ("s1", "escalation-opened", {"id": "s1:internal-error"}),
+            ])
         run = self.scan(build)
         self.assertEqual(run["escalations"][0]["trigger"], "internal-error")
 
