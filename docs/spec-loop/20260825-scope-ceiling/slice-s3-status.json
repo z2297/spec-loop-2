@@ -1,0 +1,96 @@
+{
+  "schema_version": 2,
+  "id": "s3",
+  "status": "DONE",
+  "branch": "spec-loop/20260825-scope-ceiling/s3",
+  "commits": {
+    "base": "35132fef1a221b44726019c6aa1d0090f6a084d7",
+    "head": "2fec12abce2b79bee7166ad5b95a574e60ab407b"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 14
+  },
+  "tasks_completed": 7,
+  "review": {
+    "confirmed": 8,
+    "refuted": 3,
+    "evidence_failed": 0,
+    "fix_rounds": 2,
+    "residual": [
+      "RESOLVED (P2, the important one): deferred events were pushed BEFORE every Stage-C early return, so a SPLIT recorded deferrals for a discarded plan (re-emitted again by each grafted child) and an unresolved council objection recorded deferrals for a plan that never executed - re-appended on every resume, since append_event does no de-duplication. Both inflated run_metrics deferrals_total and over_scope_deferrals. Now extracted to recordDeferrals() and called ONLY where the plan proceeds: controller-verified that the SPLIT return at :582 precedes the call at :583, and that the objection path records only when the objection resolved without escalating.",
+      "RESOLVED (P2, ironic): the new CTX.scope_ceiling read was null-safe but not type-safe - (x||[]).length is truthy for a non-empty string and the next line called .map(), throwing inside packet(), swallowed by the catch-all and reported as budget-exhausted. It re-created in a brand-new field the exact failure this slice existed to fix, and would have failed the whole wave rather than one slice. Now scopeCeilingList(): array passes through, a lone non-empty string coerces to a one-element list (the realistic malformed LLM-authored input), anything else is treated as absent. Behavioural node tests cover absent/empty/array/lone-string/empty-string/wrong-type.",
+      "RESOLVED (P2): test_slice_wave_contract.py, created by this slice at 422 non-blank, split into slice_wave_contract_base.py (183, shared constants and base class, deliberately not test_*-named so it is never collected twice) plus two test modules at 215 and 220. All 51 assertions preserved, none moved in substance, renamed or weakened. Controller-verified the helper is NOT in measure_coverage TARGET_FILES, so it needs no per-file floor and does not move the denominator.",
+      "RESOLVED (P2): the module docstring claimed a 4-space hanging indent on every pinned snippet to keep the nesting_depth heuristic honest while three continuations were paren-aligned, one sitting exactly AT the threshold. Fixed, and the fixer caught three more it had introduced in its own new tests.",
+      "RESOLVED (P2, honesty): the docstring claimed to pin the null-guards on optional agent-return fields, which was false while two instances remain deliberately unguarded. Narrowed to what is actually pinned and states plainly that plan.escalation.trigger and plan.split remain unguarded BY DECISION, citing the council reasoning.",
+      "RESOLVED (P3): state.commits.base === null was unreachable dead code reading as a live fallback, while the real failure it appeared to cover - an absent slice.base_sha interpolating the literal text undefined into every packageCmd and git diff string - was unguarded. Changed to a falsy check that actually backfills.",
+      "RESOLVED (P3): a test claiming to verify that the sidecar over_scope attachment happens AFTER the verdict rollup only asserted the snippet was present somewhere. A source-level swap would silently discard the record every time and neither that test nor its sibling would have caught it. Now asserts relative order.",
+      "DEFERRED BY DESIGN, NOT FIXED (requirement 5 in action): two more instances of the same unguarded-optional-read class survive in this file - PLAN_RESULT.required is [status] only, so plan.escalation.trigger is read unguarded and plan.split passes through undefined on a SPLIT return with no split object. The council found them and recommended logging over fixing, because they fall outside the two-fix scope increase the human approved. Recorded with file:line evidence in a durable deferred event."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; claude plugin validate .",
+    "result": "GREEN - controller-measured first-hand at 2fec12a, all six segments as separate invocations: marketplace OK; scripts/ Ran 106 tests OK; plugins/spec-loop/scripts/ Ran 1132 tests OK; coverage PASS all floors met, TOTAL 96.7% (5972/6173) against a 90 floor; node 48/48; claude plugin validate passed. Additionally: the workflow JS parses under node --check when wrapper-wrapped, and the coverage manifest was audited entry by entry - all 13 correct.",
+    "scope": "full",
+    "tree_sha": "f911d4a1b667ce80dce906a5092954a82a4d8440"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "ACCEPTED - only pre-existing whole-file class_lines remain. Controller-measured at 2fec12a: TWO failures, slice-wave.workflow.js 762 (already 476 non-blank before the slice) and test_run_state.py 1260 (pre-existing), with ZERO function-level findings and NO new file over the threshold. Two things the slice cleared rather than inherited: runSlice, which at the slice base was already cyclomatic 116 / cognitive 446 / method_lines 158 / nesting 6, is now under EVERY threshold after being decomposed into named helpers; and test_slice_wave_contract.py, a file this slice CREATED at 422 non-blank, was split into three modules of 183/215/220 because the human class_lines acceptance is scoped by its own words to files already over the bar beforehand. The sidecar 7-violation quality block returned by the wave was the stale pre-fix snapshot."
+  },
+  "escalations": [
+    {
+      "id": "s3:budget-exhausted",
+      "trigger": "budget-exhausted",
+      "title": "wave interrupted",
+      "context": "agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output",
+      "question": "The wave hit a hard limit. Raise budget/caps and resume, or accept committed work?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "ANSWERED"
+    }
+  ],
+  "agents_used": 19,
+  "wave": 3,
+  "events": [
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:residuals",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer",
+        "note": "controller-dispatched inline after the final verify agent exhausted the StructuredOutput retry cap; closed all seven residuals in one pass, none refuted"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 2,
+        "function_level": 0,
+        "accepted": true,
+        "note": "final controller measurement at 2fec12a: two whole-file class_lines findings, both pre-existing. runSlice cleared from 4 function-level violations to none; the new contract-test file split from 422 to 183/215/220."
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "review-summary",
+      "payload": {
+        "note": "controller verified the suite, the gate, a wrapper-wrapped node --check of the workflow JS, and all 13 coverage-manifest entries first-hand at 2fec12a. The wave sidecar carried tests:null and a stale 7-violation quality block, so DONE rests on controller measurement.",
+        "residuals_resolved": 7,
+        "residuals_deferred_by_design": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "schema_version": 2,
+  "id": "s1",
+  "status": "DONE",
+  "branch": "spec-loop/20260825-scope-ceiling/s1",
+  "commits": {
+    "base": "5ead1bcddf01683229b6a9a939754af96fd1165e",
+    "head": "79323665576655ebbb999a4989c7885468b45ed2"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 5
+  },
+  "tasks_completed": 3,
+  "review": {
+    "confirmed": 6,
+    "refuted": 2,
+    "evidence_failed": 0,
+    "fix_rounds": 2,
+    "residual": [
+      "RESOLVED in-slice by human ruling: the P2 scope_ceiling mutation round-trip gap is closed by three regression pins in test_dag.py (mark / record-wave / ingest-split each assert the ceiling survives the rewrite unchanged), commit 7932366. They passed on first run - dag.py mutators already operate on the full loaded dict and write_dag reserializes it - so the tests pin the property against a future field-by-field refactor rather than fixing a live defect.",
+      "P3 (accepted, by design): making the ceiling a hard contract check means a malformed planner-authored entry makes the whole dag contract-invalid, so _load_for_mutation refuses every subsequent mutation for that run. This mirrors the existing waves precedent and is what the plan specified; downstream slices that write the key must emit well-formed entries."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; claude plugin validate .",
+    "result": "GREEN - controller-measured first-hand at 7932366, all six segments run as separate invocations: marketplace validation OK; scripts/ Ran 106 tests OK; plugins/spec-loop/scripts/ Ran 1031 tests OK; coverage PASS all per-file and total floors met, dag.py 99.8% (515/516) against a 94 floor and TOTAL 96.6% (5805/6008) against a 90 floor; node 48 tests 48 pass 0 fail; claude plugin validate Validation passed.",
+    "scope": "full",
+    "tree_sha": "23551fe65553a0838f22099e990cd79c453e6035"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "ACCEPTED BY HUMAN RULING as pre-existing debt, no threshold weakened. Controller re-measured the gate at 7932366: exactly two failures remain, both whole-file class_lines - dag.py 650 vs 300 and test_dag.py 792 vs 300. Both files already violated on the integration branch before the slice (573 and 704 non-blank), and the gate has never passed on plugins/spec-loop/scripts/ (172 failures at commit 28e0992, six of them class_lines). s1 net-improved dag.py from 5 failing findings to 1 by refactoring validate_dag into helpers, clearing its pre-existing cyclomatic 30, cognitive 83, method_lines 82 and nesting 7 violations. No new violation class was introduced. See escalation s1:quality-gate-block."
+  },
+  "escalations": [
+    {
+      "id": "s1:quality-gate-block",
+      "trigger": "quality-gate-block",
+      "title": "verification failed",
+      "context": "suite: All 6 suite segments passed: marketplace validation OK; 106 tests in scripts; 1028 tests in plugins/spec-loop/scripts; 1134 tests in coverage measurement with 3 skipped, all coverage floors met (96.6% total); 48 node tests; plugin validation passed.; quality: FAIL (summary_pass=false — Quality gate exit code 1. Two class_lines violations: dag.py at 650 lines exceeds threshold of 300; test_dag.py at 762 lines exceeds threshold of 300.)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: All 6 suite segments passed: marketplace validation OK; 106 tests in scripts; 1028 tests in plugins/spec-loop/scripts; 1134 tests in coverage measurement with 3 skipped, all coverage floors met (96.6% total); 48 node tests; plugin validation passed.; quality: FAIL (summary_pass=false — Quality gate exit code 1. Two class_lines violations: dag.py at 650 lines exceeds threshold of 300; test_dag.py at 762 lines exceeds threshold of 300.)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "ANSWERED"
+    }
+  ],
+  "agents_used": 12,
+  "wave": 1,
+  "events": [
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:p2-residual",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer",
+        "note": "controller-dispatched inline on the live s1 worktree; the 2.1.0 workflow has no answerFor(quality-gate-block) injection path, so a wave re-dispatch would have replayed to the identical escalation"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 2,
+        "accepted": true,
+        "note": "final controller measurement at 7932366: dag.py class_lines 650 vs 300 and test_dag.py class_lines 792 vs 300, both pre-existing (573/704 before the slice). Down from 8 violations at first measurement - the fix rounds cleared every function-level finding. Accepted by human ruling; no threshold weakened."
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "review-summary",
+      "payload": {
+        "note": "controller re-verified the full suite first-hand at 7932366 after the P2 round-trip pin: six segments run as separate invocations, all green - 106 + 1031 unittests OK, coverage PASS (dag.py 99.8% vs 94 floor, TOTAL 96.6% vs 90 floor), 48/48 node, marketplace and plugin validate OK. The returned sidecar carried tests:null, so DONE rests on controller measurement, not the agent self-report.",
+        "p2_residual": "closed by 3 regression pins"
+      }
+    }
+  ]
+}

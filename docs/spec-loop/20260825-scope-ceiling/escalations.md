@@ -44,3 +44,105 @@ Rendered from EscalationRecords; answers are written back into the matching entr
 - Answer: Update to 2.1.0, then resume. The plugin is refreshed from origin/main, which already contains the 2.1.0 release commit f3eac92, before wave 1 is dispatched.
 - Answered-at: 2026-08-25T17:57:44Z
 
+## [s1] verification failed   (status: ANSWERED)
+<!-- escalation-id: s1:quality-gate-block -->
+- Trigger: quality-gate-block
+- Opened: (not recorded)
+- Context: suite: All 6 suite segments passed: marketplace validation OK; 106 tests in scripts; 1028 tests in plugins/spec-loop/scripts; 1134 tests in coverage measurement with 3 skipped, all coverage floors met (96.6% total); 48 node tests; plugin validation passed.; quality: FAIL (summary_pass=false — Quality gate exit code 1. Two class_lines violations: dag.py at 650 lines exceeds threshold of 300; test_…
+- The decision: Verification cannot pass automatically. Guide, accept, or drop?
+- Options:
+  1. Proceed with the recommended default — (RECOMMENDED DEFAULT) suite: All 6 suite segments passed: marketplace validation OK; 106 tests in scripts; 1028 tests in plugins/spec-loop/scripts; 1134 tests in coverage measurement with 3 skipped, all coverage floors met (96.6% total); 48 node tests; plugin validation passed.; quality: FAIL (summary_pass=false — Quali…
+- If unanswered: pause this slice; continue all independent slices
+- Answer: USER RULING - ACCEPT AS PRE-EXISTING DEBT, no threshold weakened, plus one added test. (a) The two residual class_lines findings (dag.py 650 vs 300, test_dag.py 762 vs 300) are accepted for this run. Controller-measured evidence: both files already violated on the integration branch at 573 and 704 non-blank before s1 wrote a line, and the gate has NEVER passed on plugins/spec-loop/scripts/ - 172 …
+- Answered-at: 2026-08-25T18:59:10Z
+
+## [s1] verification failed   (status: ANSWERED)
+<!-- escalation-id: s1:quality-gate-block -->
+- Trigger: quality-gate-block
+- Opened: (not recorded)
+- Context: suite: All 6 suite segments passed: marketplace validation OK; 106 tests in scripts; 1028 tests in plugins/spec-loop/scripts; 1134 tests in coverage measurement with 3 skipped, all coverage floors met (96.6% total); 48 node tests; plugin validation passed.; quality: FAIL (summary_pass=false — Quality gate exit code 1. Two class_lines violations: dag.py at 650 lines exceeds threshold of 300; test_…
+- The decision: Verification cannot pass automatically. Guide, accept, or drop?
+- Options:
+  1. Proceed with the recommended default — (RECOMMENDED DEFAULT) suite: All 6 suite segments passed: marketplace validation OK; 106 tests in scripts; 1028 tests in plugins/spec-loop/scripts; 1134 tests in coverage measurement with 3 skipped, all coverage floors met (96.6% total); 48 node tests; plugin validation passed.; quality: FAIL (summary_pass=false — Quali…
+- If unanswered: pause this slice; continue all independent slices
+- Answer:
+- Answered-at:
+
+## [s2] wave interrupted   (status: ANSWERED)
+<!-- escalation-id: s2:budget-exhausted -->
+- Trigger: budget-exhausted
+- Opened: (not recorded)
+- Context: undefined is not an object (evaluating 'r.commits.head')
+- The decision: The wave hit a hard limit. Raise budget/caps and resume, or accept committed work?
+- Options:
+  1. Proceed with the recommended default — (RECOMMENDED DEFAULT) undefined is not an object (evaluating 'r.commits.head')
+- If unanswered: pause this slice; continue all independent slices
+- Answer: RE-ANSWERED to close a bookkeeping artifact, not a new question. The original answer stands verbatim: this was never a resource limit but an unguarded r.commits.head read whose TypeError the workflow's catch-all mislabels as budget-exhausted; it was resolved by guarding the read in this run's persisted script copy and resuming from the journal. The record reopened only because the controller brie…
+- Answered-at: 2026-08-25T21:26:56Z
+
+## [s2] Answer without a matching escalation entry   (status: ANSWERED)
+<!-- escalation-id: s2:quality-gate-block -->
+- Opened: (not recorded — no escalation-opened entry was rendered)
+- Answer: CONTROLLER-RESOLVED BY IN-RUN PRECEDENT (human ruling on s1:quality-gate-block, recorded as a run-scope decision), not re-surfaced. Controller-measured the gate at s2 HEAD 6be15a0: exactly FOUR failures remain and every one is a whole-file class_lines finding - run_metrics.py 1831, run_state.py 894, test_run_metrics.py 1321, test_run_state.py 1147, all against a 300 threshold. All four files were…
+- Answered-at: 2026-08-25T21:00:25Z
+
+## [s2] wave interrupted   (status: OPEN)
+<!-- escalation-id: s2:budget-exhausted -->
+- Trigger: budget-exhausted
+- Opened: (not recorded)
+- Context: undefined is not an object (evaluating 'r.commits.head')
+- The decision: The wave hit a hard limit. Raise budget/caps and resume, or accept committed work?
+- Options:
+  1. Proceed with the recommended default — (RECOMMENDED DEFAULT) undefined is not an object (evaluating 'r.commits.head')
+- If unanswered: pause this slice; continue all independent slices
+- Answer:
+- Answered-at:
+
+## [s2] verification failed   (status: ANSWERED)
+<!-- escalation-id: s2:quality-gate-block -->
+- Trigger: quality-gate-block
+- Opened: (not recorded)
+- Context: suite: All 6 suite segments passed: validate_marketplace OK; 106 scripts tests; 1069 spec-loop/scripts tests; 1175 coverage tests (all coverage floors met); 48 node tests; claude plugin validation OK.; quality: FAIL (summary_pass=false — Quality gate exited with code 1. Four class_lines violations: run_metrics.py 1831 lines (threshold 300), run_state.py 894 lines (threshold 300), test_run_metrics…
+- The decision: Verification cannot pass automatically. Guide, accept, or drop?
+- Options:
+  1. Proceed with the recommended default — (RECOMMENDED DEFAULT) suite: All 6 suite segments passed: validate_marketplace OK; 106 scripts tests; 1069 spec-loop/scripts tests; 1175 coverage tests (all coverage floors met); 48 node tests; claude plugin validation OK.; quality: FAIL (summary_pass=false — Quality gate exited with code 1. Four class_lines violations:…
+- If unanswered: pause this slice; continue all independent slices
+- Answer:
+- Answered-at:
+
+## [s3] wave interrupted   (status: ANSWERED)
+<!-- escalation-id: s3:budget-exhausted -->
+- Trigger: budget-exhausted
+- Opened: (not recorded)
+- Context: undefined is not an object (evaluating 'r.commits.head')
+- The decision: The wave hit a hard limit. Raise budget/caps and resume, or accept committed work?
+- Options:
+  1. Proceed with the recommended default — (RECOMMENDED DEFAULT) undefined is not an object (evaluating 'r.commits.head')
+- If unanswered: pause this slice; continue all independent slices
+- Answer: CONTROLLER-RESOLVED. Genuine agent failure this time, not a mislabeled crash and not a resource limit: the FINAL verify agent hit the StructuredOutput retry cap - 5 calls with no schema-valid output - and the catch-all again reported it as budget-exhausted. Everything before it succeeded: 7 tasks, the Tier-3 two-reviewer panel, the batched finding-verifier, one fix round and the simplify polish a…
+- Answered-at: 2026-08-25T23:44:03Z
+
+## [s3] wave interrupted   (status: OPEN)
+<!-- escalation-id: s3:budget-exhausted -->
+- Trigger: budget-exhausted
+- Opened: (not recorded)
+- Context: agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output
+- The decision: The wave hit a hard limit. Raise budget/caps and resume, or accept committed work?
+- Options:
+  1. Proceed with the recommended default — (RECOMMENDED DEFAULT) agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output
+- If unanswered: pause this slice; continue all independent slices
+- Answer:
+- Answered-at:
+
+## [s3] wave interrupted   (status: ANSWERED)
+<!-- escalation-id: s3:budget-exhausted -->
+- Trigger: budget-exhausted
+- Opened: (not recorded)
+- Context: agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output
+- The decision: The wave hit a hard limit. Raise budget/caps and resume, or accept committed work?
+- Options:
+  1. Proceed with the recommended default — (RECOMMENDED DEFAULT) agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output
+- If unanswered: pause this slice; continue all independent slices
+- Answer:
+- Answered-at:
+
