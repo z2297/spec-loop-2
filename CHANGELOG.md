@@ -26,6 +26,28 @@ All notable changes to the spec-loop plugin are documented here. The format is
   context only — never a findings filter.
 - **Weighted scope lane on plan-critic** — plan-critic's existing Scope mandate now owns the
   over-scope record; no new agent, no change to any panel size or objection threshold.
+- **Fail-closed sidecar validation and honest rendering of the scope record** — a present
+  `critique.over_scope` must carry a real boolean `flag` and a string-or-null `reason`; a
+  malformed record invalidates the whole sidecar (`persist_slice` raises and writes nothing)
+  rather than being quietly ignored. Absent and explicit `null` are both valid and mean "no
+  scope judgement was recorded" — which is a different claim from `flag: false`, and the two
+  render differently. One shared renderer produces four distinct human outcomes and collapses
+  none of them into another: nothing at all when no judgement was recorded, `scope: clean` for
+  `flag: false`, `SCOPE-FLAGGED` plus the reason when one was given, and `scope: unreadable`
+  when a present record's own shape cannot be trusted. The decisions-log verdict line and the
+  slice report's `Iron Council` value share that renderer, so the two human surfaces cannot
+  disagree; a `deferred` event whose payload marks `over_scope: true` renders with a `SCOPE `
+  prefix in the decisions log.
+- **Null-honest scope counters in `run_metrics.py`** — `safety.over_scope_deferrals` counts
+  `deferred` events carrying that boolean marker, and therefore lives at the `safety` top
+  level beside `deferrals_total`, **not** inside `safety.council`, whose every other key
+  shares the council-verdict population. Both counters are null-honest:
+  `safety.council.over_scope_flags` counts flagged `council-verdict` payloads and stays `null`
+  when no payload carried a boolean flag, because "no payload recorded a scope judgement" is
+  not evidence that nothing was over scope — and a malformed record counts as no record rather
+  than as a clean one. The legacy v1-prose channel reports both as `null`; it never carried a
+  scope judgement. Both feed reporting only: neither feeds a threshold, a gate or a blocking
+  decision.
 
 ### Fixed
 - **Wave-aborting unguarded `commits` read** — a task that legitimately committed nothing
