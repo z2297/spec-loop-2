@@ -26,10 +26,19 @@ from. Every LLM→LLM handoff is a schema-forced structured return.
 
 **Critics and reviewers consolidated.** v1's five Iron Council members are now three lanes on two
 agents used tier-scaled (`plan-critic` carries all five mandates; `guardian` and `skeptic` are the
-risk and premise lanes). v1's seven review-aspect specialists are one `pr-reviewer` that covers
-every lane in a single pass with per-aspect attestation — seven agents re-reading the same diff
-cost more than one reviewer thinking harder. Net: **13 agents, down from 22**, and **5 skills, down
-from 21** (the loop's own machinery is agents, one workflow, and reference files — not skills).
+risk and premise lanes). One of those five is weighted differently from v1: the **Scope** mandate
+now owns an over-scope record. Where v1's scope critique lived and died in prose, `plan-critic`
+reads the run's optional `scope_ceiling` out of its packet and returns
+`critique.over_scope: {flag, reason}` — a record, never a verdict. It raises no objection,
+suppresses no split, blocks nothing and is never a finding; it is carried with its reason into the
+`council-verdict` event and the slice sidecar so a human can read what the loop judged out of
+scope. The lever for work that should not be built is unchanged from v1's disposition hints: a
+`defer`-hinted concern, which v2 now also writes out as its own `deferred` event. No panel grew,
+no objection threshold moved, and no new agent was added. v1's seven review-aspect specialists are
+one `pr-reviewer` that covers every lane in a single pass with per-aspect attestation — seven
+agents re-reading the same diff cost more than one reviewer thinking harder. Net: **13 agents,
+down from 22**, and **5 skills, down from 21** (the loop's own machinery is agents, one workflow,
+and reference files — not skills).
 
 **Run state is structured.** v1 pinned line grammars in `decisions-log.md`, `escalations.md`, and
 `slice-*-agents.jsonl`, and metrics scraped them (plus Claude Code transcripts). v2's machine
