@@ -1244,6 +1244,14 @@ class EscalationSourceTests(unittest.TestCase):
         self.assertEqual(e["title"], "")
         self.assertEqual(e["trigger"], "budget-exhausted")
 
+    def test_internal_error_parses_out_of_an_escalation_id(self):
+        def build(run_dir):
+            write_dag_v2(run_dir, [slice_obj("s1")])
+            write_events(run_dir, [("s1", "escalation-opened",
+                                    {"id": "s1:internal-error"})])
+        run = self.scan(build)
+        self.assertEqual(run["escalations"][0]["trigger"], "internal-error")
+
     def test_a_malformed_id_yields_no_made_up_trigger(self):
         # The id's second segment is only accepted when it is one of the
         # contract's six triggers, so a hand-edited id cannot surface garbage.
