@@ -33,6 +33,14 @@ integration with a guard hook, the scripted quality gate agents cannot weaken,
 knowledge-graph integration (v2 accretes onto the same vault nodes), and
 null-honest metrics.
 
+What 2.x adds on top: a run may declare a **scope ceiling** — things the run must not
+build — which is prefixed to every agent's prompt, and the council records its scope
+judgement in the run's events and sidecars with its reason intact. That record blocks
+nothing. Weighting the critic's scope lane is the only part of it that reduces
+scope-expansion effort; the ceiling and the record exist so a judgement is written down
+and cannot quietly come back, not so that scope creep stops happening. Details:
+`plugins/spec-loop/references/run-state-v2.md`.
+
 ## Install
 
 ```
