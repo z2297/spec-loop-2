@@ -90,6 +90,7 @@ REPLAN_VETO = "if (safety || !ob.fixable_by_replan || state.replanned)"
 FINDING_CATEGORIES = "category: { enum: ["
 COUNCIL_VERDICT_EVENT = "type: 'council-verdict'"
 SCOPE_HELPER = "function scopeRecord("
+DERIVE_INPUTS_FN = "function deriveCouncilInputs(verdicts) {"
 HELPER_END = "\n}\n"
 SCOPE_LOCAL = "const scope = scopeRecord(verdicts)"
 SCOPE_SPREAD = "...(scope ? { over_scope: scope } : {})"
@@ -145,9 +146,39 @@ SCOPE_CEILING_DRIVER = """%s
 const cases = %s
 console.log(JSON.stringify(cases.map(c => scopeCeilingList(c))))
 """
+# deriveCouncilInputs() calls scopeRecord() internally, so its driver source
+# is both functions concatenated (see test_the_marker_is_broadcast_from_the_
+# whole_verdict_not_the_concern for why this is the production wiring site,
+# not a fixture already carrying the marker).
+DERIVE_INPUTS_DRIVER = """%s
+const cases = %s
+console.log(JSON.stringify(cases.map(c => deriveCouncilInputs(c).concerns)))
+"""
 
 CLEAN = {"over_scope": {"flag": False, "reason": None}}
 FLAGGED = {"over_scope": {"flag": True, "reason": "dashboard UI work"}}
+
+# Two full CRITIQUE-shaped verdicts for deriveCouncilInputs(): one member
+# flags the whole PLAN as over-scope while raising two concerns, only one of
+# which is actually about scope; a second, clean member raises an unrelated
+# concern of its own. Pins the real (member-broadcast) semantics: BOTH of
+# the flagging member's concerns come back stamped `over_scope: True` -
+# including the one with nothing to do with scope - while the clean member's
+# concern comes back `over_scope: False`.
+FLAGGING_MEMBER_VERDICT = {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "safety": {"flag": False, "reason": None},
+    "over_scope": {"flag": True, "reason": "plan pulls in a dashboard rewrite"},
+    "concerns": [
+        {"text": "this pulls in a dashboard rewrite", "disposition_hint": "defer"},
+        {"text": "the retry helper needs a doc comment", "disposition_hint": "defer"},
+    ],
+}
+CLEAN_MEMBER_VERDICT = {
+    "verdict": "ENDORSE",
+    "safety": {"flag": False, "reason": None},
+    "concerns": [{"text": "clean concern from a clean member", "disposition_hint": "defer"}],
+}
 
 # Concern fixtures for the deferral behavioural checks, and the one event a
 # plain deferral must produce. Module-level for the same reason the pinned

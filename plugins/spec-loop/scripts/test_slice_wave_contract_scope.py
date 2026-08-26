@@ -22,16 +22,18 @@ import unittest
 
 from slice_wave_contract_base import (
     ADVISORY_FILE_ANYWAY, ADVISORY_NOT_A_FILTER, BLOCKING_HELPER, CHARTS,
-    CHARTS_EVENT, COMMAND_MD, CONCERN_MARKER, COUNCIL_VERDICT_EVENT,
-    CTX_TRAVELS_LINE, DEFER_FILTER, DEFER_ME, DEFERRAL_DRIVER,
+    CHARTS_EVENT, CLEAN_MEMBER_VERDICT, COMMAND_MD, CONCERN_MARKER,
+    COUNCIL_VERDICT_EVENT, CTX_TRAVELS_LINE, DEFER_FILTER, DEFER_ME,
+    DERIVE_INPUTS_DRIVER, DERIVE_INPUTS_FN, DEFERRAL_DRIVER,
     DEFERRAL_EMIT, DEFERRAL_HELPER, DEFERRAL_MARKER, DEFERRAL_MARKER_FALSE,
-    DEFERRAL_PAYLOAD, DEFERRED_ARRAY, DEFERRED_TYPE, FOLD_ME, GATE_PROMPT,
-    HELPER_END, MARKED, NO_HINT, OPEN_SET, PACKET_END, PACKET_START,
-    RECORD_DEFERRALS_CALL, RECORD_DEFERRALS_FN, RECORD_DEFERRALS_GUARDED,
-    RECORD_DEFERRALS_ON_ENDORSE, REVIEW_PROMPT, SCOPE_CEILING_DRIVER,
-    SCOPE_CEILING_HELPER, SCOPE_CEILING_READ, SLICE, SPLIT_RETURN,
-    STAGE_CRITIQUE_END, STAGE_CRITIQUE_START, STATE_DEFERRED,
-    STATE_DEFERRED_INIT, THREE_DEFERRALS, UNMARKED, WorkflowSourceTestCase,
+    DEFERRAL_PAYLOAD, DEFERRED_ARRAY, DEFERRED_TYPE, FLAGGING_MEMBER_VERDICT,
+    FOLD_ME, GATE_PROMPT, HELPER_END, MARKED, NO_HINT, OPEN_SET, PACKET_END,
+    PACKET_START, RECORD_DEFERRALS_CALL, RECORD_DEFERRALS_FN,
+    RECORD_DEFERRALS_GUARDED, RECORD_DEFERRALS_ON_ENDORSE, REVIEW_PROMPT,
+    SCOPE_CEILING_DRIVER, SCOPE_CEILING_HELPER, SCOPE_CEILING_READ,
+    SCOPE_HELPER, SLICE, SPLIT_RETURN, STAGE_CRITIQUE_END,
+    STAGE_CRITIQUE_START, STATE_DEFERRED, STATE_DEFERRED_INIT,
+    THREE_DEFERRALS, UNMARKED, WorkflowSourceTestCase,
 )
 
 
@@ -180,6 +182,58 @@ class TestDeferralEventsBehavesAndNotJustExists(WorkflowSourceTestCase):
     def test_every_deferred_concern_gets_its_own_event_in_order(self):
         got = self.summaries(THREE_DEFERRALS)
         self.assertEqual(got, ["first", "second", "third"])
+
+
+class TestDeriveCouncilInputsBroadcastsScopeAtTheProductionSite(WorkflowSourceTestCase):
+    """Coverage gap this class closes: every other over_scope-marker test
+    above (`test_the_marker_is_present_only_on_the_flagging_members_concern`
+    included) drives `deferralEvents()` with fixture concerns that already
+    carry `over_scope: True/False` set by hand - none of them ever run the
+    real propagation at `deriveCouncilInputs`, the one production site that
+    actually stamps a concern with its raising member's flag. This class
+    extracts and runs `deriveCouncilInputs` itself (plus `scopeRecord`, which
+    it calls) under real node, and pins the ACTUAL behaviour: a member with
+    `over_scope.flag: true` marks BOTH of its own concerns, including one
+    that has nothing to do with scope - this is member-level attribution
+    broadcast onto every concern that member raised, not a per-concern
+    judgement (see the docstring on `deriveCouncilInputs` in the workflow,
+    the `deferred` payload bullet in run-state-v2.md, and the `_summarize`
+    docstring in run_state.py for the same caveat spelled out for readers)."""
+
+    def derive_concerns(self, verdict_lists):
+        """deriveCouncilInputs(verdicts).concerns for each verdicts list, via
+        real node running the extracted scopeRecord + deriveCouncilInputs
+        source exactly as the workflow defines them."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not available on this machine")
+        scope_source = self.between(SCOPE_HELPER, HELPER_END) + "\n}"
+        derive_source = self.between(DERIVE_INPUTS_FN, HELPER_END) + "\n}"
+        source = scope_source + "\n" + derive_source
+        fd, path = tempfile.mkstemp(suffix=".mjs")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                fh.write(DERIVE_INPUTS_DRIVER % (source, json.dumps(verdict_lists)))
+            proc = subprocess.run(
+                [node, path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            out = proc.stdout.decode()
+            self.assertEqual(proc.returncode, 0, "node failed:\n%s" % (out,))
+            return json.loads(out)
+        finally:
+            os.unlink(path)
+
+    def test_a_flagging_members_unrelated_concern_is_marked_over_scope_too(self):
+        got = self.derive_concerns(
+            [[FLAGGING_MEMBER_VERDICT, CLEAN_MEMBER_VERDICT]])[0]
+        self.assertEqual(len(got), 3)
+        # Both concerns raised by the flagging member - the on-topic one AND
+        # the unrelated "needs a doc comment" one - are broadcast True.
+        self.assertIs(got[0]["over_scope"], True)
+        self.assertIs(got[1]["over_scope"], True)
+        self.assertEqual(got[1]["text"], "the retry helper needs a doc comment")
+        # The clean member's own concern is untouched by the other member's
+        # flag: attribution does not leak across verdicts.
+        self.assertIs(got[2]["over_scope"], False)
 
 
 class TestTheRunScopeCeilingReachesEveryAgent(WorkflowSourceTestCase):

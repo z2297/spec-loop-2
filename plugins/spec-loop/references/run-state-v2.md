@@ -153,14 +153,23 @@ best-effort):
   judgement was recorded and is NOT equivalent to `flag: false`; both render
   distinctly in `decisions-log.md` (`scope: clean` vs nothing at all).
 - **`deferred`** payload is null-honest and otherwise free-form, with one pinned
-  key: `over_scope: true` (a bare boolean) marks a deferral of work judged outside
-  the slice's scope. The wave emits ONE such event per `defer`-hinted council
-  concern, payload `{summary, source: "plan-critique"}` plus the marker when it
-  applies — `summary` is read first by the decisions-log renderer, so the line is
-  legible prose rather than a JSON blob. Advisory prose data only: it suppresses no
-  finding, filters no blocking set, and drops no work. The controller also emits
-  `deferred` at intake, and `council-verdict.deferred[]` remains the machine channel
-  `run_metrics.concerns_deferred` counts.
+  key: `over_scope: true` (a bare boolean). This is MEMBER-level attribution, NOT a
+  per-concern judgement: it marks that the council member who raised this concern
+  separately flagged the WHOLE PLAN as over-scope, not that this specific concern is
+  itself out of scope. A member who flags the plan over-scope while separately
+  raising an unrelated `disposition_hint: 'defer'` concern causes that unrelated
+  concern to carry the same marker too — there is no per-concern `over_scope` field
+  in the council schema to attribute it more precisely. The wave emits ONE such
+  event per `defer`-hinted council concern, ONLY on the path where the plan
+  proceeds to execution — a SPLIT return discards the plan and re-critiques per
+  child, and an unresolved OBJECT escalation means the plan never ran, so either
+  case emits ZERO deferred events for that batch — payload `{summary, source:
+  "plan-critique"}` plus the marker when it applies — `summary` is read first by the
+  decisions-log renderer, so the line is legible prose rather than a JSON blob.
+  Advisory prose data only: it suppresses no finding, filters no blocking set, and
+  drops no work. The controller also emits `deferred` at intake, and
+  `council-verdict.deferred[]` remains the machine channel `run_metrics.concerns_deferred`
+  counts.
 - **`escalation-opened`** payload is the full EscalationRecord, including its
   `id`; `escalation-answered` pairs by that `id` (never by scope alone — one
   slice can open several).

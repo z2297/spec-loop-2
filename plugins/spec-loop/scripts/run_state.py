@@ -509,7 +509,20 @@ def answer_escalation(body, escalation_id, answer, answered_at):
 
 
 def _summarize(event):
-    """One-line human summary of an event payload (PURE)."""
+    """One-line human summary of an event payload (PURE).
+
+    The `deferred` branch's `SCOPE ` prefix is MEMBER-level attribution, not a
+    per-concern judgement: `over_scope: true` on a deferred event means the
+    council member who raised this concern separately flagged the WHOLE PLAN
+    as over-scope in their verdict — it is not a claim that this specific
+    concern is itself out of scope. A member who flags the plan over-scope
+    AND ALSO raises an unrelated `disposition_hint: 'defer'` concern produces
+    a `SCOPE `-prefixed decisions-log line for that unrelated concern too,
+    since there is no per-concern `over_scope` field in the council schema to
+    attribute it more precisely (see slice-wave.workflow.js's
+    `deriveCouncilInputs` and this repo's run-state-v2.md `deferred` payload
+    bullet for the same caveat).
+    """
     payload = event.get("payload") or {}
     if not isinstance(payload, dict):
         return _one_line(payload)
@@ -521,6 +534,8 @@ def _summarize(event):
         detail = payload.get("detail") or payload.get("summary")
         return "%s%s" % (outcome, " — %s" % _one_line(detail) if detail else "")
     if event_type == "deferred" and payload.get("over_scope") is True:
+        # SCOPE prefix = member-level attribution broadcast to this concern,
+        # not a per-concern scope judgement (see docstring above).
         return "SCOPE %s" % _first_text(payload)
     return _first_text(payload)
 

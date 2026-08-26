@@ -69,7 +69,11 @@ Tier 2 and above, dispatch the composition your tier table names — one `plan-c
 by `guardian` at Tier 3 (same message, one shared context packet placed identically at the top
 of each prompt).
 - `OBJECT` with `fixableByReplan: true` → one replan pass through `slice-planner` with the
-  objection attached, then proceed on the revised plan. That is your single replan.
+  objection attached, then proceed on the revised plan. Once the plan proceeds, record the
+  ORIGINAL panel's `defer`-hinted concerns exactly as the `ENDORSE_WITH_CONCERNS` bullet below
+  does — one `deferred` event per concern, same payload shape, plus the bare boolean
+  `over_scope: true` when its raising member set `over_scope.flag` — the replan does not
+  discard them. That is your single replan.
 - `OBJECT` otherwise, or any `safety.flag` → do not execute. Record a `council-objection`
   escalation with the critic's question and recommended default; return `ESCALATED`.
 - `ENDORSE_WITH_CONCERNS` → fold the `fold` concerns into the plan; for EACH `defer`

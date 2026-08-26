@@ -500,10 +500,19 @@ function computeCritiqueVerdict(safety, objections, verdicts, concerns) {
   return concerns.length ? 'ENDORSE_WITH_CONCERNS' : 'ENDORSE'
 }
 
-// Each concern remembers whether the member that raised it flagged the plan
-// as over-scope, so a deferral can be marked without any member needing a
-// second field. Extra keys are inert downstream: concerns are only counted,
-// filtered by disposition_hint, and mapped to .text.
+// Each concern is stamped with the RAISING MEMBER's whole-verdict over_scope
+// flag, not a per-concern judgement: there is no per-concern over_scope field
+// in the CRITIQUE schema (deliberately — adding one would reopen the council
+// contract for a non-blocking record channel), so a member who flags the
+// PLAN as over-scope while separately raising an unrelated
+// disposition_hint:'defer' concern causes that unrelated concern to inherit
+// `over_scope: true` too. This is member-level attribution BROADCAST onto
+// every concern that member raised, never a claim that the concern itself is
+// out of scope. The same caveat is spelled out in run-state-v2.md's
+// `deferred` payload bullet and in run_state.py's `_summarize` docstring
+// (the `SCOPE `-prefix renderer) — read either before trusting the marker as
+// a per-item judgement. Extra keys are inert downstream: concerns are only
+// counted, filtered by disposition_hint, and mapped to .text.
 function deriveCouncilInputs(verdicts) {
   const objections = verdicts.filter(v => v.verdict === 'OBJECT')
   const safety = verdicts.find(v => v.safety.flag)
