@@ -142,6 +142,9 @@ CRASH_CAUSE_OVERCLAIM = "This is a loop or agent-contract bug"
 CRASH_BUDGET_DENIAL_OVERCLAIM = "NOT a cap or budget limit"
 GUARD_BUDGET_TRIGGER = "esc(slice, 'budget-exhausted',"
 SLICE_LOST_RECORD = "esc(A.slices[i], 'internal-error', 'slice lost',"
+# Third instance of the same overclaim pattern: a thunk resolved to null
+# proves nothing about the cause, so the lost-slice record must not deny one.
+SLICE_LOST_CAUSE_DENIAL = "Not a resource limit."
 STAGE_CRITIQUE_START = "async function stageCritique(slice, state, plan) {"
 STAGE_CRITIQUE_END = "// Stage T helpers"
 SPLIT_RETURN = "if (splitRec) return { stop: doneResult(slice, state, 'SPLIT'"

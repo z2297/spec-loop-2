@@ -18,7 +18,9 @@ All notable changes to the spec-loop plugin are documented here. The format is
   exception reaching the catch-all fired neither structural guard, so it may be a loop or
   agent-contract bug and it may equally be a host- or agent-layer resource failure that never
   reaches those guards (a rejected agent call on a hard token or rate limit, say) — the exception
-  text is the evidence, not the label. It is not a judgment trigger and it is not answerable by
+  text is the evidence, not the label. The lost-slice record at :912 follows the same rule: it
+  states only what the loop can prove (neither structural guard fired) and no longer denies a
+  resource cause it cannot rule out. It is not a judgment trigger and it is not answerable by
   re-dispatching an agent: its three options (retry the slice, skip it, stop the run) are
   controller actions, and each option's detail names the controller as what applies it. Added to
   `ESCALATION_TRIGGERS` in `run_state.py`, `run_metrics.py` and `dashboard_server.py`, to the
@@ -56,6 +58,8 @@ existed to deliver is gone.
 Consequences, stated plainly: a run directory written by this version is **not readable by 2.2.0**,
 and the repository and the installed plugin must be updated together. Re-running the affected slice
 under 2.2.0 will not recover the record, because the record was never written.
+
+### Scope and limits of this change
 
 Verifiability ceiling: nothing this entry describes in `workflows/slice-wave.workflow.js` has been
 executed. The loop resolves its workflow from the installed plugin cache, so the merged file takes

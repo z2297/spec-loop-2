@@ -24,7 +24,8 @@ from slice_wave_contract_base import (
     CRASH_STAGE_CONTEXT, CRASH_STAGE_FALLBACK, CRASH_STAGE_OVERCLAIM,
     CRASH_STAGE_PRECISION, CRASH_TITLE_BRANCH, CRASH_TITLE_UNGRAMMATICAL,
     CRASH_TRIGGER, DISPATCH_GUARD_CALL, GUARD_BUDGET_TRIGGER,
-    SLICE_LOST_RECORD, STAGE_ASSIGNMENT, STATE_STAGE_INIT,
+    SLICE_LOST_CAUSE_DENIAL, SLICE_LOST_RECORD, STAGE_ASSIGNMENT,
+    STATE_STAGE_INIT,
     WorkflowSourceTestCase,
 )
 
@@ -153,6 +154,16 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         self.assertIn(SLICE_LOST_RECORD, wave_entry)
         self.assertIn("Re-run the wave to retry this slice?", wave_entry)
         self.assertNotIn("'budget-exhausted'", wave_entry)
+
+    def test_the_lost_slice_record_denies_no_cause_it_cannot_prove(self):
+        # Same rule as the crash record, third instance of the pattern: a
+        # thunk that resolved to null says nothing about WHY, so asserting
+        # "Not a resource limit" is as unprovable as the "budget" label this
+        # trigger replaced. A host- or agent-layer rejection dies this way too.
+        wave_entry = self.between(
+            "const results = await parallel(", "log(`wave ")
+        self.assertNotIn(SLICE_LOST_CAUSE_DENIAL, wave_entry)
+        self.assertIn(CRASH_HOST_LAYER_CAVEAT, wave_entry)
 
 
 if __name__ == "__main__":  # pragma: no cover
