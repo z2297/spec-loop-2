@@ -152,10 +152,15 @@ best-effort):
   blocking decision reads it, and it is never a finding. Absent means no scope
   judgement was recorded and is NOT equivalent to `flag: false`; both render
   distinctly in `decisions-log.md` (`scope: clean` vs nothing at all).
-- **`deferred`** payload is null-honest and otherwise free-form
-  (`title`/`detail`), with one pinned key: `over_scope: true` marks a deferral of
-  work judged outside the slice's scope. Advisory prose data only — it suppresses
-  no finding and drops no work.
+- **`deferred`** payload is null-honest and otherwise free-form, with one pinned
+  key: `over_scope: true` (a bare boolean) marks a deferral of work judged outside
+  the slice's scope. The wave emits ONE such event per `defer`-hinted council
+  concern, payload `{summary, source: "plan-critique"}` plus the marker when it
+  applies — `summary` is read first by the decisions-log renderer, so the line is
+  legible prose rather than a JSON blob. Advisory prose data only: it suppresses no
+  finding, filters no blocking set, and drops no work. The controller also emits
+  `deferred` at intake, and `council-verdict.deferred[]` remains the machine channel
+  `run_metrics.concerns_deferred` counts.
 - **`escalation-opened`** payload is the full EscalationRecord, including its
   `id`; `escalation-answered` pairs by that `id` (never by scope alone — one
   slice can open several).

@@ -73,6 +73,10 @@ Same contract as plan-critic, with risk findings only.
   a broken public contract, or anything that could silently change observable behavior,
   persisted data, or security posture. Flag it only when the risk is genuine, and always when
   it is genuine.
+- **`over_scope`** — an optional record-only field on the shared verdict contract, owned by
+  plan-critic's scope lane. Scope is not your lane: leave it absent. Absent means "no scope
+  judgement was recorded" and is not read as `flag: false`, so omitting it costs nothing and
+  asserts nothing. A risk that is *also* out of scope is still reported as a risk.
 
 Every objection and concern names the exact risk, the path it lives on (`file:line` or the
 plan step), and a concrete mitigation. An objection also states the question a human would

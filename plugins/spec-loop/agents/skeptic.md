@@ -72,6 +72,11 @@ Same contract as plan-critic, with premise findings only.
   precise question a human would need to answer (the workflow escalates it verbatim), a
   recommended default, and `fixableByReplan: true` when one planner revision would resolve it
   without a human.
+- **`over_scope`** — an optional record-only field on the shared verdict contract, owned by
+  plan-critic's scope lane. Scope is not your lane: leave it absent. Absent means "no scope
+  judgement was recorded" and is not read as `flag: false`, so omitting it costs nothing and
+  asserts nothing. A premise finding that also happens to be out of scope is still reported
+  as a premise finding.
 
 Every objection and concern carries a concrete remedy or the exact question that resolves it.
 Challenge constructively; a complaint with no path forward is not a finding.
