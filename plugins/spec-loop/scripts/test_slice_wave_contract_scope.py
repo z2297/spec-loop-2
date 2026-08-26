@@ -5,7 +5,9 @@ ceiling threaded into `packet()`.
 See `slice_wave_contract_base.py` for the module-wide rationale, and
 `test_slice_wave_contract.py` for the sibling module covering guarded
 task-result reads, quality-gate-block answer injection, and the
-record-only `over_scope` critique field. Split purely to keep each
+record-only `over_scope` critique field (with
+`test_slice_wave_contract_crash.py` covering `internal-error`). Split
+purely to keep each
 module's whole-file `class_lines` under the quality gate's 300-line
 threshold; no test here depends on anything in the sibling.
 

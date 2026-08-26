@@ -855,29 +855,39 @@ async function runStages(slice, state) {
   return stageVerify(slice, state, plan)
 }
 
-// An unclassified throw is a MACHINE failure, not a resource limit and not a
-// judgment call: the two structural guards above throw {escRecord} with their
-// own budget-exhausted record, so anything reaching the fallback is a bug in
-// the loop or in an agent contract. It is reported as such, naming the LAST
-// DISPATCHED stage and the real exception, because run 20260825-scope-ceiling
-// showed the cost of a mislabelled crash is misdirected DIAGNOSIS. state.stage
-// is the most recent dispatch, not a per-throw stage (it is never cleared, and
-// concurrent fan-outs overwrite it), so the record says "after", not "in", and
-// says so explicitly. The context string leads with the real exception text,
-// ahead of the fixed classification sentence, so render_escalation()'s
-// 400-char truncation (run_state.py) can never eat the variable-length
-// diagnostic payload. Retry of the crashed stage is deliberately a
-// human/controller decision, not automatic.
+// An unclassified throw is a MACHINE failure, not a judgment call, and the
+// record asserts only the cause the code can PROVE. The two structural guards
+// (agent cap, stage token floor) throw {escRecord} with their own
+// budget-exhausted record and are handled on the first line below, so nothing
+// reaching this fallback came from either of them. It does NOT follow that no
+// resource limit was involved: a rejected agent(...) promise on a hard token or
+// rate limit, or a throw from budget.remaining() itself, lands here too. Run
+// 20260825-scope-ceiling showed the cost of a mislabelled crash is misdirected
+// DIAGNOSIS, and asserting "bug, NOT a budget limit" would be exactly as
+// unprovable as the "budget" label it replaced, just aimed the other way, so
+// the record names both possibilities and leans on the exception text instead.
+// It names the LAST DISPATCHED stage: state.stage is the most recent dispatch,
+// not a per-throw stage (it is never cleared, and concurrent fan-outs overwrite
+// it), so the record says "after", not "in", and says so explicitly; the title
+// drops "after" entirely when no agent was ever dispatched, which would
+// otherwise read "crashed after before any agent was dispatched". The context
+// leads with the real exception text, ahead of the fixed classification
+// sentences, so render_escalation()'s 400-char truncation (run_state.py) can
+// never eat the variable-length diagnostic payload. Retry is deliberately a
+// human/controller decision: internal-error is not in ANSWERABLE_TRIGGERS and
+// the loop implements no automatic retry, skip, or stop, so each option's
+// detail names the CONTROLLER as what applies it.
 function runSliceError(slice, state, e) {
   if (e && e.escRecord) return escalated(slice, state, e.escRecord)
-  const stage = state.stage || 'before any agent was dispatched'
-  return escalated(slice, state, esc(slice, 'internal-error',
-    `slice crashed after ${stage}`,
-    `Error: ${String((e && e.message) || e)}. This is a loop or agent-contract bug, NOT a cap or budget limit — ${state.tasksCompleted} task(s) had already completed and any committed work is on the branch. Last stage/role dispatched before the failure: ${stage}. The loop records the most recent dispatch, not a per-throw stage, so the failure may have happened after that role finished, or in a sibling of a concurrent fan-out — treat it as a starting point, not a culprit.`,
+  const stage = state.stage
+  const stageText = stage || 'none (the crash happened before any agent was dispatched)'
+  const title = stage ? `slice crashed after ${stage}` : 'slice crashed before any agent was dispatched'
+  return escalated(slice, state, esc(slice, 'internal-error', title,
+    `Error: ${String((e && e.message) || e)}. Neither of the loop's two structural guards fired: the agent cap and the stage token floor each raise budget-exhausted with an escRecord, handled one line earlier, so this crash came from neither. It may be a loop or agent-contract bug, and it may equally be a host- or agent-layer resource failure that never reaches those guards (a rejected agent call on a hard token or rate limit, say) — the exception text above is the evidence, not this classification. ${state.tasksCompleted} task(s) had already completed and any committed work is on the branch. Last stage/role dispatched before the failure: ${stageText}. The loop records the most recent dispatch, not a per-throw stage, so the failure may have happened after that role finished, or in a sibling of a concurrent fan-out — treat it as a starting point, not a culprit.`,
     'Retry this slice, skip it and continue the run, or stop the run to diagnose the exception?',
-    [{ label: 'Retry this slice', detail: 'Re-dispatch the wave for this slice; committed work on its branch is kept.', recommended: true },
-     { label: 'Skip this slice', detail: 'Leave it ESCALATED and continue with the independent slices.' },
-     { label: 'Stop the run', detail: 'Halt so the exception can be diagnosed before more agents are spent.' }]))
+    [{ label: 'Retry this slice', detail: 'Recommended default. The CONTROLLER must act on this at the next dispatch: re-dispatch the wave on this slice, keeping the committed work on its branch.', recommended: true },
+     { label: 'Skip this slice', detail: 'The CONTROLLER must act on this at the next dispatch: leave the slice ESCALATED and dispatch only the independent slices. Nothing in the loop enforces a skip — the default re-dispatch procedure would retry it.' },
+     { label: 'Stop the run', detail: 'The CONTROLLER must act on this at the next dispatch: halt the run instead of dispatching another wave, so the exception can be diagnosed before more agents are spent. Nothing in the loop stops the run by itself.' }]))
 }
 
 async function runSlice(slice) {

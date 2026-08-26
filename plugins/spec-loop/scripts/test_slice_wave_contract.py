@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Contract checks: guarded task-result reads, quality-gate-block answer
-injection, the record-only `over_scope` critique field, and the `internal-error`
-classification of machine failures.
+injection, and the record-only `over_scope` critique field.
 
 See `slice_wave_contract_base.py` for the module-wide rationale (why this
 is source-text assertion, why snippets are named constants, and the two
 known-and-deliberately-unguarded instances this module does NOT claim to
-cover). `test_slice_wave_contract_scope.py` is this module's sibling,
-covering the deferred-event and run-scope-ceiling concerns - split out
-purely to keep each module's whole-file `class_lines` under the quality
-gate's 300-line threshold; no test here depends on anything in the sibling.
+cover). Two siblings carry the rest of the same contract:
+`test_slice_wave_contract_scope.py` (deferred events, run scope ceiling)
+and `test_slice_wave_contract_crash.py` (the `internal-error`
+classification of machine failures) - split out purely to keep each
+module's whole-file `class_lines` under the quality gate's 300-line
+threshold; no test here depends on anything in a sibling.
 
 Usage:
     python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_slice_wave_contract.py'
@@ -24,19 +25,14 @@ import unittest
 
 from slice_wave_contract_base import (
     ANSWER_CONTEXT_END, ANSWER_CONTEXT_START, ANSWERABLE_TRIGGERS, CLEAN,
-    COUNCIL_VERDICT_EVENT, CRASH_CLASSIFICATION_SENTENCE,
-    CRASH_CLASSIFIED_PASSTHROUGH, CRASH_ERROR_FIRST, CRASH_OPTION_RETRY,
-    CRASH_OPTION_SKIP, CRASH_OPTION_STOP, CRASH_STAGE_CONTEXT,
-    CRASH_STAGE_FALLBACK, CRASH_STAGE_OVERCLAIM, CRASH_STAGE_PRECISION,
-    CRASH_TRIGGER, CRITIQUE_REQUIRED, CRITIQUE_ROLLUP, DISPATCH_GUARD_CALL,
+    COUNCIL_VERDICT_EVENT, CRITIQUE_REQUIRED, CRITIQUE_ROLLUP,
     FAIL_CLOSED_DEFAULT, FINDING_CATEGORIES, FLAGGED, GATE_ANSWER,
-    GATE_ANSWER_CONTEXT, GUARD_BUDGET_TRIGGER, GUARDED_BASE, GUARDED_CONCERNS,
+    GATE_ANSWER_CONTEXT, GUARDED_BASE, GUARDED_CONCERNS,
     GUARDED_DEVIATIONS, GUARDED_HEAD, GUARDED_LOCAL, GUARDED_TOUCHED,
     HELPER_END, NO_COMMITS_ESCALATION, OBJECTION_SELECTION,
     OVER_SCOPE_DEFAULT, OVER_SCOPE_SCHEMA, REPLAN_VETO, SCOPE_DRIVER,
     SCOPE_HELPER, SCOPE_LOCAL, SCOPE_REASON_KEPT, SCOPE_SPREAD,
-    SIDECAR_SCOPE_ATTACH, SLICE_LOST_RECORD, SPLIT_SUPPRESSION,
-    STAGE_ASSIGNMENT, STATE_STAGE_INIT, TASK_LOOP_END, TASK_LOOP_START,
+    SIDECAR_SCOPE_ATTACH, SPLIT_SUPPRESSION, TASK_LOOP_END, TASK_LOOP_START,
     TASK_RESULT_REQUIRED, WorkflowSourceTestCase, wrapped_source,
 )
 
@@ -258,100 +254,6 @@ class TestScopeRecordBehavesAndNotJustExists(WorkflowSourceTestCase):
         # would reach run_state.py as an absent key instead of an explicit null.
         got = self.scope_record([[{"over_scope": {"flag": True}}]])
         self.assertEqual(got, [{"flag": True, "reason": None}])
-
-
-class TestTheCrashRecordNamesTheLastDispatchedStage(WorkflowSourceTestCase):
-    """A crash record carrying only an exception string sent run
-    20260825-scope-ceiling's controller looking for a budget problem. The
-    cheapest honest signal is the LAST DISPATCHED role - state.stage is
-    never cleared and dispatch() may fan out via parallel(), so it is not
-    a per-throw stage and the record must not claim to be one."""
-
-    def test_slice_state_initialises_a_stage_field(self):
-        init = self.between("function initSliceState(slice) {", "function doneResult(")
-        self.assertIn(STATE_STAGE_INIT, init)
-
-    def test_dispatch_records_the_role_only_after_the_guards_pass(self):
-        # A cap or token-floor rejection must not advance state.stage to a
-        # role that never dispatched, so the assignment follows guard().
-        fn = self.between(
-            "async function dispatch(slice, state, role, prompt, opts) {",
-            "// ── The slice pipeline")
-        self.assertIn(STAGE_ASSIGNMENT, fn)
-        self.assertLess(fn.index(DISPATCH_GUARD_CALL), fn.index(STAGE_ASSIGNMENT))
-
-
-class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
-    """Regression, run 20260825-scope-ceiling: the catch-all relabelled every
-    unclassified JS exception as `budget-exhausted` 'wave interrupted', so a
-    TypeError read as a resource limit and the controller spent ~85 and ~76
-    minutes diagnosing in the wrong direction (the HUMAN answered both in
-    ~1 min - the cost was misdirected diagnosis, not human waiting). The
-    catch-all now says machine failure, names the last dispatched stage, and offers
-    controller actions instead of 'raise budget/caps'."""
-
-    def crash_fallback(self):
-        return self.between(
-            "function runSliceError(slice, state, e) {",
-            "async function runSlice(slice) {")
-
-    def test_the_catch_all_emits_internal_error_not_budget_exhausted(self):
-        fallback = self.crash_fallback()
-        self.assertIn(CRASH_TRIGGER, fallback)
-        self.assertNotIn(GUARD_BUDGET_TRIGGER, fallback)
-
-    def test_a_classified_throw_still_passes_through_unchanged(self):
-        # The two structural guards throw {escRecord} with their own
-        # budget-exhausted record; reclassifying those would be a regression.
-        self.assertIn(CRASH_CLASSIFIED_PASSTHROUGH, self.crash_fallback())
-
-    def test_the_crash_record_names_the_last_dispatched_stage_without_overclaiming(self):
-        fallback = self.crash_fallback()
-        self.assertIn(CRASH_STAGE_FALLBACK, fallback)
-        self.assertIn(CRASH_STAGE_CONTEXT, fallback)
-        self.assertIn(CRASH_STAGE_PRECISION, fallback)
-        self.assertNotIn(CRASH_STAGE_OVERCLAIM, fallback)
-
-    def test_the_crash_record_carries_the_real_exception_text(self):
-        self.assertIn("String((e && e.message) || e)", self.crash_fallback())
-
-    def test_the_options_are_controller_actions_not_resource_requests(self):
-        fallback = self.crash_fallback()
-        self.assertIn(CRASH_OPTION_RETRY, fallback)
-        self.assertIn(CRASH_OPTION_SKIP, fallback)
-        self.assertIn(CRASH_OPTION_STOP, fallback)
-        self.assertNotIn("Raise budget/caps", fallback)
-
-    def test_the_structural_guards_keep_their_budget_exhausted_wording(self):
-        guard = self.between(
-            "function guard(slice, state) {", "async function dispatch(")
-        self.assertIn("agent cap reached", guard)
-        self.assertIn("token budget exhausted", guard)
-        self.assertEqual(guard.count(GUARD_BUDGET_TRIGGER), 2)
-
-    def test_internal_error_is_not_injected_into_any_prompt(self):
-        # Mirror of test_budget_exhausted_is_still_not_injected_anywhere: a
-        # crash answer is a controller action (retry / skip / stop), so there
-        # is nothing for an agent prompt to apply. It is deliberately NOT in
-        # ANSWERABLE_TRIGGERS.
-        self.assertNotIn("answerFor(slice, 'internal-error')", self.src)
-        self.assertNotIn("internal-error", str(ANSWERABLE_TRIGGERS))
-
-    def test_the_real_exception_text_leads_the_context_not_the_boilerplate(self):
-        self.assertLess(
-            self.crash_fallback().index(CRASH_ERROR_FIRST),
-            self.crash_fallback().index(CRASH_CLASSIFICATION_SENTENCE))
-
-    def test_a_lost_slice_is_an_internal_error_too(self):
-        # parallel() resolved the thunk to null: the slice died with no result
-        # at all, outside runSlice's try/catch. Same one classification, per
-        # the run's human-decided single-value constraint; the honest 'slice
-        # lost' title and its own question are kept.
-        wave_entry = self.between(
-            "const results = await parallel(", "log(`wave ")
-        self.assertIn(SLICE_LOST_RECORD, wave_entry)
-        self.assertIn("Re-run the wave to retry this slice?", wave_entry)
-        self.assertNotIn("'budget-exhausted'", wave_entry)
 
 
 if __name__ == "__main__":  # pragma: no cover
