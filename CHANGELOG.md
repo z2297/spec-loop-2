@@ -7,6 +7,7 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-26
 ### Added
 - **Run-level scope ceiling** — an optional `scope_ceiling` list in `dag.json` (validated
   only when present; a run without one stays fully valid and mutable), threaded through
@@ -218,6 +219,7 @@ schemas, agents, and internals redesigned; see
   and the `--budget` flag (cost control is structural: caps + bounds; the
   Workflow token ceiling activates when the session sets a token target).
 
-[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.2.0
 [2.1.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.1.0
 [2.0.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.0.0
