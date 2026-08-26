@@ -25,18 +25,18 @@ import unittest
 from slice_wave_contract_base import (
     ANSWER_CONTEXT_END, ANSWER_CONTEXT_START, ANSWERABLE_TRIGGERS, CLEAN,
     COUNCIL_VERDICT_EVENT, CRASH_CLASSIFIED_PASSTHROUGH, CRASH_OPTION_RETRY,
-    CRASH_OPTION_SKIP, CRASH_OPTION_STOP, CRASH_STAGE_FALLBACK, CRASH_TRIGGER,
-    CRITIQUE_REQUIRED, CRITIQUE_ROLLUP,
+    CRASH_OPTION_SKIP, CRASH_OPTION_STOP, CRASH_STAGE_CONTEXT,
+    CRASH_STAGE_FALLBACK, CRASH_STAGE_OVERCLAIM, CRASH_STAGE_PRECISION,
+    CRASH_TRIGGER, CRITIQUE_REQUIRED, CRITIQUE_ROLLUP, DISPATCH_GUARD_CALL,
     FAIL_CLOSED_DEFAULT, FINDING_CATEGORIES, FLAGGED, GATE_ANSWER,
     GATE_ANSWER_CONTEXT, GUARD_BUDGET_TRIGGER, GUARDED_BASE, GUARDED_CONCERNS,
-    GUARDED_DEVIATIONS,
-    GUARDED_HEAD, GUARDED_LOCAL, GUARDED_TOUCHED, HELPER_END,
-    NO_COMMITS_ESCALATION, OBJECTION_SELECTION, OVER_SCOPE_DEFAULT,
+    GUARDED_DEVIATIONS, GUARDED_HEAD, GUARDED_LOCAL, GUARDED_TOUCHED,
+    HELPER_END, NO_COMMITS_ESCALATION, OBJECTION_SELECTION, OVER_SCOPE_DEFAULT,
     OVER_SCOPE_SCHEMA, REPLAN_VETO, SCOPE_DRIVER, SCOPE_HELPER, SCOPE_LOCAL,
     SCOPE_REASON_KEPT, SCOPE_SPREAD, SIDECAR_SCOPE_ATTACH, SLICE_LOST_RECORD,
     SPLIT_SUPPRESSION, STAGE_ASSIGNMENT, STATE_STAGE_INIT, TASK_LOOP_END,
-    TASK_LOOP_START, TASK_RESULT_REQUIRED,
-    WorkflowSourceTestCase, wrapped_source,
+    TASK_LOOP_START, TASK_RESULT_REQUIRED, WorkflowSourceTestCase,
+    wrapped_source,
 )
 
 
@@ -259,21 +259,25 @@ class TestScopeRecordBehavesAndNotJustExists(WorkflowSourceTestCase):
         self.assertEqual(got, [{"flag": True, "reason": None}])
 
 
-class TestTheCrashRecordCanNameTheStageInFlight(WorkflowSourceTestCase):
-    """A crash record that carries only an exception string sent run
+class TestTheCrashRecordNamesTheLastDispatchedStage(WorkflowSourceTestCase):
+    """A crash record carrying only an exception string sent run
     20260825-scope-ceiling's controller looking for a budget problem. The
-    cheapest honest signal for "what was in flight" is the last dispatched
-    role, which dispatch() already receives."""
+    cheapest honest signal is the LAST DISPATCHED role - state.stage is
+    never cleared and dispatch() may fan out via parallel(), so it is not
+    a per-throw stage and the record must not claim to be one."""
 
     def test_slice_state_initialises_a_stage_field(self):
         init = self.between("function initSliceState(slice) {", "function doneResult(")
         self.assertIn(STATE_STAGE_INIT, init)
 
-    def test_dispatch_records_the_role_it_is_about_to_run(self):
+    def test_dispatch_records_the_role_only_after_the_guards_pass(self):
+        # A cap or token-floor rejection must not advance state.stage to a
+        # role that never dispatched, so the assignment follows guard().
         fn = self.between(
             "async function dispatch(slice, state, role, prompt, opts) {",
             "// ── The slice pipeline")
         self.assertIn(STAGE_ASSIGNMENT, fn)
+        self.assertLess(fn.index(DISPATCH_GUARD_CALL), fn.index(STAGE_ASSIGNMENT))
 
 
 class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
@@ -282,7 +286,7 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
     TypeError read as a resource limit and the controller spent ~85 and ~76
     minutes diagnosing in the wrong direction (the HUMAN answered both in
     ~1 min - the cost was misdirected diagnosis, not human waiting). The
-    catch-all now says machine failure, names the stage in flight, and offers
+    catch-all now says machine failure, names the last dispatched stage, and offers
     controller actions instead of 'raise budget/caps'."""
 
     def crash_fallback(self):
@@ -300,10 +304,12 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         # budget-exhausted record; reclassifying those would be a regression.
         self.assertIn(CRASH_CLASSIFIED_PASSTHROUGH, self.crash_fallback())
 
-    def test_the_crash_record_names_the_stage_in_flight(self):
+    def test_the_crash_record_names_the_last_dispatched_stage_without_overclaiming(self):
         fallback = self.crash_fallback()
         self.assertIn(CRASH_STAGE_FALLBACK, fallback)
-        self.assertIn("${stage}", fallback)
+        self.assertIn(CRASH_STAGE_CONTEXT, fallback)
+        self.assertIn(CRASH_STAGE_PRECISION, fallback)
+        self.assertNotIn(CRASH_STAGE_OVERCLAIM, fallback)
 
     def test_the_crash_record_carries_the_real_exception_text(self):
         self.assertIn("String((e && e.message) || e)", self.crash_fallback())

@@ -428,8 +428,11 @@ function guard(slice, state) {
 }
 
 async function dispatch(slice, state, role, prompt, opts) {
-  state.stage = role
   guard(slice, state)
+  // Last dispatch STARTED, not a per-throw stage: never cleared, and
+  // concurrent fan-outs overwrite each other. After guard() so a cap or
+  // token-floor rejection cannot advance it to a role that never ran.
+  state.stage = role
   state.agentsUsed++
   const r = await agent(prompt, { ...opts, label: `${slice.id}:${role}`, phase: `wave ${A.wave_index}` })
   state.events.push({ scope: slice.id, type: 'agent-dispatch', payload: { role, model: opts.model || 'inherit', effort: opts.effort || null, agent_type: opts.agentType || null } })
@@ -855,16 +858,19 @@ async function runStages(slice, state) {
 // An unclassified throw is a MACHINE failure, not a resource limit and not a
 // judgment call: the two structural guards above throw {escRecord} with their
 // own budget-exhausted record, so anything reaching the fallback is a bug in
-// the loop or in an agent contract. It is reported as such, naming the stage
-// that was in flight and the real exception, because run 20260825-scope-ceiling
-// showed the cost of a mislabelled crash is misdirected DIAGNOSIS. Retry of the
-// crashed stage is deliberately a human/controller decision, not automatic.
+// the loop or in an agent contract. It is reported as such, naming the LAST
+// DISPATCHED stage and the real exception, because run 20260825-scope-ceiling
+// showed the cost of a mislabelled crash is misdirected DIAGNOSIS. state.stage
+// is the most recent dispatch, not a per-throw stage (it is never cleared, and
+// concurrent fan-outs overwrite it), so the record says "after", not "in", and
+// says so explicitly. Retry of the crashed stage is deliberately a
+// human/controller decision, not automatic.
 function runSliceError(slice, state, e) {
   if (e && e.escRecord) return escalated(slice, state, e.escRecord)
   const stage = state.stage || 'before any agent was dispatched'
   return escalated(slice, state, esc(slice, 'internal-error',
-    `slice crashed in ${stage}`,
-    `An unhandled exception aborted the slice. Stage/role in flight: ${stage}. Error: ${String((e && e.message) || e)}. This is a loop or agent-contract bug, NOT a cap or budget limit — ${state.tasksCompleted} task(s) had already completed and any committed work is on the branch.`,
+    `slice crashed after ${stage}`,
+    `An unhandled exception aborted the slice. Last stage/role dispatched before the failure: ${stage}. The loop records the most recent dispatch, not a per-throw stage, so the failure may have happened after that role finished, or in a sibling of a concurrent fan-out — treat it as a starting point, not a culprit. Error: ${String((e && e.message) || e)}. This is a loop or agent-contract bug, NOT a cap or budget limit — ${state.tasksCompleted} task(s) had already completed and any committed work is on the branch.`,
     'Retry this slice, skip it and continue the run, or stop the run to diagnose the exception?',
     [{ label: 'Retry this slice', detail: 'Re-dispatch the wave for this slice; committed work on its branch is kept.', recommended: true },
      { label: 'Skip this slice', detail: 'Leave it ESCALATED and continue with the independent slices.' },

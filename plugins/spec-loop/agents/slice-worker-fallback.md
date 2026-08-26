@@ -149,8 +149,8 @@ Proceed-and-log stays the default — surface only genuine ambiguity or a materi
 touching behavior, public contracts, persisted data, security, or an external integration. A
 slice with any open escalation returns `ESCALATED`. `budget-exhausted` is only for a cap or a
 bound (see Loop bounds); an unhandled exception or a stage that died with no result is
-`internal-error`, and its context must name the stage that was in flight plus the real error
-text.
+`internal-error`, and its context must name the last stage/role dispatched before the failure —
+you cannot know which stage threw, so do not claim one — plus the real error text.
 
 ## Return
 
