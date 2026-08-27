@@ -27,7 +27,11 @@ Pipeline:
      analyzer splits the source into functions by signature regex (python / js /
      ts / java / c# / go styles, language by extension) and estimates each
      metric by branch-keyword counting, signature parsing, and indent/brace
-     nesting. Every such finding is marked "source": "builtin-heuristic".
+     nesting. Branch counting reads a masked copy of the source in which the
+     content of python string literals and comments has been replaced by a
+     sentinel, so words and punctuation inside them are not measured as
+     branching; a tokenizer failure falls back to the raw text. Every such
+     finding is marked "source": "builtin-heuristic".
      cognitive_complexity is ONLY ever produced by this heuristic (a
      nesting-weighted approximation) or skipped -- it is never attributed to a
      real tool.
@@ -690,12 +694,57 @@ def _nonblank(lines):
     return sum(1 for line in lines if line.strip())
 
 
+def _extract_functions_for(lines, lang):
+    """The extracted callables of one file, by language family. (PURE)"""
+    if lang == "python":
+        return _extract_functions_python(lines)
+    return _extract_functions_cbrace(lines)
+
+
+def _nesting_depth_for(body_lines, lang, base_indent):
+    """Nesting depth of one RAW function body, by language family. Always
+    measured on raw text: the mask is for branch scanning only. (PURE)"""
+    if lang == "python":
+        return _nesting_depth_python(body_lines[1:], base_indent)
+    return _nesting_depth_braces("\n".join(body_lines))
+
+
+def _scan_lines_for(source, lang, lines):
+    """The masked counterpart of `lines`, for the two branch scans only. Falls
+    back to `lines` unless the mask preserved the physical line count exactly,
+    so a masked body always covers the same lines as its raw body. (PURE)"""
+    scan_lines = _strip_for_scan(source, lang).splitlines()
+    if len(scan_lines) != len(lines):
+        return lines
+    return scan_lines
+
+
+def _function_metrics(lines, scan_lines, fn, lang):
+    """Measured metric values for one extracted function. `lines` is raw source;
+    `scan_lines` is its masked counterpart, read by the two branch scans alone,
+    so span, indentation and length metrics all stay on raw text. (PURE)"""
+    body_lines = lines[fn["header_idx"]:fn["end"]]
+    scan_body = scan_lines[fn["header_idx"]:fn["end"]]
+    header_line = lines[fn["header_idx"]]
+    base_indent = len(header_line) - len(header_line.lstrip(" "))
+    return {
+        "cyclomatic_complexity": _branch_count("\n".join(scan_body)),
+        "method_lines": _nonblank(body_lines),
+        "parameter_count": _count_params(header_line),
+        "cognitive_complexity": _cognitive_approx(
+            scan_body, lang, base_indent),
+        "nesting_depth": _nesting_depth_for(body_lines, lang, base_indent),
+    }
+
+
 def analyze_builtin(path, source, changed_ranges):
     """Pure-stdlib heuristic analysis of one changed file. Returns
     (function_findings, class_finding_or_None) where each finding is a dict of
     measured metric values for functions intersecting `changed_ranges`, tagged
     source="builtin-heuristic". `source` is the file text; changed_ranges is the
-    file's list of (start, end) changed spans.
+    file's list of (start, end) changed spans. The two branch scans read a
+    masked copy of the source (see _strip_for_scan); every other metric reads
+    the raw text.
 
     An unsupported/binary file (no known language) yields ([], None); the caller
     records a skip for it."""
@@ -703,35 +752,17 @@ def analyze_builtin(path, source, changed_ranges):
     if lang is None:
         return [], None
     lines = source.splitlines()
-    if lang == "python":
-        funcs = _extract_functions_python(lines)
-    else:
-        funcs = _extract_functions_cbrace(lines)
+    scan_lines = _scan_lines_for(source, lang, lines)
+    funcs = _extract_functions_for(lines, lang)
 
     findings = []
     for fn in funcs:
         if not _intersects_changed(fn["start"], fn["end"], changed_ranges):
             continue
-        body_lines = lines[fn["header_idx"]:fn["end"]]
-        body_text = "\n".join(body_lines)
-        header_line = lines[fn["header_idx"]]
-        base_indent = len(header_line) - len(header_line.lstrip(" "))
-        metrics = {
-            "cyclomatic_complexity": _branch_count(body_text),
-            "method_lines": _nonblank(body_lines),
-            "parameter_count": _count_params(header_line),
-            "cognitive_complexity": _cognitive_approx(body_lines, lang,
-                                                       base_indent),
-        }
-        if lang == "python":
-            metrics["nesting_depth"] = _nesting_depth_python(
-                body_lines[1:], base_indent)
-        else:
-            metrics["nesting_depth"] = _nesting_depth_braces(body_text)
         findings.append({
             "file": path, "function": fn["name"],
             "line_start": fn["start"], "line_end": fn["end"],
-            "metrics": metrics,
+            "metrics": _function_metrics(lines, scan_lines, fn, lang),
         })
 
     class_finding = None

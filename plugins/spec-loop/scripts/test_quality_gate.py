@@ -63,6 +63,14 @@ CBRACE_SOURCE_WITH_LITERALS = (
 )
 
 
+def unmasked(text, lang):
+    """Identity stand-in for qg._strip_for_scan, so a test can measure the same
+    source the way the gate measured it before the mask existed. Named at module
+    level because a paren-aligned mock.patch.object continuation inside a test
+    body is itself read as nesting by the metric under test."""
+    return text
+
+
 # --------------------------------------------------------------------------
 # parse_diff — pure, embedded fixtures
 # --------------------------------------------------------------------------
@@ -528,6 +536,47 @@ class TestAnalyzeBuiltinCbrace(unittest.TestCase):
         src = "const handler = (x, y) => {\n    return x + y;\n}\n"
         findings, _ = qg.analyze_builtin("m.ts", src, [(1, 3)])
         self.assertIn("handler", {f["function"] for f in findings})
+
+
+class TestAnalyzeBuiltinMasksLiterals(unittest.TestCase):
+    """Branch words and operator punctuation inside a literal or a comment are
+    not branching, and masking them must not disturb any other metric."""
+
+    def measure(self, source, lang_path):
+        findings, _ = qg.analyze_builtin(
+            lang_path, source, [(1, len(source.splitlines()))])
+        return {f["function"]: f for f in findings}
+
+    def measure_unmasked(self, source, lang_path):
+        with mock.patch.object(qg, "_strip_for_scan", unmasked):
+            return self.measure(source, lang_path)
+
+    def test_only_the_real_branch_is_counted_in_python(self):
+        probe = self.measure(LITERAL_HEAVY_SOURCE, "m.py")["probe"]
+        self.assertEqual(probe["metrics"]["cyclomatic_complexity"], 2)
+        self.assertEqual(probe["metrics"]["cognitive_complexity"], 2)
+
+    def test_the_span_and_the_shape_metrics_are_untouched(self):
+        probe = self.measure(LITERAL_HEAVY_SOURCE, "m.py")["probe"]
+        self.assertEqual((probe["line_start"], probe["line_end"]), (1, 6))
+        self.assertEqual(probe["metrics"]["method_lines"], 6)
+        self.assertEqual(probe["metrics"]["nesting_depth"], 2)
+        self.assertEqual(probe["metrics"]["parameter_count"], 2)
+
+    def test_a_brace_language_keeps_todays_counts(self):
+        outer = self.measure(CBRACE_SOURCE_WITH_LITERALS, "m.js")["outer"]
+        raw = self.measure_unmasked(CBRACE_SOURCE_WITH_LITERALS, "m.js")
+        self.assertEqual(outer["metrics"], raw["outer"]["metrics"])
+
+    def test_an_untokenizable_python_file_still_yields_raw_counts(self):
+        broken = "def probe(a):\n    return a  # " + BRANCH_WORDS_IN_LITERALS \
+                 + "\n    x = '''open\n"
+        findings, _ = qg.analyze_builtin(
+            "m.py", broken, [(1, len(broken.splitlines()))])
+        probe = next(f for f in findings if f["function"] == "probe")
+        self.assertGreater(probe["metrics"]["cyclomatic_complexity"], 1)
+        raw = self.measure_unmasked(broken, "m.py")["probe"]
+        self.assertEqual(probe["metrics"], raw["metrics"])
 
 
 class TestMatchBraceEnd(unittest.TestCase):
