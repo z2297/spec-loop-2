@@ -839,6 +839,46 @@ class TestAppendEvent(RunStateTestCase):
         self.assertIn("s1:ghost", body)
         self.assertIn("whatever", body)
 
+    def sections(self, body):
+        return [line for line in body.splitlines() if line.startswith("## ")]
+
+    def test_an_identical_re_open_does_not_add_a_second_section(self):
+        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", escalation())
+        body = self.read("escalations.md")
+        self.assertEqual(len(self.sections(body)), 1)
+        self.assertEqual(body.count(rs.ID_ANCHOR % "s1:review-block"), 1)
+
+    def test_both_re_opens_stay_in_the_event_log(self):
+        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", escalation())
+        types = [event["type"] for event in self.events()]
+        self.assertEqual(types.count("escalation-opened"), 2)
+
+    def test_a_new_incident_under_one_id_gets_its_own_section(self):
+        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened",
+                        escalation(context="Genuine agent failure this time."))
+        body = self.read("escalations.md")
+        self.assertEqual(len(self.sections(body)), 2)
+        self.assertIn("Genuine agent failure this time", body)
+
+    def test_a_bare_re_open_never_blanks_a_recorded_answer(self):
+        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered",
+                        {"id": "s1:review-block", "answer": "bound them"})
+        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", escalation())
+        body = self.read("escalations.md")
+        self.assertEqual(len(self.sections(body)), 1)
+        self.assertIn("- Answer: bound them", body)
+        self.assertIn("(status: ANSWERED)", body)
+
+    def test_the_header_is_written_once(self):
+        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, LATER, "s2", "escalation-opened",
+                        escalation(id="s2:ambiguity"))
+        self.assertEqual(self.read("escalations.md").count("# Escalations"), 1)
+
     def test_events_survive_a_prose_render(self):
         rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
         self.assertEqual([e["type"] for e in self.events()], ["escalation-opened"])
@@ -1085,6 +1125,18 @@ class TestOpenEscalations(RunStateTestCase):
     def test_payloads_without_an_id_are_ignored(self):
         rs.append_event(self.run_dir, TS, "s1", "escalation-opened", {"title": "no id"})
         self.assertEqual(rs.open_escalations(self.run_dir), [])
+
+    def test_a_deduplicated_re_open_still_reaches_the_human_gate(self):
+        # The renderer collapses an identical re-emit onto one section; the
+        # gate is a separate, fail-safe reader and must still list the id.
+        record = escalation(id="s1:budget-exhausted", trigger="budget-exhausted")
+        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", record)
+        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", record)
+        ids = [item["id"] for item in rs.open_escalations(self.run_dir)]
+        self.assertEqual(ids, ["s1:budget-exhausted"])
+        sections = [line for line in self.read("escalations.md").splitlines()
+                    if line.startswith("## ")]
+        self.assertEqual(len(sections), 1)
 
 
 # --------------------------------------------------------------------------

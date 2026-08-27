@@ -7,7 +7,8 @@ script (shapes pinned in references/run-state-v2.md):
     slice-<id>-status.json   the tool-validated SliceResult sidecar
     events.jsonl             the append-only machine channel (run_metrics reads it)
     decisions-log.md         human render of decision/deferred/gate events
-    escalations.md           human render of EscalationRecords, answers written back
+    escalations.md           human render of EscalationRecords, one section per
+                             distinct question, answers written back
     slice-<id>-report.md     short human summary of one sidecar
 
 Design decisions:
@@ -25,7 +26,11 @@ Design decisions:
   a side effect of appending the event, so a fact can never reach events.jsonl
   without reaching the human surface (or vice versa). Nothing parses the prose
   back — `escalations.md` carries an HTML-comment id anchor purely so an answer
-  can be written back to the right entry deterministically.
+  can be written back to the right entry deterministically. An
+  `escalation-opened` whose rendered question and context already appear on
+  the page rewrites that section instead of adding a second copy
+  (`place_escalation_section`); the machine channel keeps every event either
+  way, and the human gate reads `open_escalations`, not the page.
 - **The sidecar is the single home of per-slice facts.** `persist-slice` emits
   only events that have their own type in the contract (`council-verdict`,
   `review-summary`, `quality-gate`, `escalation-*`); it never re-emits the
@@ -894,6 +899,19 @@ def read_events(run_dir):
     return events
 
 
+def _place_escalation(run_dir, scope, record):
+    """Render one opened escalation onto escalations.md, once per question.
+
+    The whole page is rewritten atomically because placement may rewrite a
+    section that is already on it (see `place_escalation_section`). A missing
+    page starts from the header, so the first escalation of a run produces the
+    same bytes it always did.
+    """
+    path = os.path.join(run_dir, ESCALATIONS_MD)
+    body = _read_text(path) or ESCALATIONS_HEADER
+    _atomic_write(path, place_escalation_section(body, scope, record))
+
+
 def append_event(run_dir, ts, scope, event_type, payload):
     """Append one event and render it onto the human surface it belongs to."""
     event = {"ts": ts, "scope": scope, "type": event_type,
@@ -902,8 +920,7 @@ def append_event(run_dir, ts, scope, event_type, payload):
                  json.dumps(event, ensure_ascii=False, sort_keys=False) + "\n")
 
     if event_type == "escalation-opened":
-        _append_text(os.path.join(run_dir, ESCALATIONS_MD),
-                     render_escalation(scope, event["payload"]), ESCALATIONS_HEADER)
+        _place_escalation(run_dir, scope, event["payload"])
     elif event_type == "escalation-answered":
         path = os.path.join(run_dir, ESCALATIONS_MD)
         body = _read_text(path)
