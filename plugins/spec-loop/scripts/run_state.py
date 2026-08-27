@@ -172,6 +172,22 @@ def _read_text(path):
         return ""
 
 
+def _read_page(path):
+    """The text of an existing prose page, or None absent a file.
+
+    A page on disk that cannot be read raises RunStateError instead of
+    reporting empty text: a caller treating an unreadable page as an empty
+    one rewrites it from a bare header and drops every section already on it.
+    """
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+    except OSError as exc:
+        raise RunStateError("cannot read %s: %s" % (path, exc))
+
+
 def read_json(path):
     """Read a JSON object from a path, or from stdin when path is '-'."""
     try:
@@ -951,7 +967,10 @@ def _place_escalation(run_dir, scope, record):
     same bytes it always did.
     """
     path = os.path.join(run_dir, ESCALATIONS_MD)
-    body = _read_text(path) or ESCALATIONS_HEADER
+    page = _read_page(path)
+    # A read that failed has already raised. A genuinely 0-byte page has no
+    # section to lose, so it starts from the header, as an absent one does.
+    body = page or ESCALATIONS_HEADER
     _atomic_write(path, place_escalation_section(body, scope, record))
 
 
@@ -975,7 +994,7 @@ def _answer_on_page(run_dir, event):
     path = os.path.join(run_dir, ESCALATIONS_MD)
     payload = event["payload"]
     answered_at = payload.get("answered_at") or event["ts"]
-    body = _read_text(path)
+    body = _read_page(path) or ""
     answer = payload.get("answer")
     updated, matched = answer_escalation(body, payload.get("id"), answer, answered_at)
     if matched:

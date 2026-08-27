@@ -85,6 +85,20 @@ def sidecar(status="DONE", **over):
     return body
 
 
+def refuse_reads(blocked_path):
+    """A builtins.open replacement that raises OSError on a read of one path."""
+    real_open = open
+    blocked = os.path.abspath(str(blocked_path))
+
+    def guard(target, mode="r", *args, **kwargs):
+        hit = os.path.abspath(str(target)) == blocked
+        if hit and "r" in mode:
+            raise OSError(5, "simulated I/O error")
+        return real_open(target, mode, *args, **kwargs)
+
+    return guard
+
+
 # --------------------------------------------------------------------------
 # validate_sidecar — pure, fail-closed
 # --------------------------------------------------------------------------
@@ -1031,6 +1045,57 @@ class TestAppendEvent(RunStateTestCase):
         with mock.patch.object(rs.os, "replace", side_effect=OSError("read-only")):
             with self.assertRaises(rs.RunStateError):
                 rs.persist_slice(self.run_dir, sidecar(), wave=1, ts=TS)
+
+
+class TestEscalationPageReadFailure(RunStateTestCase):
+    """A page on disk that cannot be read must never be rewritten.
+
+    Regression: placement read the page through a reader that reported an
+    OSError as empty text, so a page holding three sections was replaced by
+    a fresh header plus one section and nothing was raised.
+    """
+
+    def sections(self, body):
+        return [line for line in body.splitlines() if line.startswith("## ")]
+
+    def open_three(self):
+        for index in (1, 2, 3):
+            record = escalation(
+                id="s%d:review-block" % index,
+                context="Round %d context." % index)
+            event = rs.build_event(TS, "s%d" % index, "escalation-opened", record)
+            rs.append_event(self.run_dir, event)
+
+    def page_path(self):
+        return os.path.join(self.run_dir, rs.ESCALATIONS_MD)
+
+    def test_a_page_that_cannot_be_read_is_not_replaced(self):
+        self.open_three()
+        before = self.read("escalations.md")
+        self.assertEqual(len(self.sections(before)), 3)
+        record = escalation(id="s4:ambiguity")
+        event = rs.build_event(LATER, "s4", "escalation-opened", record)
+        guard = refuse_reads(self.page_path())
+        with mock.patch("builtins.open", guard), self.assertRaises(rs.RunStateError):
+            rs.append_event(self.run_dir, event)
+        self.assertEqual(self.read("escalations.md"), before)
+
+    def test_an_unreadable_page_does_not_swallow_an_answer_either(self):
+        self.open_three()
+        before = self.read("escalations.md")
+        payload = {"id": "s1:review-block", "answer": "bound them"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", payload)
+        guard = refuse_reads(self.page_path())
+        with mock.patch("builtins.open", guard), self.assertRaises(rs.RunStateError):
+            rs.append_event(self.run_dir, event)
+        self.assertEqual(self.read("escalations.md"), before)
+
+    def test_an_absent_page_is_still_created_from_the_header(self):
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        body = self.read("escalations.md")
+        self.assertTrue(body.startswith(rs.ESCALATIONS_HEADER))
+        self.assertEqual(len(self.sections(body)), 1)
 
 
 class TestPersistSlice(RunStateTestCase):
