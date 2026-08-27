@@ -113,8 +113,7 @@ _EXT_LANG = {
 # `function Row(p) { return (<p>It's {p.a && p.b} - don't worry</p>); }`,
 # cyclomatic_complexity 1 where the raw branch count is 2. `.jsx` and `.tsx`
 # therefore also stay on raw text.
-_JS_MASK_EXTS = frozenset(
-    {".js", ".mjs", ".cjs", ".ts"})
+_JS_MASK_EXTS = frozenset({".js", ".mjs", ".cjs", ".ts"})
 
 # Branch keywords whose occurrence adds one to cyclomatic complexity. Matched as
 # whole words (or operators) so an identifier like `ifield` is not counted.
