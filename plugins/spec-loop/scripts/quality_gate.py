@@ -49,12 +49,14 @@ Usage:
 """
 
 import argparse
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tokenize
 import xml.etree.ElementTree as ET
 
 # The default thresholds mirror the quality-gate skill's table (SKILL.md) and
@@ -413,6 +415,132 @@ def _count_params(sig):
     if names and names[0] in ("self", "cls"):
         names = names[1:]
     return len(names)
+
+
+# --------------------------------------------------------------------------
+# Scan mask -- what the two branch scans are allowed to see
+# --------------------------------------------------------------------------
+# The builtin heuristic used to scan raw source text, so a branch word or a
+# piece of operator punctuation inside a string literal or a comment was
+# measured as real branching. The worst measured example in this repo was a
+# human question ending in a question mark, counted as a ternary and pushing a
+# function to exactly its cognitive threshold. Masking is applied ONLY to the
+# text handed to _branch_count and _cognitive_approx: function extraction,
+# brace depth, method_lines and class_lines all keep reading raw text, because
+# a masked docstring continuation line starts at column 0 and would move the
+# indent-derived end of the enclosing function. Masked spans are filled with a
+# non-whitespace sentinel rather than spaces, because _cognitive_approx derives
+# its nesting level from leading whitespace: space-fill would RAISE the measured
+# cognitive complexity of dozens of functions. Every failure path returns the
+# raw text, so the worst case remains today's over-count.
+
+_SCAN_SENTINEL = "x"
+
+# The corruption trip-wire, expressed as a denominator: a mask that leaves more
+# than one line in _MASK_LOST_DENOM of the non-blank lines with no content at
+# all is discarded in favour of raw text. A correct mask empties nothing (the
+# sentinel is non-blank), so any trip here means the span arithmetic went wrong.
+_MASK_LOST_DENOM = 20
+
+
+def _masked_token_types():
+    """Token types whose text is masked out of a branch scan: string literals,
+    comments, and the literal segments of an f-string. An f-string's embedded
+    expression arrives as ordinary tokens and stays visible, so genuine
+    operators inside one are still measured. (PURE)"""
+    types = {tokenize.STRING, tokenize.COMMENT}
+    types.add(getattr(tokenize, "FSTRING_MIDDLE", None))
+    types.discard(None)
+    return frozenset(types)
+
+
+_MASKED_TOKEN_TYPES = _masked_token_types()
+
+
+def _scan_tokens(text):
+    """Tokenized `text`, or None on any tokenizer failure or a non-default end
+    state. Every None return sends the caller back to the raw text. (PURE)"""
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+        return None
+    if not toks:
+        return None
+    if toks[-1].type != tokenize.ENDMARKER:
+        return None
+    return toks
+
+
+def _masked_tokens(toks):
+    """The subset of `toks` whose text gets masked out of a branch scan.
+    (PURE)"""
+    return [tok for tok in toks if tok.type in _MASKED_TOKEN_TYPES]
+
+
+def _mask_line_range(row, start_col, end_col):
+    """`row` with the half-open column range replaced by sentinel characters, so
+    the line keeps its original length. (PURE)"""
+    stop = min(end_col, len(row))
+    width = max(0, stop - start_col)
+    return row[:start_col] + (_SCAN_SENTINEL * width) + row[stop:]
+
+
+def _token_mask_spans(tok, rows):
+    """The (row_index, start_col, end_col) spans one masked token covers, one per
+    physical line it reaches. Row indexes are 0-based into `rows`. A token
+    continuing past its opening line is masked from column 0 to the end of that
+    physical line. (PURE)"""
+    (first_row, first_col), (last_row, last_col) = tok.start, tok.end
+    spans = []
+    for row in range(first_row, last_row + 1):
+        start = 0
+        if row == first_row:
+            start = first_col
+        end = len(rows[row - 1])
+        if row == last_row:
+            end = last_col
+        spans.append((row - 1, start, end))
+    return spans
+
+
+def _mask_lost_too_much(raw_rows, masked_rows):
+    """True once the mask has emptied more than one line in _MASK_LOST_DENOM of
+    the non-blank lines -- the corruption signal that sends the scan back to raw
+    text. (PURE)"""
+    nonblank = sum(1 for row in raw_rows if row.strip())
+    lost = sum(1 for raw, masked in zip(raw_rows, masked_rows)
+               if raw.strip() and not masked.strip())
+    return bool(nonblank) and (lost * _MASK_LOST_DENOM > nonblank)
+
+
+def _mask_python_literals(text):
+    """`text` with every string-literal, comment and f-string-literal span filled
+    with the non-whitespace sentinel, preserving line count and line lengths, or
+    None to fall back to the raw text. (PURE)"""
+    toks = _scan_tokens(text)
+    if toks is None:
+        return None
+    rows = text.split("\n")
+    masked = list(rows)
+    for tok in _masked_tokens(toks):
+        for row_idx, start, end in _token_mask_spans(tok, rows):
+            masked[row_idx] = _mask_line_range(masked[row_idx], start, end)
+    if _mask_lost_too_much(rows, masked):
+        return None
+    return "\n".join(masked)
+
+
+def _strip_for_scan(text, lang):
+    """`text` with string-literal and comment content masked out, so words and
+    punctuation inside literals stop being measured as real branching. Python is
+    masked via stdlib tokenize; every other language is returned unchanged, so
+    the brace scanner keeps its current behaviour. (PURE)"""
+    if lang != "python":
+        return text
+    masked = _mask_python_literals(text)
+    if masked is None:
+        return text
+    return masked
 
 
 def _branch_count(text):

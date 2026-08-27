@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tokenize
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -31,6 +32,35 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import quality_gate as qg  # noqa: E402
+
+
+# --------------------------------------------------------------------------
+# Fixtures for the scan mask. These deliberately carry branch words and
+# operator punctuation INSIDE literals and comments, so they live at module
+# level: the gate measures function bodies, and a fixture like this one inside
+# a test method would be counted as that method's own branching.
+# --------------------------------------------------------------------------
+
+BRANCH_WORDS_IN_LITERALS = "if for while ? && ||"
+
+LITERAL_HEAVY_SOURCE = (
+    "def probe(a, b):\n"
+    '    """Prose mentioning ' + BRANCH_WORDS_IN_LITERALS + '."""\n'
+    "    label = '" + BRANCH_WORDS_IN_LITERALS + "'  # "
+    + BRANCH_WORDS_IN_LITERALS + "\n"
+    "    " + "if" + " a:\n"
+    "        return label\n"
+    "    return b\n"
+)
+
+UNTERMINATED_SOURCE = "def h():\n    x = '''" + BRANCH_WORDS_IN_LITERALS + "\n"
+
+CBRACE_SOURCE_WITH_LITERALS = (
+    "function outer(a) {\n"
+    "    const q = '" + BRANCH_WORDS_IN_LITERALS + "';\n"
+    "    return a ? q : null;\n"
+    "}\n"
+)
 
 
 # --------------------------------------------------------------------------
@@ -327,6 +357,97 @@ class TestCognitiveApprox(unittest.TestCase):
     def test_brace_language_weights_by_depth(self):
         lines = ["if (a) {", "    if (b) {", "    }", "}"]
         self.assertGreater(qg._cognitive_approx(lines, "cbrace", 0), 0)
+
+
+# --------------------------------------------------------------------------
+# _strip_for_scan — the mask handed to the two branch scans
+# --------------------------------------------------------------------------
+
+class TestStripForScan(unittest.TestCase):
+    def test_a_non_python_language_is_returned_byte_for_byte(self):
+        # This slice masks python only; the brace scanner keeps today's
+        # behaviour until the follow-up slice.
+        self.assertEqual(
+            qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "cbrace"),
+            CBRACE_SOURCE_WITH_LITERALS)
+
+    def test_line_count_and_line_lengths_survive_the_mask(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        raw_rows = LITERAL_HEAVY_SOURCE.split("\n")
+        masked_rows = masked.split("\n")
+        self.assertEqual(len(masked_rows), len(raw_rows))
+        # Hanging rather than paren-aligned continuations in the methods this
+        # slice adds: the gate derives nesting_depth from leading whitespace on
+        # RAW text, which the scan mask deliberately does not touch, so a
+        # paren-aligned argument reads to it as a deeply nested block.
+        self.assertEqual(
+            [len(row) for row in masked_rows],
+            [len(row) for row in raw_rows])
+
+    def test_code_outside_literals_is_left_alone(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        rows = masked.split("\n")
+        self.assertEqual(rows[0], "def probe(a, b):")
+        self.assertEqual(rows[3].strip(), "if a:")
+        self.assertEqual(rows[5].strip(), "return b")
+
+    def test_masked_spans_are_filled_with_a_non_whitespace_sentinel(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        docstring_row = masked.split("\n")[1]
+        self.assertTrue(docstring_row.strip())
+        self.assertEqual(set(docstring_row.strip()), {qg._SCAN_SENTINEL})
+
+    def test_a_comment_is_masked_in_the_same_pass(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        assignment_row = masked.split("\n")[2]
+        self.assertNotIn("#", assignment_row)
+        self.assertIn("label = ", assignment_row)
+
+    def test_the_masked_body_scans_as_one_real_branch(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        # base path 1 plus the one real branching statement
+        self.assertEqual(qg._branch_count(masked), 2)
+
+    def test_leading_indentation_of_a_code_line_is_preserved(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        raw_rows = LITERAL_HEAVY_SOURCE.split("\n")
+        masked_rows = masked.split("\n")
+        for raw, got in zip(raw_rows, masked_rows):
+            self.assertEqual(
+                len(raw) - len(raw.lstrip(" ")),
+                len(got) - len(got.lstrip(" ")),
+                msg=raw)
+
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_MIDDLE"),
+                         "f-string literal segments are separate tokens only "
+                         "on newer pythons")
+    def test_an_embedded_f_string_expression_still_counts(self):
+        # The literal segments of an f-string are masked; the tokens of its
+        # embedded expression are not, so a real conditional inside one is
+        # still measured. Mirrors the JS rule that ${...} content survives.
+        source = "def g(a, b, c):\n    return f'{a " + "if" + " b else c}'\n"
+        masked = qg._strip_for_scan(source, "python")
+        self.assertEqual(qg._branch_count(masked), 2)
+
+
+class TestMaskFailsTowardRaw(unittest.TestCase):
+    def test_a_tokenizer_failure_yields_the_raw_text(self):
+        self.assertIsNone(qg._mask_python_literals(UNTERMINATED_SOURCE))
+        self.assertEqual(
+            qg._strip_for_scan(UNTERMINATED_SOURCE, "python"),
+            UNTERMINATED_SOURCE)
+
+    def test_emptying_too_many_lines_trips_the_corruption_guard(self):
+        raw_rows = ["a = 1", "b = 2", "c = 3"]
+        self.assertTrue(qg._mask_lost_too_much(raw_rows, ["a = 1", "b = 2", "  "]))
+
+    def test_a_small_share_of_emptied_lines_is_tolerated(self):
+        raw_rows = ["a = 1"] * 40
+        masked_rows = ["a = 1"] * 39 + ["  "]
+        self.assertFalse(qg._mask_lost_too_much(raw_rows, masked_rows))
+
+    def test_an_all_blank_file_is_not_treated_as_corruption(self):
+        self.assertFalse(qg._mask_lost_too_much(["", "  "], ["", "  "]))
 
 
 # --------------------------------------------------------------------------
