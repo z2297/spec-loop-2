@@ -573,8 +573,10 @@ def _answer_target(lines, anchor):
     returned, unchanged from before. An id owning several sections asked
     several distinct questions (see `place_escalation_section`), and the answer
     belongs to the last section still marked open, which is the round that is
-    waiting for one. An answer arriving once every section is answered
-    rewrites the first, as it always did.
+    waiting for one: `open_escalations` carries a single record per id,
+    replaced by each escalation-opened it reads, so the newest round is the
+    question the human was actually shown. An answer arriving once every
+    section is answered rewrites the first, as it always did.
     """
     hits = [index for index, line in enumerate(lines) if line.strip() == anchor]
     still_open = [index for index in hits if _anchor_section_is_open(lines, index)]
