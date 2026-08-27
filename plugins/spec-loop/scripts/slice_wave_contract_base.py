@@ -108,9 +108,17 @@ SPLIT_SUPPRESSION = "return (rec && depth < 2 && verdict !== 'OBJECT') ? rec : n
 OBJECTION_SELECTION = "ob: (safety || objections[0])"
 REPLAN_VETO = "if (safety || !ob.fixable_by_replan || state.replanned)"
 FINDING_CATEGORIES = "category: { enum: ["
-# The trigger enum has five homes: this line, and the ESCALATION_TRIGGERS
-# tuple in run_state.py, run_metrics.py and dashboard_server.py.
+# The trigger enum has six homes: this line, the ESCALATION_TRIGGERS tuple in
+# run_state.py, run_metrics.py and dashboard_server.py, and two PROSE
+# enumerations - the fallback agent's escalation section and the run-state
+# contract reference - located by the two locator constants below. Earlier
+# this comment said five and then listed four; the guard that names it now
+# asserts over all six.
 TRIGGER_ENUM_LINE = "trigger: { enum: ["
+TRIGGER_PROSE_LEAD = "one of the seven triggers ("
+TRIGGER_UNION_PREFIX = '"trigger": "'
+FALLBACK_MD = Path(__file__).resolve().parents[1] / "agents" / "slice-worker-fallback.md"
+RUN_STATE_MD = Path(__file__).resolve().parents[1] / "references" / "run-state-v2.md"
 COUNCIL_VERDICT_EVENT = "type: 'council-verdict'"
 SCOPE_HELPER = "function scopeRecord("
 DERIVE_INPUTS_FN = "function deriveCouncilInputs(verdicts) {"

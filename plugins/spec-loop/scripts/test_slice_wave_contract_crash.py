@@ -30,11 +30,12 @@ from slice_wave_contract_base import (
     CRASH_STAGE_CAVEAT, CRASH_STAGE_CONTEXT, CRASH_STAGE_FALLBACK,
     CRASH_STAGE_OVERCLAIM,
     CRASH_STAGE_PRECISION, CRASH_TITLE_BRANCH, CRASH_TITLE_UNGRAMMATICAL,
-    CRASH_TRIGGER, DISPATCH_GUARD_CALL, GUARD_BUDGET_TRIGGER,
-    GUARD_FIRED_OVERCLAIM, SLICE_LOST_CAUSE_DENIAL,
+    CRASH_TRIGGER, DISPATCH_GUARD_CALL, FALLBACK_MD, GUARD_BUDGET_TRIGGER,
+    GUARD_FIRED_OVERCLAIM, RUN_STATE_MD, SLICE_LOST_CAUSE_DENIAL,
     SLICE_LOST_CAUSE_UNKNOWN, SLICE_LOST_GUARD_PROVABLE,
     SLICE_LOST_RECORD, STAGE_ASSIGNMENT,
-    STATE_STAGE_INIT, TRIGGER_ENUM_LINE,
+    STATE_STAGE_INIT, TRIGGER_ENUM_LINE, TRIGGER_PROSE_LEAD,
+    TRIGGER_UNION_PREFIX,
     WorkflowSourceTestCase,
 )
 
@@ -249,12 +250,15 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         self.assertNotIn(GUARD_FIRED_OVERCLAIM, self.src)
 
 
-class TestTheTriggerEnumAgreesAcrossAllFiveHomes(WorkflowSourceTestCase):
-    """The enum has five homes and no test held them against each other.
+class TestTheTriggerEnumAgreesAcrossAllSixHomes(WorkflowSourceTestCase):
+    """The enum has six homes and no test held them against each other.
     `run_state.persist_slice` validates the whole SliceResult BEFORE it writes
     anything and raises on an unrecognised trigger, so a value missing from one
     tuple costs an affected slice its sidecar, its events and its report - not
-    a mislabelled field. A one-home edit would otherwise stay fully green."""
+    a mislabelled field. A one-home edit would otherwise stay fully green. The
+    two prose homes are pinned here too: a doc that lists a stale set of
+    triggers is what a worker agent reads before it builds a record, so a
+    drifted enumeration produces exactly that rejected write."""
 
     def triggers(self):
         return run_state.ESCALATION_TRIGGERS
@@ -266,6 +270,24 @@ class TestTheTriggerEnumAgreesAcrossAllFiveHomes(WorkflowSourceTestCase):
     def test_the_workflow_enum_carries_exactly_those_values_in_order(self):
         enum_line = self.line_containing(TRIGGER_ENUM_LINE)
         self.assertEqual(tuple(re.findall(r"'([^']+)'", enum_line)),
+            self.triggers())
+
+    def test_the_fallback_agent_prose_lists_exactly_those_triggers(self):
+        # The escalation section of the slice-worker fallback agent is the
+        # enumeration a worker reads before it names a trigger. Located by
+        # TRIGGER_PROSE_LEAD, whose own count word is pinned by the literal.
+        text = FALLBACK_MD.read_text(encoding="utf-8")
+        self.assertEqual(text.count(TRIGGER_PROSE_LEAD), 1)
+        listed = text.split(TRIGGER_PROSE_LEAD, 1)[1].split(")", 1)[0]
+        self.assertEqual(tuple(re.findall(r"`([^`]+)`", listed)), self.triggers())
+
+    def test_the_contract_reference_union_lists_exactly_those_triggers(self):
+        # references/run-state-v2.md is the authoritative shape doc for the
+        # EscalationRecord; its trigger field is a pipe-separated union.
+        text = RUN_STATE_MD.read_text(encoding="utf-8")
+        self.assertEqual(text.count(TRIGGER_UNION_PREFIX), 1)
+        union = text.split(TRIGGER_UNION_PREFIX, 1)[1].split('"', 1)[0]
+        self.assertEqual(tuple(part.strip() for part in union.split("|")),
             self.triggers())
 
 
