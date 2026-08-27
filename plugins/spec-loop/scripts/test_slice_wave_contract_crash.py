@@ -178,10 +178,13 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         self.assertLess(stage_at, prose_at)
 
     def crash_context(self):
-        """The shipped context template literal, backticks stripped."""
+        r"""The shipped context template literal, backticks stripped. The
+        literal is its own statement (`const context = \`...\``), so its
+        closing backtick is followed by a newline, not the trailing comma an
+        inline call argument would carry."""
         fallback = self.crash_fallback()
         start = fallback.index(CRASH_ERROR_FIRST)
-        return fallback[start + 1:fallback.index("`,", start)]
+        return fallback[start + 1:fallback.index("`\n", start)]
 
     def rendered_crash_context(self, message, stage_text):
         """The `- Context:` line escalations.md actually receives, produced by
