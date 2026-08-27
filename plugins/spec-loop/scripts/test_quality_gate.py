@@ -3,8 +3,12 @@
 
 Covers the PURE diff parser on embedded fixture text, config loading (defaults /
 loaded / disabled / malformed), the pure metric primitives (parameter counting,
-branch counting, nesting depth, CRAP, cognitive approximation), the builtin
-heuristic function extraction for python and brace languages, backend CSV/JSON
+branch counting, nesting depth, CRAP, cognitive approximation), the scan mask
+that hides python string-literal and comment content from the two branch
+scans (including its fall-back-to-raw paths), a differential harness
+comparing masked against raw measurement over every heuristic-readable file
+in the plugin tree, the builtin heuristic function extraction for python and
+brace languages, backend CSV/JSON
 parsing and backend+heuristic merging with per-metric sourcing (cognitive is
 NEVER attributed to a tool), coverage parsing (cobertura + lcov) and CRAP
 assembly, custom-gate evaluation (metric-form evaluated here, command-form
@@ -24,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tokenize
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -31,6 +36,80 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import quality_gate as qg  # noqa: E402
+
+
+# --------------------------------------------------------------------------
+# Fixtures for the scan mask. These deliberately carry branch words and
+# operator punctuation INSIDE literals and comments, so they live at module
+# level: the gate measures function bodies, and a fixture like this one inside
+# a test method would be counted as that method's own branching.
+# --------------------------------------------------------------------------
+
+BRANCH_WORDS_IN_LITERALS = "if for while ? && ||"
+
+LITERAL_HEAVY_SOURCE = (
+    "def probe(a, b):\n"
+    '    """Prose mentioning ' + BRANCH_WORDS_IN_LITERALS + '."""\n'
+    "    label = '" + BRANCH_WORDS_IN_LITERALS + "'  # "
+    + BRANCH_WORDS_IN_LITERALS + "\n"
+    "    " + "if" + " a:\n"
+    "        return label\n"
+    "    return b\n"
+)
+
+UNTERMINATED_SOURCE = "def h():\n    x = '''" + BRANCH_WORDS_IN_LITERALS + "\n"
+
+CBRACE_SOURCE_WITH_LITERALS = (
+    "function outer(a) {\n"
+    "    const q = '" + BRANCH_WORDS_IN_LITERALS + "';\n"
+    "    return a ? q : null;\n"
+    "}\n"
+)
+
+# A multi-line string literal whose closing row also carries a real ternary
+# after the literal ends. The literal's interior rows are indented to keep
+# them inside the enclosing `if` block for extraction purposes.
+MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE = (
+    "def f(a, b):\n"
+    "    " + "if" + " a:\n"
+    "        s = '''\n"
+    "        text\n"
+    "        ''' " + "if" + " b " + "else" + " 'z'\n"
+    "        return s\n"
+    "    return b\n"
+)
+
+
+def unmasked(text, lang):
+    """Identity stand-in for qg._strip_for_scan, so a test can measure the same
+    source the way the gate measured it before the mask existed. Named at module
+    level because a paren-aligned mock.patch.object continuation inside a test
+    body is itself read as nesting by the metric under test."""
+    return text
+
+
+NON_ENDMARKER_TAIL_TOKEN = tokenize.TokenInfo(
+    tokenize.NEWLINE, "\n", (1, 0), (1, 1), "\n")
+
+
+def empty_token_stream(readline):
+    """Stand-in for tokenize.generate_tokens yielding no tokens at all. Named
+    at module level for the same paren-alignment reason as `unmasked`."""
+    return iter([])
+
+
+def non_endmarker_token_stream(readline):
+    """Stand-in for tokenize.generate_tokens whose last token is not
+    ENDMARKER. Named at module level for the same paren-alignment reason as
+    `unmasked`."""
+    return iter([NON_ENDMARKER_TAIL_TOKEN])
+
+
+def longer_scan(text, lang):
+    """Stand-in for qg._strip_for_scan that returns one extra physical line,
+    so the caller's line count no longer matches its input. Named at module
+    level for the same paren-alignment reason as `unmasked`."""
+    return text + "\nextra"
 
 
 # --------------------------------------------------------------------------
@@ -330,6 +409,143 @@ class TestCognitiveApprox(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# _strip_for_scan — the mask handed to the two branch scans
+# --------------------------------------------------------------------------
+
+class TestStripForScan(unittest.TestCase):
+    def test_a_non_python_language_is_returned_byte_for_byte(self):
+        # This slice masks python only; the brace scanner keeps today's
+        # behaviour until the follow-up slice.
+        self.assertEqual(
+            qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "cbrace"),
+            CBRACE_SOURCE_WITH_LITERALS)
+
+    def test_line_count_and_line_lengths_survive_the_mask(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        raw_rows = LITERAL_HEAVY_SOURCE.split("\n")
+        masked_rows = masked.split("\n")
+        self.assertEqual(len(masked_rows), len(raw_rows))
+        # Hanging rather than paren-aligned continuations in the methods this
+        # slice adds: the gate derives nesting_depth from leading whitespace on
+        # RAW text, which the scan mask deliberately does not touch, so a
+        # paren-aligned argument reads to it as a deeply nested block.
+        self.assertEqual(
+            [len(row) for row in masked_rows],
+            [len(row) for row in raw_rows])
+
+    def test_code_outside_literals_is_left_alone(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        rows = masked.split("\n")
+        self.assertEqual(rows[0], "def probe(a, b):")
+        self.assertEqual(rows[3].strip(), "if a:")
+        self.assertEqual(rows[5].strip(), "return b")
+
+    def test_masked_spans_are_filled_with_a_non_whitespace_sentinel(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        docstring_row = masked.split("\n")[1]
+        self.assertTrue(docstring_row.strip())
+        self.assertEqual(set(docstring_row.strip()), {qg._SCAN_SENTINEL})
+
+    def test_a_comment_is_masked_in_the_same_pass(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        assignment_row = masked.split("\n")[2]
+        self.assertNotIn("#", assignment_row)
+        self.assertIn("label = ", assignment_row)
+
+    def test_the_masked_body_scans_as_one_real_branch(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        # base path 1 plus the one real branching statement
+        self.assertEqual(qg._branch_count(masked), 2)
+
+    def test_leading_indentation_of_a_code_line_is_preserved(self):
+        masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
+        raw_rows = LITERAL_HEAVY_SOURCE.split("\n")
+        masked_rows = masked.split("\n")
+        for raw, got in zip(raw_rows, masked_rows):
+            self.assertEqual(
+                len(raw) - len(raw.lstrip(" ")),
+                len(got) - len(got.lstrip(" ")),
+                msg=raw)
+
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_MIDDLE"),
+                         "f-string literal segments are separate tokens only "
+                         "on newer pythons")
+    def test_an_embedded_f_string_expression_still_counts(self):
+        # The literal segments of an f-string are masked; the tokens of its
+        # embedded expression are not, so a real conditional inside one is
+        # still measured. Mirrors the JS rule that ${...} content survives.
+        source = "def g(a, b, c):\n    return f'{a " + "if" + " b else c}'\n"
+        masked = qg._strip_for_scan(source, "python")
+        self.assertEqual(qg._branch_count(masked), 2)
+
+    def test_a_real_branch_on_a_literals_closing_row_keeps_its_nesting_level(self):
+        # A multi-line string literal's closing row can carry real code after
+        # the literal ends. The masked line's leading whitespace must match
+        # the raw line's leading whitespace exactly, or the nesting level
+        # _cognitive_approx derives from that row silently drops.
+        masked = qg._strip_for_scan(
+            MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE, "python")
+        raw_rows = MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE.split("\n")
+        masked_rows = masked.split("\n")
+        for raw, got in zip(raw_rows, masked_rows):
+            self.assertEqual(
+                len(raw) - len(raw.lstrip(" ")),
+                len(got) - len(got.lstrip(" ")),
+                msg=raw)
+
+
+class TestMaskFailsTowardRaw(unittest.TestCase):
+    def test_a_tokenizer_failure_yields_the_raw_text(self):
+        self.assertIsNone(qg._mask_python_literals(UNTERMINATED_SOURCE))
+        self.assertEqual(
+            qg._strip_for_scan(UNTERMINATED_SOURCE, "python"),
+            UNTERMINATED_SOURCE)
+
+    def test_emptying_too_many_lines_trips_the_corruption_guard(self):
+        raw_rows = ["a = 1", "b = 2", "c = 3"]
+        self.assertTrue(qg._mask_lost_too_much(raw_rows, ["a = 1", "b = 2", "  "]))
+
+    def test_a_small_share_of_emptied_lines_is_tolerated(self):
+        raw_rows = ["a = 1"] * 40
+        masked_rows = ["a = 1"] * 39 + ["  "]
+        self.assertFalse(qg._mask_lost_too_much(raw_rows, masked_rows))
+
+    def test_an_all_blank_file_is_not_treated_as_corruption(self):
+        self.assertFalse(qg._mask_lost_too_much(["", "  "], ["", "  "]))
+
+
+class TestScanTokensFallbackPaths(unittest.TestCase):
+    """_scan_tokens's two guards send the whole mask back to raw text, but
+    stdlib tokenize never produces either shape for real source, so each is
+    driven directly through the real callable with a patched tokenizer."""
+
+    def test_an_empty_token_stream_yields_none(self):
+        with mock.patch.object(qg.tokenize, "generate_tokens", empty_token_stream):
+            self.assertIsNone(qg._scan_tokens("x = 1\n"))
+
+    def test_a_non_endmarker_end_state_yields_none(self):
+        with mock.patch.object(qg.tokenize, "generate_tokens", non_endmarker_token_stream):
+            self.assertIsNone(qg._scan_tokens("x = 1\n"))
+
+    def test_the_corruption_guard_inside_mask_python_literals_falls_back(self):
+        # _mask_lost_too_much itself is exercised directly above; this drives
+        # the guard AS WRITTEN inside _mask_python_literals, forcing the
+        # signal it reacts to rather than trying to construct real source
+        # that trips it (masking never empties a line: the sentinel is
+        # always non-whitespace).
+        with mock.patch.object(qg, "_mask_lost_too_much", return_value=True):
+            self.assertIsNone(qg._mask_python_literals("x = 1\n"))
+
+
+class TestScanLinesForFallback(unittest.TestCase):
+    def test_a_line_count_mismatch_falls_back_to_the_raw_lines(self):
+        source = "x = 1\ny = 2\n"
+        lines = source.splitlines()
+        with mock.patch.object(qg, "_strip_for_scan", longer_scan):
+            self.assertEqual(qg._scan_lines_for(source, "python", lines), lines)
+
+
+# --------------------------------------------------------------------------
 # Builtin heuristic extraction
 # --------------------------------------------------------------------------
 
@@ -407,6 +623,61 @@ class TestAnalyzeBuiltinCbrace(unittest.TestCase):
         src = "const handler = (x, y) => {\n    return x + y;\n}\n"
         findings, _ = qg.analyze_builtin("m.ts", src, [(1, 3)])
         self.assertIn("handler", {f["function"] for f in findings})
+
+
+class TestAnalyzeBuiltinMasksLiterals(unittest.TestCase):
+    """Branch words and operator punctuation inside a literal or a comment are
+    not branching, and masking them must not disturb any other metric."""
+
+    def measure(self, source, lang_path):
+        findings, _ = qg.analyze_builtin(
+            lang_path, source, [(1, len(source.splitlines()))])
+        return {f["function"]: f for f in findings}
+
+    def measure_unmasked(self, source, lang_path):
+        with mock.patch.object(qg, "_strip_for_scan", unmasked):
+            return self.measure(source, lang_path)
+
+    def test_only_the_real_branch_is_counted_in_python(self):
+        probe = self.measure(LITERAL_HEAVY_SOURCE, "m.py")["probe"]
+        self.assertEqual(probe["metrics"]["cyclomatic_complexity"], 2)
+        self.assertEqual(probe["metrics"]["cognitive_complexity"], 2)
+
+    def test_the_span_and_the_shape_metrics_are_untouched(self):
+        probe = self.measure(LITERAL_HEAVY_SOURCE, "m.py")["probe"]
+        self.assertEqual((probe["line_start"], probe["line_end"]), (1, 6))
+        self.assertEqual(probe["metrics"]["method_lines"], 6)
+        self.assertEqual(probe["metrics"]["nesting_depth"], 2)
+        self.assertEqual(probe["metrics"]["parameter_count"], 2)
+
+    def test_a_brace_language_keeps_todays_counts(self):
+        outer = self.measure(CBRACE_SOURCE_WITH_LITERALS, "m.js")["outer"]
+        raw = self.measure_unmasked(CBRACE_SOURCE_WITH_LITERALS, "m.js")
+        self.assertEqual(outer["metrics"], raw["outer"]["metrics"])
+
+    def test_an_untokenizable_python_file_still_yields_raw_counts(self):
+        broken = "def probe(a):\n    return a  # " + BRANCH_WORDS_IN_LITERALS \
+                 + "\n    x = '''open\n"
+        findings, _ = qg.analyze_builtin(
+            "m.py", broken, [(1, len(broken.splitlines()))])
+        probe = next(f for f in findings if f["function"] == "probe")
+        self.assertGreater(probe["metrics"]["cyclomatic_complexity"], 1)
+        raw = self.measure_unmasked(broken, "m.py")["probe"]
+        self.assertEqual(probe["metrics"], raw["metrics"])
+
+    def test_a_real_branch_after_a_multiline_literal_closes_is_not_undercounted(self):
+        # The masked and unmasked cognitive_complexity must agree exactly:
+        # the real `if`/`else` on the literal's closing row must keep the
+        # nesting weight its own row's indentation implies, never dropping to
+        # a shallower level because the mask overwrote that row's leading
+        # whitespace with the sentinel.
+        masked = self.measure(
+            MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE, "m.py")["f"]
+        raw = self.measure_unmasked(
+            MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE, "m.py")["f"]
+        self.assertEqual(
+            masked["metrics"]["cognitive_complexity"],
+            raw["metrics"]["cognitive_complexity"])
 
 
 class TestMatchBraceEnd(unittest.TestCase):
@@ -857,6 +1128,99 @@ class TestEndToEndRealGit(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertFalse(report["summary"]["pass"])
         self.assertTrue(report["summary"]["failures"])
+
+
+# --------------------------------------------------------------------------
+# Differential harness — masked versus raw over the whole plugin tree
+# --------------------------------------------------------------------------
+# The mask is a measurement change to a blocking control, so it is pinned
+# against the measurement it replaces over real source rather than fixtures
+# alone: every .py, .js and .mjs file under the plugin root is measured twice,
+# once through the mask and once through the identity stand-in that reproduces
+# the pre-mask behaviour. Those three suffixes were the only heuristic-readable
+# ones present in the tree at the time of writing; a source file in one of the
+# other extensions _EXT_LANG covers would not be walked by this harness.
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+SCANNED_SUFFIXES = (".py", ".js", ".mjs")
+
+# The mask is allowed to lower these two. The other three are measured on raw
+# text, so they must come back identical, as must the function's span.
+LOWERABLE_METRICS = ("cyclomatic_complexity", "cognitive_complexity")
+UNCHANGED_METRICS = ("nesting_depth", "method_lines", "parameter_count")
+
+
+def scanned_sources():
+    """Every .py, .js and .mjs file under the plugin root, sorted. Walks the
+    real tree, so it is not PURE."""
+    found = []
+    for path in sorted(PLUGIN_ROOT.rglob("*")):
+        if path.suffix in SCANNED_SUFFIXES and path.is_file():
+            found.append(path)
+    return found
+
+
+class TestDifferentialAgainstRawScan(unittest.TestCase):
+    """The mask may only ever LOWER a complexity count, and it may never move a
+    function's span, its nesting depth, its length or its parameter count.
+    Measured over the plugin tree's own source, masked against raw."""
+
+    def analyze(self, path, source):
+        findings, _ = qg.analyze_builtin(
+            str(path), source, [(1, len(source.splitlines()))])
+        return {(f["function"], f["line_start"]): f for f in findings}
+
+    def analyze_unmasked(self, path, source):
+        with mock.patch.object(qg, "_strip_for_scan", unmasked):
+            return self.analyze(path, source)
+
+    def assertNoRegression(self, got, was, where):
+        for name in LOWERABLE_METRICS:
+            self.assertLessEqual(
+                got["metrics"][name], was["metrics"][name], msg=where)
+        for name in UNCHANGED_METRICS:
+            self.assertEqual(
+                got["metrics"][name], was["metrics"][name], msg=where)
+        self.assertEqual(
+            (got["line_start"], got["line_end"]),
+            (was["line_start"], was["line_end"]), msg=where)
+
+    def measure_tree(self):
+        """Every scanned file measured twice, as (where, masked, unmasked)
+        triples of one function's findings. The two measurements must cover the
+        same set of functions, so that is asserted here."""
+        pairs = []
+        for path in scanned_sources():
+            source = path.read_text(encoding="utf-8")
+            new = self.analyze(path, source)
+            old = self.analyze_unmasked(path, source)
+            self.assertEqual(sorted(new), sorted(old), msg=str(path))
+            for key, got in new.items():
+                pairs.append(("%s %s" % (path, key), got, old[key]))
+        return pairs
+
+    def test_the_plugin_tree_is_actually_being_scanned(self):
+        paths = scanned_sources()
+        self.assertGreaterEqual(len(paths), 26)
+        suffixes = {path.suffix for path in paths}
+        self.assertIn(".py", suffixes)
+        self.assertTrue(".js" in suffixes or ".mjs" in suffixes)
+
+    def test_no_function_gets_more_complex_and_no_span_moves(self):
+        pairs = self.measure_tree()
+        for where, got, was in pairs:
+            self.assertNoRegression(got, was, where)
+        # The tree measured well over a thousand functions at the time this
+        # harness was written; a collapse to a handful would mean the walk
+        # stopped finding files rather than that the mask is safe.
+        self.assertGreater(len(pairs), 1000)
+
+    def test_the_mask_measurably_lowers_something(self):
+        # A harness that would pass on a no-op mask proves nothing, so pin that
+        # the mask actually moves numbers somewhere in the tree.
+        moved = [where for where, got, was in self.measure_tree()
+                 if got["metrics"] != was["metrics"]]
+        self.assertGreater(len(moved), 100)
 
 
 if __name__ == "__main__":

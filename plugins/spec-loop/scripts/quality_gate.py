@@ -27,7 +27,11 @@ Pipeline:
      analyzer splits the source into functions by signature regex (python / js /
      ts / java / c# / go styles, language by extension) and estimates each
      metric by branch-keyword counting, signature parsing, and indent/brace
-     nesting. Every such finding is marked "source": "builtin-heuristic".
+     nesting. Branch counting reads a masked copy of the source in which the
+     content of python string literals and comments has been replaced by a
+     sentinel, so words and punctuation inside them are not measured as
+     branching; a tokenizer failure falls back to the raw text. Every such
+     finding is marked "source": "builtin-heuristic".
      cognitive_complexity is ONLY ever produced by this heuristic (a
      nesting-weighted approximation) or skipped -- it is never attributed to a
      real tool.
@@ -49,12 +53,14 @@ Usage:
 """
 
 import argparse
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tokenize
 import xml.etree.ElementTree as ET
 
 # The default thresholds mirror the quality-gate skill's table (SKILL.md) and
@@ -415,6 +421,136 @@ def _count_params(sig):
     return len(names)
 
 
+# --------------------------------------------------------------------------
+# Scan mask -- what the two branch scans are allowed to see
+# --------------------------------------------------------------------------
+# The builtin heuristic used to scan raw source text, so a branch word or a
+# piece of operator punctuation inside a string literal or a comment was
+# measured as real branching. The worst measured example in this repo was a
+# human question ending in a question mark, counted as a ternary and pushing a
+# function to exactly its cognitive threshold. Masking is applied ONLY to the
+# text handed to _branch_count and _cognitive_approx: function extraction,
+# brace depth, method_lines and class_lines all keep reading raw text, because
+# a masked docstring continuation line starts at column 0 and would move the
+# indent-derived end of the enclosing function. Masked spans are filled with a
+# non-whitespace sentinel rather than spaces, because _cognitive_approx derives
+# its nesting level from leading whitespace: space-fill would RAISE the measured
+# cognitive complexity of dozens of functions. Every failure path returns the
+# raw text, so the worst case remains today's over-count.
+
+_SCAN_SENTINEL = "x"
+
+# The corruption trip-wire, expressed as a denominator: a mask that leaves more
+# than one line in _MASK_LOST_DENOM of the non-blank lines with no content at
+# all is discarded in favour of raw text. A correct mask empties nothing (the
+# sentinel is non-blank), so any trip here means the span arithmetic went wrong.
+_MASK_LOST_DENOM = 20
+
+
+def _masked_token_types():
+    """Token types whose text is masked out of a branch scan: string literals,
+    comments, and the literal segments of an f-string. An f-string's embedded
+    expression arrives as ordinary tokens and stays visible, so genuine
+    operators inside one are still measured. (PURE)"""
+    types = {tokenize.STRING, tokenize.COMMENT}
+    types.add(getattr(tokenize, "FSTRING_MIDDLE", None))
+    types.discard(None)
+    return frozenset(types)
+
+
+_MASKED_TOKEN_TYPES = _masked_token_types()
+
+
+def _scan_tokens(text):
+    """Tokenized `text`, or None on any tokenizer failure or a non-default end
+    state. Every None return sends the caller back to the raw text. (PURE)"""
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+        return None
+    if not toks:
+        return None
+    if toks[-1].type != tokenize.ENDMARKER:
+        return None
+    return toks
+
+
+def _masked_tokens(toks):
+    """The subset of `toks` whose text gets masked out of a branch scan.
+    (PURE)"""
+    return [tok for tok in toks if tok.type in _MASKED_TOKEN_TYPES]
+
+
+def _mask_line_range(row, start_col, end_col):
+    """`row` with the half-open column range replaced by sentinel characters, so
+    the line keeps its original length. (PURE)"""
+    stop = min(end_col, len(row))
+    width = max(0, stop - start_col)
+    return row[:start_col] + (_SCAN_SENTINEL * width) + row[stop:]
+
+
+def _token_mask_spans(tok, rows):
+    """The (row_index, start_col, end_col) spans one masked token covers, one per
+    physical line it reaches. Row indexes are 0-based into `rows`. On the
+    opening physical line, masking starts at the token's own start column. On
+    every later physical line, masking starts after that row's own leading
+    spaces rather than at column 0, so the sentinel fill never erases the
+    leading whitespace a downstream nesting-level reader derives from that
+    row: leading whitespace carries no branch words or operator punctuation,
+    so leaving it unmasked is measurement-neutral. (PURE)"""
+    (first_row, first_col), (last_row, last_col) = tok.start, tok.end
+    spans = []
+    for row in range(first_row, last_row + 1):
+        line = rows[row - 1]
+        start = first_col if row == first_row else (
+            len(line) - len(line.lstrip(" ")))
+        end = len(line)
+        if row == last_row:
+            end = last_col
+        spans.append((row - 1, start, end))
+    return spans
+
+
+def _mask_lost_too_much(raw_rows, masked_rows):
+    """True once the mask has emptied more than one line in _MASK_LOST_DENOM of
+    the non-blank lines -- the corruption signal that sends the scan back to raw
+    text. (PURE)"""
+    nonblank = sum(1 for row in raw_rows if row.strip())
+    lost = sum(1 for raw, masked in zip(raw_rows, masked_rows)
+               if raw.strip() and not masked.strip())
+    return bool(nonblank) and (lost * _MASK_LOST_DENOM > nonblank)
+
+
+def _mask_python_literals(text):
+    """`text` with every string-literal, comment and f-string-literal span filled
+    with the non-whitespace sentinel, preserving line count and line lengths, or
+    None to fall back to the raw text. (PURE)"""
+    toks = _scan_tokens(text)
+    if toks is None:
+        return None
+    rows = text.split("\n")
+    masked = list(rows)
+    for tok in _masked_tokens(toks):
+        for row_idx, start, end in _token_mask_spans(tok, rows):
+            masked[row_idx] = _mask_line_range(masked[row_idx], start, end)
+    if _mask_lost_too_much(rows, masked):
+        return None
+    return "\n".join(masked)
+
+
+def _strip_for_scan(text, lang):
+    """`text` with string-literal and comment content masked out, so words and
+    punctuation inside literals stop being measured as real branching. Python is
+    masked via stdlib tokenize; every other language is returned unchanged, so
+    the brace scanner keeps its current behaviour. (PURE)"""
+    if lang != "python":
+        return text
+    masked = _mask_python_literals(text)
+    if masked is None:
+        return text
+    return masked
+
+
 def _branch_count(text):
     """Cyclomatic branch count for a block of code (PURE): 1 base path plus one
     per branch keyword / boolean operator / ternary occurrence."""
@@ -562,12 +698,57 @@ def _nonblank(lines):
     return sum(1 for line in lines if line.strip())
 
 
+def _extract_functions_for(lines, lang):
+    """The extracted callables of one file, by language family. (PURE)"""
+    if lang == "python":
+        return _extract_functions_python(lines)
+    return _extract_functions_cbrace(lines)
+
+
+def _nesting_depth_for(body_lines, lang, base_indent):
+    """Nesting depth of one RAW function body, by language family. Always
+    measured on raw text: the mask is for branch scanning only. (PURE)"""
+    if lang == "python":
+        return _nesting_depth_python(body_lines[1:], base_indent)
+    return _nesting_depth_braces("\n".join(body_lines))
+
+
+def _scan_lines_for(source, lang, lines):
+    """The masked counterpart of `lines`, for the two branch scans only. Falls
+    back to `lines` unless the mask preserved the physical line count exactly,
+    so a masked body always covers the same lines as its raw body. (PURE)"""
+    scan_lines = _strip_for_scan(source, lang).splitlines()
+    if len(scan_lines) != len(lines):
+        return lines
+    return scan_lines
+
+
+def _function_metrics(lines, scan_lines, fn, lang):
+    """Measured metric values for one extracted function. `lines` is raw source;
+    `scan_lines` is its masked counterpart, read by the two branch scans alone,
+    so span, indentation and length metrics all stay on raw text. (PURE)"""
+    body_lines = lines[fn["header_idx"]:fn["end"]]
+    scan_body = scan_lines[fn["header_idx"]:fn["end"]]
+    header_line = lines[fn["header_idx"]]
+    base_indent = len(header_line) - len(header_line.lstrip(" "))
+    return {
+        "cyclomatic_complexity": _branch_count("\n".join(scan_body)),
+        "method_lines": _nonblank(body_lines),
+        "parameter_count": _count_params(header_line),
+        "cognitive_complexity": _cognitive_approx(
+            scan_body, lang, base_indent),
+        "nesting_depth": _nesting_depth_for(body_lines, lang, base_indent),
+    }
+
+
 def analyze_builtin(path, source, changed_ranges):
     """Pure-stdlib heuristic analysis of one changed file. Returns
     (function_findings, class_finding_or_None) where each finding is a dict of
     measured metric values for functions intersecting `changed_ranges`, tagged
     source="builtin-heuristic". `source` is the file text; changed_ranges is the
-    file's list of (start, end) changed spans.
+    file's list of (start, end) changed spans. The two branch scans read a
+    masked copy of the source (see _strip_for_scan); every other metric reads
+    the raw text.
 
     An unsupported/binary file (no known language) yields ([], None); the caller
     records a skip for it."""
@@ -575,35 +756,17 @@ def analyze_builtin(path, source, changed_ranges):
     if lang is None:
         return [], None
     lines = source.splitlines()
-    if lang == "python":
-        funcs = _extract_functions_python(lines)
-    else:
-        funcs = _extract_functions_cbrace(lines)
+    scan_lines = _scan_lines_for(source, lang, lines)
+    funcs = _extract_functions_for(lines, lang)
 
     findings = []
     for fn in funcs:
         if not _intersects_changed(fn["start"], fn["end"], changed_ranges):
             continue
-        body_lines = lines[fn["header_idx"]:fn["end"]]
-        body_text = "\n".join(body_lines)
-        header_line = lines[fn["header_idx"]]
-        base_indent = len(header_line) - len(header_line.lstrip(" "))
-        metrics = {
-            "cyclomatic_complexity": _branch_count(body_text),
-            "method_lines": _nonblank(body_lines),
-            "parameter_count": _count_params(header_line),
-            "cognitive_complexity": _cognitive_approx(body_lines, lang,
-                                                       base_indent),
-        }
-        if lang == "python":
-            metrics["nesting_depth"] = _nesting_depth_python(
-                body_lines[1:], base_indent)
-        else:
-            metrics["nesting_depth"] = _nesting_depth_braces(body_text)
         findings.append({
             "file": path, "function": fn["name"],
             "line_start": fn["start"], "line_end": fn["end"],
-            "metrics": metrics,
+            "metrics": _function_metrics(lines, scan_lines, fn, lang),
         })
 
     class_finding = None
