@@ -957,26 +957,27 @@ def _place_escalation(run_dir, scope, record):
 
 def append_event(run_dir, ts, scope, event_type, payload):
     """Append one event and render it onto the human surface it belongs to."""
-    event = {"ts": ts, "scope": scope, "type": event_type,
-             "payload": payload if payload is not None else {}}
-    _append_text(events_path(run_dir),
-                 json.dumps(event, ensure_ascii=False, sort_keys=False) + "\n")
+    payload = payload if payload is not None else {}
+    event = {"ts": ts, "scope": scope, "type": event_type, "payload": payload}
+    event_line = json.dumps(event, ensure_ascii=False, sort_keys=False) + "\n"
+    _append_text(events_path(run_dir), event_line)
 
     if event_type == "escalation-opened":
         _place_escalation(run_dir, scope, event["payload"])
     elif event_type == "escalation-answered":
         path = os.path.join(run_dir, ESCALATIONS_MD)
         body = _read_text(path)
+        answer = event["payload"].get("answer")
+        answered_at = event["payload"].get("answered_at") or ts
         updated, matched = answer_escalation(
-            body, event["payload"].get("id"), event["payload"].get("answer"),
-            event["payload"].get("answered_at") or ts)
+            body, event["payload"].get("id"), answer, answered_at)
         if matched:
             _atomic_write(path, updated)
         else:
             _append_text(path, _orphan_answer_entry(event), ESCALATIONS_HEADER)
     elif event_type in DECISION_EVENTS:
-        _append_text(os.path.join(run_dir, DECISIONS_LOG),
-                     decision_line(event) + "\n", DECISIONS_HEADER)
+        decision = decision_line(event) + "\n"
+        _append_text(os.path.join(run_dir, DECISIONS_LOG), decision, DECISIONS_HEADER)
     return event
 
 

@@ -944,16 +944,16 @@ class TestAppendEvent(RunStateTestCase):
 
     def test_a_new_incident_under_one_id_gets_its_own_section(self):
         rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened",
-                        escalation(context="Genuine agent failure this time."))
+        second = escalation(context="Genuine agent failure this time.")
+        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", second)
         body = self.read("escalations.md")
         self.assertEqual(len(self.sections(body)), 2)
         self.assertIn("Genuine agent failure this time", body)
 
     def test_a_bare_re_open_never_blanks_a_recorded_answer(self):
         rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered",
-                        {"id": "s1:review-block", "answer": "bound them"})
+        answer_payload = {"id": "s1:review-block", "answer": "bound them"}
+        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered", answer_payload)
         rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", escalation())
         body = self.read("escalations.md")
         self.assertEqual(len(self.sections(body)), 1)
@@ -962,8 +962,8 @@ class TestAppendEvent(RunStateTestCase):
 
     def test_the_header_is_written_once(self):
         rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "s2", "escalation-opened",
-                        escalation(id="s2:ambiguity"))
+        second = escalation(id="s2:ambiguity")
+        rs.append_event(self.run_dir, LATER, "s2", "escalation-opened", second)
         self.assertEqual(self.read("escalations.md").count("# Escalations"), 1)
 
     def test_events_survive_a_prose_render(self):
@@ -1221,8 +1221,8 @@ class TestOpenEscalations(RunStateTestCase):
         rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", record)
         ids = [item["id"] for item in rs.open_escalations(self.run_dir)]
         self.assertEqual(ids, ["s1:budget-exhausted"])
-        sections = [line for line in self.read("escalations.md").splitlines()
-                    if line.startswith("## ")]
+        body = self.read("escalations.md")
+        sections = [line for line in body.splitlines() if line.startswith("## ")]
         self.assertEqual(len(sections), 1)
 
 
