@@ -849,8 +849,15 @@ class TestRunDirGuard(RunStateTestCase):
 
 
 class TestAppendEvent(RunStateTestCase):
+    def test_build_event_defaults_a_null_payload(self):
+        event = rs.build_event(TS, "run", "run-created", None)
+        expected = {"ts": TS, "scope": "run", "type": "run-created", "payload": {}}
+        self.assertEqual(event, expected)
+        self.assertEqual(list(event), ["ts", "scope", "type", "payload"])
+
     def test_creates_events_jsonl(self):
-        rs.append_event(self.run_dir, TS, "run", "run-created", {"run_id": "x"})
+        event = rs.build_event(TS, "run", "run-created", {"run_id": "x"})
+        rs.append_event(self.run_dir, event)
         lines = self.read("events.jsonl").splitlines()
         self.assertEqual(len(lines), 1)
         self.assertEqual(json.loads(lines[0]), {
@@ -858,45 +865,51 @@ class TestAppendEvent(RunStateTestCase):
             "payload": {"run_id": "x"}})
 
     def test_appends_in_order(self):
-        rs.append_event(self.run_dir, TS, "run", "run-created", {})
-        rs.append_event(self.run_dir, LATER, "wave1", "wave-dispatched", {"index": 1})
+        rs.append_event(self.run_dir, rs.build_event(TS, "run", "run-created", {}))
+        event = rs.build_event(LATER, "wave1", "wave-dispatched", {"index": 1})
+        rs.append_event(self.run_dir, event)
         self.assertEqual([e["type"] for e in self.events()],
                          ["run-created", "wave-dispatched"])
 
     def test_unrendered_event_writes_no_prose(self):
-        rs.append_event(self.run_dir, TS, "wave1", "wave-dispatched", {"index": 1})
+        event = rs.build_event(TS, "wave1", "wave-dispatched", {"index": 1})
+        rs.append_event(self.run_dir, event)
         self.assertIsNone(self.read("decisions-log.md"))
         self.assertIsNone(self.read("escalations.md"))
 
     def test_decision_event_renders_a_log_line(self):
-        rs.append_event(self.run_dir, TS, "s1", "decision",
-                        {"summary": "reuse the CSV writer"})
+        event = rs.build_event(TS, "s1", "decision", {"summary": "reuse the CSV writer"})
+        rs.append_event(self.run_dir, event)
         body = self.read("decisions-log.md")
         self.assertIn("# Decisions log", body)
         self.assertIn("[s1] DECISION: reuse the CSV writer — AT: %s" % TS, body)
 
     def test_decision_log_is_append_only(self):
-        rs.append_event(self.run_dir, TS, "s1", "decision", {"summary": "one"})
-        rs.append_event(self.run_dir, LATER, "s2", "deferred", {"summary": "two"})
+        event = rs.build_event(TS, "s1", "decision", {"summary": "one"})
+        rs.append_event(self.run_dir, event)
+        event = rs.build_event(LATER, "s2", "deferred", {"summary": "two"})
+        rs.append_event(self.run_dir, event)
         body = self.read("decisions-log.md")
         self.assertIn("one", body)
         self.assertIn("two", body)
         self.assertEqual(body.count("# Decisions log"), 1)
 
     def test_every_gate_event_type_is_logged(self):
+        payload = {"summary": "s", "verdict": "ENDORSE", "status": "PASS",
+                   "result": "PASS"}
         for index, event_type in enumerate(
                 ("decision", "deferred", "council-verdict", "quality-gate",
                  "integration-check", "phase5-gate")):
-            rs.append_event(self.run_dir, TS, "s%d" % index, event_type,
-                            {"summary": "s", "verdict": "ENDORSE", "status": "PASS",
-                             "result": "PASS"})
+            event = rs.build_event(TS, "s%d" % index, event_type, payload)
+            rs.append_event(self.run_dir, event)
         body = self.read("decisions-log.md")
         for event_type in ("DECISION", "DEFERRED", "COUNCIL-VERDICT",
                            "QUALITY-GATE", "INTEGRATION-CHECK", "PHASE5-GATE"):
             self.assertIn(event_type, body)
 
     def test_escalation_opened_writes_a_full_entry(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
         body = self.read("escalations.md")
         self.assertIn("# Escalations", body)
         self.assertIn("(status: OPEN)", body)
@@ -904,24 +917,29 @@ class TestAppendEvent(RunStateTestCase):
         self.assertIsNone(self.read("decisions-log.md"))
 
     def test_escalation_answered_fills_in_the_entry(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered",
-                        {"id": "s1:review-block", "answer": "bound them"})
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        payload = {"id": "s1:review-block", "answer": "bound them"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
         body = self.read("escalations.md")
         self.assertIn("- Answer: bound them", body)
         self.assertIn("- Answered-at: %s" % LATER, body)
         self.assertIn("(status: ANSWERED)", body)
 
     def test_escalation_answered_honours_an_explicit_answered_at(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered",
-                        {"id": "s1:review-block", "answer": "x",
-                         "answered_at": "2026-08-01T00:00:00Z"})
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        payload = {"id": "s1:review-block", "answer": "x",
+                   "answered_at": "2026-08-01T00:00:00Z"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
         self.assertIn("- Answered-at: 2026-08-01T00:00:00Z", self.read("escalations.md"))
 
     def test_orphan_answer_is_still_surfaced(self):
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered",
-                        {"id": "s1:ghost", "answer": "whatever"})
+        payload = {"id": "s1:ghost", "answer": "whatever"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
         body = self.read("escalations.md")
         self.assertIn("s1:ghost", body)
         self.assertIn("whatever", body)
@@ -930,58 +948,73 @@ class TestAppendEvent(RunStateTestCase):
         return [line for line in body.splitlines() if line.startswith("## ")]
 
     def test_an_identical_re_open_does_not_add_a_second_section(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", escalation())
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        event = rs.build_event(LATER, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
         body = self.read("escalations.md")
         self.assertEqual(len(self.sections(body)), 1)
         self.assertEqual(body.count(rs.ID_ANCHOR % "s1:review-block"), 1)
 
     def test_both_re_opens_stay_in_the_event_log(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", escalation())
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        event = rs.build_event(LATER, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
         types = [event["type"] for event in self.events()]
         self.assertEqual(types.count("escalation-opened"), 2)
 
     def test_a_new_incident_under_one_id_gets_its_own_section(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
         second = escalation(context="Genuine agent failure this time.")
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", second)
+        event = rs.build_event(LATER, "s1", "escalation-opened", second)
+        rs.append_event(self.run_dir, event)
         body = self.read("escalations.md")
         self.assertEqual(len(self.sections(body)), 2)
         self.assertIn("Genuine agent failure this time", body)
 
     def test_a_bare_re_open_never_blanks_a_recorded_answer(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
         answer_payload = {"id": "s1:review-block", "answer": "bound them"}
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered", answer_payload)
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", escalation())
+        event = rs.build_event(LATER, "s1", "escalation-answered", answer_payload)
+        rs.append_event(self.run_dir, event)
+        event = rs.build_event(LATER, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
         body = self.read("escalations.md")
         self.assertEqual(len(self.sections(body)), 1)
         self.assertIn("- Answer: bound them", body)
         self.assertIn("(status: ANSWERED)", body)
 
     def test_the_header_is_written_once(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
         second = escalation(id="s2:ambiguity")
-        rs.append_event(self.run_dir, LATER, "s2", "escalation-opened", second)
+        event = rs.build_event(LATER, "s2", "escalation-opened", second)
+        rs.append_event(self.run_dir, event)
         self.assertEqual(self.read("escalations.md").count("# Escalations"), 1)
 
     def test_events_survive_a_prose_render(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
         self.assertEqual([e["type"] for e in self.events()], ["escalation-opened"])
 
     def test_malformed_lines_are_skipped_by_the_reader(self):
-        rs.append_event(self.run_dir, TS, "s1", "decision", {"summary": "ok"})
+        event = rs.build_event(TS, "s1", "decision", {"summary": "ok"})
+        rs.append_event(self.run_dir, event)
         with open(os.path.join(self.run_dir, "events.jsonl"), "a", encoding="utf-8") as fh:
             fh.write("{half written\n")
-        rs.append_event(self.run_dir, LATER, "s1", "decision", {"summary": "also ok"})
+        event = rs.build_event(LATER, "s1", "decision", {"summary": "also ok"})
+        rs.append_event(self.run_dir, event)
         self.assertEqual(len(self.events()), 2)
 
     def test_reader_tolerates_a_missing_file(self):
         self.assertEqual(rs.read_events(self.run_dir), [])
 
     def test_reader_skips_blank_lines(self):
-        rs.append_event(self.run_dir, TS, "s1", "decision", {"summary": "ok"})
+        event = rs.build_event(TS, "s1", "decision", {"summary": "ok"})
+        rs.append_event(self.run_dir, event)
         with open(os.path.join(self.run_dir, "events.jsonl"), "a", encoding="utf-8") as fh:
             fh.write("\n\n")
         self.assertEqual(len(self.events()), 1)
@@ -991,7 +1024,7 @@ class TestAppendEvent(RunStateTestCase):
         with open(blocked, "w", encoding="utf-8") as fh:
             fh.write("x")
         with self.assertRaises(rs.RunStateError):
-            rs.append_event(blocked, TS, "run", "run-created", {})
+            rs.append_event(blocked, rs.build_event(TS, "run", "run-created", {}))
 
     def test_sidecar_write_failure_is_a_run_state_error(self):
         with mock.patch.object(rs.os, "replace", side_effect=OSError("read-only")):
@@ -1152,13 +1185,16 @@ class TestPersistSlice(RunStateTestCase):
 
 class TestOpenEscalations(RunStateTestCase):
     def open_one(self, escalation_id, ts=TS, **over):
-        rs.append_event(self.run_dir, ts, escalation_id.split(":")[0],
-                        "escalation-opened", escalation(id=escalation_id, **over))
+        scope = escalation_id.split(":")[0]
+        record = escalation(id=escalation_id, **over)
+        event = rs.build_event(ts, scope, "escalation-opened", record)
+        rs.append_event(self.run_dir, event)
 
     def answer(self, escalation_id, ts=LATER):
-        rs.append_event(self.run_dir, ts, escalation_id.split(":")[0],
-                        "escalation-answered",
-                        {"id": escalation_id, "answer": "done"})
+        scope = escalation_id.split(":")[0]
+        payload = {"id": escalation_id, "answer": "done"}
+        event = rs.build_event(ts, scope, "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
 
     def test_no_events_no_escalations(self):
         self.assertEqual(rs.open_escalations(self.run_dir), [])
@@ -1198,8 +1234,9 @@ class TestOpenEscalations(RunStateTestCase):
                          ["s1:review-block"])
 
     def test_record_already_marked_answered_is_not_open(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened",
-                        escalation(status="ANSWERED", answer="x", answered_at=TS))
+        record = escalation(status="ANSWERED", answer="x", answered_at=TS)
+        event = rs.build_event(TS, "s1", "escalation-opened", record)
+        rs.append_event(self.run_dir, event)
         self.assertEqual(rs.open_escalations(self.run_dir), [])
 
     def test_non_object_payloads_are_ignored(self):
@@ -1210,15 +1247,17 @@ class TestOpenEscalations(RunStateTestCase):
         self.assertEqual(rs.open_escalations(self.run_dir), [])
 
     def test_payloads_without_an_id_are_ignored(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", {"title": "no id"})
+        event = rs.build_event(TS, "s1", "escalation-opened", {"title": "no id"})
+        rs.append_event(self.run_dir, event)
         self.assertEqual(rs.open_escalations(self.run_dir), [])
 
     def test_a_deduplicated_re_open_still_reaches_the_human_gate(self):
         # The renderer collapses an identical re-emit onto one section; the
         # gate is a separate, fail-safe reader and must still list the id.
         record = escalation(id="s1:budget-exhausted", trigger="budget-exhausted")
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", record)
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-opened", record)
+        rs.append_event(self.run_dir, rs.build_event(TS, "s1", "escalation-opened", record))
+        event = rs.build_event(LATER, "s1", "escalation-opened", record)
+        rs.append_event(self.run_dir, event)
         ids = [item["id"] for item in rs.open_escalations(self.run_dir)]
         self.assertEqual(ids, ["s1:budget-exhausted"])
         body = self.read("escalations.md")
@@ -1252,7 +1291,7 @@ class TestRecordedCorpusReplay(RunStateTestCase):
         for event in self.escalation_events(run_id):
             payload = event.get("payload") or {}
             fields = (event.get("ts"), event.get("scope"), event["type"], payload)
-            rs.append_event(self.run_dir, *fields)
+            rs.append_event(self.run_dir, rs.build_event(*fields))
         return self.read("escalations.md")
 
     def headings(self, body):
@@ -1267,6 +1306,13 @@ class TestRecordedCorpusReplay(RunStateTestCase):
     def headings_without_answer_text(self, sections):
         blank = [item for item in sections if not rs._section_has_answer(item)]
         return [rs._section_line(item, "## ") for item in blank]
+
+    def test_the_replayed_events_keep_their_recorded_type_and_scope(self):
+        recorded = self.escalation_events("20260825-scope-ceiling")
+        expected = [(item["type"], item.get("scope")) for item in recorded]
+        self.replay("20260825-scope-ceiling")
+        actual = [(item["type"], item.get("scope")) for item in self.events()]
+        self.assertEqual(actual, expected)
 
     def test_the_recorded_page_has_twelve_sections_and_the_replay_has_nine(self):
         # The recorded artifact is the defect: 11 escalation-opened events over
@@ -1510,15 +1556,18 @@ class TestPinnedPayloadFacts(RunStateTestCase):
         rs.persist_slice(self.run_dir,
                          sidecar("ESCALATED", escalations=[first, second]),
                          wave=1, ts=TS)
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered",
-                        {"id": "s1:ambiguity", "answer": "ISO-8601"})
+        payload = {"id": "s1:ambiguity", "answer": "ISO-8601"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
         self.assertEqual([r["id"] for r in rs.open_escalations(self.run_dir)],
                          ["s1:review-block"])
 
     def test_an_answer_from_another_scope_still_pairs_by_id(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "run", "escalation-answered",
-                        {"id": "s1:review-block", "answer": "bound them"})
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        payload = {"id": "s1:review-block", "answer": "bound them"}
+        event = rs.build_event(LATER, "run", "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
         self.assertEqual(rs.open_escalations(self.run_dir), [])
 
     def test_council_verdict_passes_safety_through(self):
@@ -1534,8 +1583,9 @@ class TestPinnedPayloadFacts(RunStateTestCase):
         self.assertIs(verdict["payload"]["safety"], False)
 
     def test_safety_is_named_in_the_decisions_log(self):
-        rs.append_event(self.run_dir, TS, "s1", "council-verdict",
-                        {"verdict": "OBJECT", "concerns": 1, "safety": True})
+        payload = {"verdict": "OBJECT", "concerns": 1, "safety": True}
+        event = rs.build_event(TS, "s1", "council-verdict", payload)
+        rs.append_event(self.run_dir, event)
         self.assertIn("SAFETY OBJECT", self.read("decisions-log.md"))
 
     def test_council_verdict_carries_the_whole_over_scope_record_not_just_a_bool(self):
@@ -1593,7 +1643,7 @@ class TestPinnedPayloadFacts(RunStateTestCase):
 
     def test_a_deferred_event_marks_deferred_scope_with_over_scope_true(self):
         payload = {"title": "dashboard charts", "over_scope": True}
-        rs.append_event(self.run_dir, TS, "s1", "deferred", payload)
+        rs.append_event(self.run_dir, rs.build_event(TS, "s1", "deferred", payload))
         stored = self.events()[0]["payload"]
         decisions_log = self.read("decisions-log.md")
         self.assertEqual(stored, payload)
@@ -1613,14 +1663,15 @@ class TestPinnedPayloadFacts(RunStateTestCase):
                    "agent_type": "sdd-implementer",
                    "dispatched_at": TS, "returned_at": LATER,
                    "tokens_in": 1200, "tokens_out": 340}
-        rs.append_event(self.run_dir, TS, "s1", "agent-dispatch", payload)
+        rs.append_event(self.run_dir, rs.build_event(TS, "s1", "agent-dispatch", payload))
         stored = self.events()[0]
         self.assertEqual(stored["payload"], payload)
         self.assertIsNone(self.read("decisions-log.md"))
 
     def test_agent_dispatch_absent_timings_stay_absent(self):
-        rs.append_event(self.run_dir, TS, "s1", "agent-dispatch",
-                        {"role": "reviewer", "model": None})
+        payload = {"role": "reviewer", "model": None}
+        event = rs.build_event(TS, "s1", "agent-dispatch", payload)
+        rs.append_event(self.run_dir, event)
         self.assertEqual(self.events()[0]["payload"], {"role": "reviewer",
                                                       "model": None})
 

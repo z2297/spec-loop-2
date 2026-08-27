@@ -955,26 +955,44 @@ def _place_escalation(run_dir, scope, record):
     _atomic_write(path, place_escalation_section(body, scope, record))
 
 
-def append_event(run_dir, ts, scope, event_type, payload):
-    """Append one event and render it onto the human surface it belongs to."""
-    payload = payload if payload is not None else {}
-    event = {"ts": ts, "scope": scope, "type": event_type, "payload": payload}
-    event_line = json.dumps(event, ensure_ascii=False, sort_keys=False) + "\n"
-    _append_text(events_path(run_dir), event_line)
+def build_event(ts, scope, event_type, payload):
+    """One event object, ready to append (PURE).
 
+    The four fields travel as one value, which keeps `append_event` at two
+    parameters. A null payload becomes an empty object, so a caller passing
+    nothing records the same shape as a caller passing an empty dict.
+    """
+    body = payload if payload is not None else {}
+    return {"ts": ts, "scope": scope, "type": event_type, "payload": body}
+
+
+def _answer_on_page(run_dir, event):
+    """Write one escalation-answered event into escalations.md.
+
+    An answer with no matching entry is appended as its own orphan entry, so
+    a recorded answer always reaches the page.
+    """
+    path = os.path.join(run_dir, ESCALATIONS_MD)
+    payload = event["payload"]
+    answered_at = payload.get("answered_at") or event["ts"]
+    body = _read_text(path)
+    answer = payload.get("answer")
+    updated, matched = answer_escalation(body, payload.get("id"), answer, answered_at)
+    if matched:
+        _atomic_write(path, updated)
+    else:
+        _append_text(path, _orphan_answer_entry(event), ESCALATIONS_HEADER)
+
+
+def append_event(run_dir, event):
+    """Append one event and render it onto the human surface it belongs to."""
+    line = json.dumps(event, ensure_ascii=False, sort_keys=False) + "\n"
+    _append_text(events_path(run_dir), line)
+    event_type = event["type"]
     if event_type == "escalation-opened":
-        _place_escalation(run_dir, scope, event["payload"])
+        _place_escalation(run_dir, event["scope"], event["payload"])
     elif event_type == "escalation-answered":
-        path = os.path.join(run_dir, ESCALATIONS_MD)
-        body = _read_text(path)
-        answer = event["payload"].get("answer")
-        answered_at = event["payload"].get("answered_at") or ts
-        updated, matched = answer_escalation(
-            body, event["payload"].get("id"), answer, answered_at)
-        if matched:
-            _atomic_write(path, updated)
-        else:
-            _append_text(path, _orphan_answer_entry(event), ESCALATIONS_HEADER)
+        _answer_on_page(run_dir, event)
     elif event_type in DECISION_EVENTS:
         decision = decision_line(event) + "\n"
         _append_text(os.path.join(run_dir, DECISIONS_LOG), decision, DECISIONS_HEADER)
@@ -1115,7 +1133,7 @@ def persist_slice(run_dir, body, wave, ts):
 
     emitted = []
     for scope, event_type, payload in _slice_events(body, ts, slice_id):
-        append_event(run_dir, ts, scope, event_type, payload)
+        append_event(run_dir, build_event(ts, scope, event_type, payload))
         emitted.append(event_type)
 
     report_path = os.path.join(run_dir, "slice-%s-report.md" % slice_id)
@@ -1174,7 +1192,8 @@ def _run(args):
     if args.command == "append-event":
         _require_ts(args.ts)
         payload = _payload_arg(args.payload)
-        return append_event(args.run_dir, args.ts, args.scope, args.type, payload), 0
+        event = build_event(args.ts, args.scope, args.type, payload)
+        return append_event(args.run_dir, event), 0
 
     if args.command == "open-escalations":
         return open_escalations(args.run_dir), 0
