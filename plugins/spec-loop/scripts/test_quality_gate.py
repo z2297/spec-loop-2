@@ -586,6 +586,30 @@ class TestCbraceMaskFill(unittest.TestCase):
         masked = qg._strip_for_scan(CBRACE_UNTERMINATED_SOURCE, "cbrace")
         self.assertEqual(masked, CBRACE_UNTERMINATED_SOURCE)
 
+    def test_a_star_slash_inside_a_regex_literal_does_not_open_a_phantom_comment(self):
+        # A stepped-over slash inside a character class, followed by a `*`,
+        # forms a star-slash sequence that would otherwise open a
+        # block-comment span reaching all the way to the next real block
+        # comment much later in the source, silently dropping the branches
+        # of every line in between. The scan is required to refuse this
+        # opener and fall back to raw text instead.
+        source = (
+            "const re = /[/*]/;\n"
+            "function f(a){ ternary(a, a) ; }\n"
+            "/* real comment */\n"
+            "function g(b){ ternary(b, 1) ; }\n"
+        )
+        self.assertIsNone(qg._mask_cbrace_literals(source))
+        self.assertEqual(qg._strip_for_scan(source, "cbrace"), source)
+
+    def test_an_ordinary_multiline_block_comment_still_masks(self):
+        source = "/* line one\nline two */\nconst a = b;\n"
+        masked = qg._mask_cbrace_literals(source)
+        self.assertIsNotNone(masked)
+        self.assertEqual(masked.count("\n"), source.count("\n"))
+        self.assertNotIn("line", masked)
+        self.assertIn("const a = b;", masked)
+
 
 class TestScanTokensFallbackPaths(unittest.TestCase):
     """_scan_tokens's two guards send the whole mask back to raw text, but

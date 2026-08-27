@@ -553,22 +553,32 @@ def _mask_python_literals(text):
 # literal. Telling a regex literal from a division operator needs the
 # parser's expectation of the next token, which a character scanner does not
 # have, so a lone slash outside a comment is stepped over and a regex
-# literal's interior stays visible. Two residuals follow from that, and in the
-# worst instance both point the same way, so both are stated plainly. First, a
-# quote character inside a regex literal opens a phantom string. The quote
+# literal's interior stays visible. Three residuals follow from that. First,
+# a quote character inside a regex literal opens a phantom string. The quote
 # alternatives exclude the newline, so the phantom cannot outlive its own
 # line: on a line carrying an odd number of quote characters it never closes
 # and the whole file falls back to raw text, but on a line carrying an even
 # number it pairs off with a later quote and can cover real operator
 # punctuation lying between the two, which lowers a count silently. Second, a
 # doubled slash inside a regex literal reads as a line comment and masks the
-# rest of that line, which lowers a count silently as well. Measured at the
-# time this landed, the sweep of regex-literal uses in this repo surfaced none
-# containing a quote character, every doubled slash the scanner treated as a
-# line comment was a genuine trailing comment after a properly closed regex
-# literal, and the scanner closes every construct it recognises in every brace
-# source here. The sweeping greps behind those statements are recorded in the
-# slice report.
+# rest of that line, which lowers a count silently as well. Both of those are
+# bounded to their own line by construction. Third, and unbounded: a
+# star-slash sequence inside a regex literal's character contents reads as a
+# block-comment opener, and the block-comment alternative's closing search
+# crosses newlines, so it would otherwise pair with the next real block
+# comment anywhere later in the source and blank every line between the two.
+# The scanner guards against this one directly: once a bare slash has been
+# stepped over on the current source line, a later star-slash sequence on
+# that same line is refused rather than treated as a comment opener, and the
+# whole scan fails toward raw text instead of silently under-counting. That
+# guard is verified by a dedicated test rather than a repo sweep, because a
+# sweep can only bound occurrences that already exist, not ones a later file
+# introduces. Measured at the time this landed, the sweep of regex-literal
+# uses in this repo surfaced none containing a quote character, every
+# doubled slash the scanner treated as a line comment was a genuine trailing
+# comment after a properly closed regex literal, and the scanner closes every
+# construct it recognises in every brace source here. The sweeping greps
+# behind those statements are recorded in the slice report.
 
 _CB_FLAT_RE = re.compile(
     r"//[^\n]*"
@@ -581,28 +591,43 @@ _CB_TPL_RE = re.compile(r"\\[\s\S]|\$\{|`")
 _CB_DEPTH = {"{": 1, "}": -1}
 
 
-def _cb_flat_step(text, pos, stop):
-    """One scanner step at a comment or a quote opener: (next_pos, spans)
-    once the flat regex closed the construct, else None to fail toward raw
-    text. A lone slash is division or a regex literal, so it is stepped
-    over. (PURE)"""
+def _cb_flat_step(text, pos, stop, slash_since_newline):
+    """One scanner step at a comment or a quote opener: (next_pos, spans,
+    slash_since_newline) once the flat regex closed the construct, else None
+    to fail toward raw text. A lone slash is division or a regex literal, so
+    it is stepped over and remembered for the rest of the line. A star-slash
+    match reached after such a lone slash on the same line is refused rather
+    than treated as a block-comment opener, since its unbounded closing
+    search would otherwise pair with a real block comment far later in the
+    file and blank real code in between; refusing sends the whole scan back
+    to raw text instead. (PURE)"""
+    is_block_open = text.startswith("/*", pos)
+    if slash_since_newline and is_block_open:
+        return None
     m = _CB_FLAT_RE.match(text, pos, stop)
     if m is not None:
-        return m.end(), [(m.start(), m.end())]
-    if text[pos] == "/" and not text.startswith("/*", pos):
-        return pos + 1, []
+        return m.end(), [(m.start(), m.end())], slash_since_newline
+    if text[pos] == "/" and not is_block_open:
+        return pos + 1, [], True
     return None
 
 
-def _cb_step(text, pos, stop):
-    """One scanner step from `pos`: (next_pos, mask_spans), else None to fail
-    toward raw text. (PURE)"""
+def _cb_step(text, pos, stop, slash_since_newline):
+    """One scanner step from `pos`: (next_pos, mask_spans,
+    slash_since_newline), else None to fail toward raw text. The
+    lone-slash memory resets at the newline that ends its line. (PURE)"""
     ch = text[pos]
+    if ch == "\n":
+        return pos + 1, [], False
     if ch == "`":
-        return _cb_template_step(text, pos, stop)
+        got = _cb_template_step(text, pos, stop)
+        if got is None:
+            return None
+        nxt, spans = got
+        return nxt, spans, slash_since_newline
     if ch in _CB_OPENERS:
-        return _cb_flat_step(text, pos, stop)
-    return pos + 1, []
+        return _cb_flat_step(text, pos, stop, slash_since_newline)
+    return pos + 1, [], slash_since_newline
 
 
 def _cbrace_spans(text, start, stop):
@@ -612,11 +637,12 @@ def _cbrace_spans(text, start, stop):
     (PURE)"""
     spans = []
     pos = start
+    slash_since_newline = False
     while pos < stop:
-        got = _cb_step(text, pos, stop)
+        got = _cb_step(text, pos, stop, slash_since_newline)
         if got is None:
             return None
-        pos, found = got
+        pos, found, slash_since_newline = got
         spans.extend(found)
     return spans
 
@@ -640,15 +666,16 @@ def _cb_interp_end(text, start, stop):
     depth = 1
     pos = start + 2
     spans = []
+    slash_since_newline = False
     while pos < stop:
-        got = _cb_step(text, pos, stop)
+        got = _cb_step(text, pos, stop, slash_since_newline)
         if got is None:
             return None
         depth += _cb_depth_delta(text, pos, got)
         if depth == 0:
             return pos + 1, spans
         spans.extend(got[1])
-        pos = got[0]
+        pos, _found, slash_since_newline = got
     return None
 
 
