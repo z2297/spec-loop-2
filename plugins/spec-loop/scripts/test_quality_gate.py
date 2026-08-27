@@ -88,6 +88,30 @@ def unmasked(text, lang):
     return text
 
 
+NON_ENDMARKER_TAIL_TOKEN = tokenize.TokenInfo(
+    tokenize.NEWLINE, "\n", (1, 0), (1, 1), "\n")
+
+
+def empty_token_stream(readline):
+    """Stand-in for tokenize.generate_tokens yielding no tokens at all. Named
+    at module level for the same paren-alignment reason as `unmasked`."""
+    return iter([])
+
+
+def non_endmarker_token_stream(readline):
+    """Stand-in for tokenize.generate_tokens whose last token is not
+    ENDMARKER. Named at module level for the same paren-alignment reason as
+    `unmasked`."""
+    return iter([NON_ENDMARKER_TAIL_TOKEN])
+
+
+def longer_scan(text, lang):
+    """Stand-in for qg._strip_for_scan that returns one extra physical line,
+    so the caller's line count no longer matches its input. Named at module
+    level for the same paren-alignment reason as `unmasked`."""
+    return text + "\nextra"
+
+
 # --------------------------------------------------------------------------
 # parse_diff — pure, embedded fixtures
 # --------------------------------------------------------------------------
@@ -496,15 +520,11 @@ class TestScanTokensFallbackPaths(unittest.TestCase):
     driven directly through the real callable with a patched tokenizer."""
 
     def test_an_empty_token_stream_yields_none(self):
-        with mock.patch.object(qg.tokenize, "generate_tokens",
-                               lambda readline: iter([])):
+        with mock.patch.object(qg.tokenize, "generate_tokens", empty_token_stream):
             self.assertIsNone(qg._scan_tokens("x = 1\n"))
 
     def test_a_non_endmarker_end_state_yields_none(self):
-        newline_only = [tokenize.TokenInfo(
-            tokenize.NEWLINE, "\n", (1, 0), (1, 1), "\n")]
-        with mock.patch.object(qg.tokenize, "generate_tokens",
-                               lambda readline: iter(newline_only)):
+        with mock.patch.object(qg.tokenize, "generate_tokens", non_endmarker_token_stream):
             self.assertIsNone(qg._scan_tokens("x = 1\n"))
 
     def test_the_corruption_guard_inside_mask_python_literals_falls_back(self):
@@ -521,8 +541,7 @@ class TestScanLinesForFallback(unittest.TestCase):
     def test_a_line_count_mismatch_falls_back_to_the_raw_lines(self):
         source = "x = 1\ny = 2\n"
         lines = source.splitlines()
-        with mock.patch.object(qg, "_strip_for_scan",
-                               lambda text, lang: text + "\nextra"):
+        with mock.patch.object(qg, "_strip_for_scan", longer_scan):
             self.assertEqual(qg._scan_lines_for(source, "python", lines), lines)
 
 
