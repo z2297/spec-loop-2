@@ -738,7 +738,7 @@ class TestRegexQuotePhantom(unittest.TestCase):
     def test_a_plain_phantom_does_not_reach_the_next_line(self):
         # Narrow by design: this pins ONE spot-checked shape, the one with no
         # backslash before the newline. It is NOT a general boundary claim --
-        # see the multiline test below for the shape that crosses.
+        # the multiline test below pins the shape that crosses.
         masked = qg._mask_cbrace_literals(REGEX_QUOTE_PHANTOM_SOURCE)
         rows = masked.split("\n")
         raw_rows = REGEX_QUOTE_PHANTOM_SOURCE.split("\n")
