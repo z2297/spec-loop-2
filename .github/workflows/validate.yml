@@ -59,6 +59,26 @@ jobs:
             echo "FAIL: only ${ran:-0} client JS tests ran (expected >= 12)"; exit 1
           fi
 
+      - name: Wave workflow behavioural harness (Node)
+        # The ONLY lane in which slice-wave.workflow.js actually EXECUTES. It is
+        # loaded through slice_wave_contract_base.wrapped_source(), so this step
+        # needs the python3 set up earlier in this job as well as node. Two
+        # gates, both fail closed, mirroring the client JS step: exit status,
+        # and a minimum TAP count so an emptied file cannot pass silently.
+        # Scope: deterministic control flow only. The real Workflow-host seam
+        # is NOT covered here — see the test file's own honest-limit header.
+        run: |
+          out=$(node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs 2>&1)
+          rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "FAIL: wave harness exited non-zero (rc=$rc)"; exit "$rc"
+          fi
+          ran=$(printf '%s\n' "$out" | sed -n 's/^# tests \([0-9][0-9]*\).*/\1/p')
+          if [ "${ran:-0}" -lt 14 ]; then
+            echo "FAIL: only ${ran:-0} wave harness tests ran (expected >= 14)"; exit 1
+          fi
+
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
 

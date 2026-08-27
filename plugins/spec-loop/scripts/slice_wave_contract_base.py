@@ -1,8 +1,12 @@
 """Shared source-contract infrastructure for slice-wave.workflow.js.
 
-The wave workflow is JavaScript and is not run by any lane of this repo's
-suite: it is resolved at runtime from the installed plugin cache. Its
-correctness has therefore rested entirely on review, and this run paid for
+The wave workflow is JavaScript and is resolved at runtime from the installed
+plugin cache. One lane of this repo's suite now executes it: the companion
+module slice_wave_behaviour.test.mjs loads it through wrapped_source() and
+drives its deterministic control flow against a MOCK agent/parallel/log/budget
+sandbox. That lane exercises no real Workflow-host seam, so the host seam stays
+unverified and review remains the only control over it. Before that lane
+existed its correctness rested entirely on review, and this run paid for
 that twice - an unguarded optional-field read aborted a whole wave and was
 mislabelled as a budget escalation (both the read and the mislabelling are now
 pinned here). The three ``test_slice_wave_contract*.py`` modules that import
@@ -28,6 +32,16 @@ These are source-text assertions. They prove a guard is present; they
 cannot prove it behaves. Any change to the workflow that trips one of them
 is either a regression or an intentional contract change that belongs in
 one of the importing modules too.
+Companion lane: slice_wave_behaviour.test.mjs executes the workflow in a mock
+sandbox and pins the runtime record shapes it produces there, including the
+crash record's three option labels and the lost-slice record's one substituted
+label. It carries its own honest-limit header stating that it covers
+deterministic control flow only. The three crash labels therefore live in three
+non-historical places: the workflow itself, the CRASH_OPTION_RETRY /
+CRASH_OPTION_SKIP / CRASH_OPTION_STOP constants below, and RECORD_OPTIONS in
+that module. The substituted lost-slice label lives in two: the workflow's
+esc() default and GENERIC_OPTION in that module. A label change must move every
+one of them.
 
 Every pinned JS snippet is a module-level constant rather than a literal in
 a test body, and continuation lines use a 4-space hanging indent. Both are
@@ -257,6 +271,12 @@ THREE_DEFERRALS = [{"text": "first", "disposition_hint": "defer"},
                     {"text": "third", "disposition_hint": "defer"}]
 
 
+# Two consumers now. The Python side parses this with node via
+# TestTheFileStillParses. The Node side, slice_wave_harness.mjs, appends a call
+# to the wrapper function this body declares and EXECUTES the result, so it
+# depends on the WRAP_HEAD function NAME as well as on the wrapping itself. A
+# rename of that function must move slice_wave_harness.WRAPPER_NAME in the same
+# change; its loader-integrity test is the guard that makes a miss loud.
 def wrapped_source():
     """The workflow source in the async wrapper node can actually parse."""
     body = SOURCE.replace("\nexport const", "\nconst")
