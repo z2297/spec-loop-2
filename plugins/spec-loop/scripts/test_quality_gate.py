@@ -1387,6 +1387,96 @@ def scanned_sources():
     return found
 
 
+WORKFLOW_JS = PLUGIN_ROOT / "workflows" / "slice-wave.workflow.js"
+
+
+class TestCbraceMaskOverTheRealWorkflow(unittest.TestCase):
+    """The brace-language mask measured against the file that motivated it:
+    directions plus a floor under each masked value, so a regression that
+    masked MORE than it should also fails."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = WORKFLOW_JS.read_text(encoding="utf-8")
+
+    def analyze(self, source):
+        findings, _ = qg.analyze_builtin(
+            str(WORKFLOW_JS), source, [(1, len(source.splitlines()))])
+        return {f["function"]: f for f in findings}
+
+    def analyze_unmasked(self, source):
+        with mock.patch.object(qg, "_strip_for_scan", unmasked):
+            return self.analyze(source)
+
+    def check_comes_down(self, name, new, old, floor):
+        """One function's masked-versus-raw move: cognitive strictly down but
+        no lower than the value measured as this pin landed, and cyclomatic
+        never up. The floor is the upper bound on how much may be masked."""
+        got = new[name]["metrics"]
+        was = old[name]["metrics"]
+        self.assertLess(
+            got["cognitive_complexity"], was["cognitive_complexity"])
+        self.assertGreaterEqual(got["cognitive_complexity"], floor)
+        self.assertLessEqual(
+            got["cyclomatic_complexity"], was["cyclomatic_complexity"])
+
+    def check_masks_cleanly(self, path):
+        text = path.read_text(encoding="utf-8")
+        self.assertIsNotNone(
+            qg._mask_cbrace_literals(text), msg=str(path))
+
+    def test_the_mask_does_not_blank_the_file(self):
+        # The guard against the failure mode a strings-only scanner produces
+        # here: an apostrophe inside a line comment opens a literal that can
+        # never close, _mask_cbrace_literals returns None, and the whole file
+        # reverts to today's over-count. Function signatures live in code,
+        # never inside a literal, so a working mask must also yield the
+        # identical function list.
+        masked = qg._mask_cbrace_literals(self.source)
+        self.assertIsNotNone(masked)
+        raw_funcs = qg._extract_functions_cbrace(self.source.splitlines())
+        masked_funcs = qg._extract_functions_cbrace(masked.splitlines())
+        self.assertEqual(masked_funcs, raw_funcs)
+        self.assertGreater(len(raw_funcs), 60)
+
+    def test_the_three_motivating_functions_all_come_down(self):
+        new = self.analyze(self.source)
+        old = self.analyze_unmasked(self.source)
+        self.check_comes_down("globToRe", new, old, 17)
+        self.check_comes_down("stageFixLoop", new, old, 13)
+        self.check_comes_down("runSliceError", new, old, 12)
+
+    def test_stage_fix_loop_gains_real_headroom(self):
+        # It measures cognitive EXACTLY at the threshold before the mask and
+        # passes only because the check is value <= threshold, so it is the
+        # live instance this change rescues.
+        limit = qg.DEFAULT_THRESHOLDS["cognitive_complexity"]
+        old = self.analyze_unmasked(self.source)["stageFixLoop"]
+        new = self.analyze(self.source)["stageFixLoop"]
+        self.assertEqual(old["metrics"]["cognitive_complexity"], limit)
+        self.assertLess(new["metrics"]["cognitive_complexity"], limit)
+
+    def test_the_mask_does_not_rescue_glob_to_re(self):
+        # Honest limit, pinned: the miscount inflates globToRe, it does not
+        # create the violation. The function is genuinely over threshold
+        # before and after.
+        limit = qg.DEFAULT_THRESHOLDS["cognitive_complexity"]
+        new = self.analyze(self.source)["globToRe"]
+        self.assertGreater(new["metrics"]["cognitive_complexity"], limit)
+
+    def test_the_mask_succeeds_on_every_brace_source_in_the_tree(self):
+        # Named for what it proves and no more: the mask closes every
+        # construct it recognises in every brace source here, so no file
+        # silently falls back to raw counts. It is NOT a proof about regex
+        # literals -- a regex holding an even number of quotes masks cleanly
+        # and this still passes. The regex residual is backed by the pasted
+        # grep in the slice report instead.
+        brace = [p for p in scanned_sources() if p.suffix != ".py"]
+        self.assertGreater(len(brace), 0)
+        for path in brace:
+            self.check_masks_cleanly(path)
+
+
 class TestDifferentialAgainstRawScan(unittest.TestCase):
     """The mask may only ever LOWER a complexity count, and it may never move a
     function's span, its nesting depth, its length or its parameter count.
@@ -1448,6 +1538,17 @@ class TestDifferentialAgainstRawScan(unittest.TestCase):
         moved = [where for where, got, was in self.measure_tree()
                  if got["metrics"] != was["metrics"]]
         self.assertGreater(len(moved), 100)
+
+    def test_a_brace_language_file_is_measurably_lowered(self):
+        # The tree-wide "something moved" test above would pass on a mask
+        # that only ever touched python, so pin the brace-language half
+        # separately.
+        moved = []
+        for where, got, was in self.measure_tree():
+            brace = (".js " in where) or (".mjs " in where)
+            if brace and got["metrics"] != was["metrics"]:
+                moved.append(where)
+        self.assertGreater(len(moved), 10)
 
 
 if __name__ == "__main__":
