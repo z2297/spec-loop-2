@@ -1029,5 +1029,98 @@ class TestEndToEndRealGit(unittest.TestCase):
         self.assertTrue(report["summary"]["failures"])
 
 
+# --------------------------------------------------------------------------
+# Differential harness — masked versus raw over the whole plugin tree
+# --------------------------------------------------------------------------
+# The mask is a measurement change to a blocking control, so it is pinned
+# against the measurement it replaces over real source rather than fixtures
+# alone: every .py, .js and .mjs file under the plugin root is measured twice,
+# once through the mask and once through the identity stand-in that reproduces
+# the pre-mask behaviour. Those three suffixes were the only heuristic-readable
+# ones present in the tree at the time of writing; a source file in one of the
+# other extensions _EXT_LANG covers would not be walked by this harness.
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+SCANNED_SUFFIXES = (".py", ".js", ".mjs")
+
+# The mask is allowed to lower these two. The other three are measured on raw
+# text, so they must come back identical, as must the function's span.
+LOWERABLE_METRICS = ("cyclomatic_complexity", "cognitive_complexity")
+UNCHANGED_METRICS = ("nesting_depth", "method_lines", "parameter_count")
+
+
+def scanned_sources():
+    """Every .py, .js and .mjs file under the plugin root, sorted. Walks the
+    real tree, so it is not PURE."""
+    found = []
+    for path in sorted(PLUGIN_ROOT.rglob("*")):
+        if path.suffix in SCANNED_SUFFIXES and path.is_file():
+            found.append(path)
+    return found
+
+
+class TestDifferentialAgainstRawScan(unittest.TestCase):
+    """The mask may only ever LOWER a complexity count, and it may never move a
+    function's span, its nesting depth, its length or its parameter count.
+    Measured over the plugin tree's own source, masked against raw."""
+
+    def analyze(self, path, source):
+        findings, _ = qg.analyze_builtin(
+            str(path), source, [(1, len(source.splitlines()))])
+        return {(f["function"], f["line_start"]): f for f in findings}
+
+    def analyze_unmasked(self, path, source):
+        with mock.patch.object(qg, "_strip_for_scan", unmasked):
+            return self.analyze(path, source)
+
+    def assertNoRegression(self, got, was, where):
+        for name in LOWERABLE_METRICS:
+            self.assertLessEqual(
+                got["metrics"][name], was["metrics"][name], msg=where)
+        for name in UNCHANGED_METRICS:
+            self.assertEqual(
+                got["metrics"][name], was["metrics"][name], msg=where)
+        self.assertEqual(
+            (got["line_start"], got["line_end"]),
+            (was["line_start"], was["line_end"]), msg=where)
+
+    def measure_tree(self):
+        """Every scanned file measured twice, as (where, masked, unmasked)
+        triples of one function's findings. The two measurements must cover the
+        same set of functions, so that is asserted here."""
+        pairs = []
+        for path in scanned_sources():
+            source = path.read_text(encoding="utf-8")
+            new = self.analyze(path, source)
+            old = self.analyze_unmasked(path, source)
+            self.assertEqual(sorted(new), sorted(old), msg=str(path))
+            for key, got in new.items():
+                pairs.append(("%s %s" % (path, key), got, old[key]))
+        return pairs
+
+    def test_the_plugin_tree_is_actually_being_scanned(self):
+        paths = scanned_sources()
+        self.assertGreaterEqual(len(paths), 26)
+        suffixes = {path.suffix for path in paths}
+        self.assertIn(".py", suffixes)
+        self.assertTrue(".js" in suffixes or ".mjs" in suffixes)
+
+    def test_no_function_gets_more_complex_and_no_span_moves(self):
+        pairs = self.measure_tree()
+        for where, got, was in pairs:
+            self.assertNoRegression(got, was, where)
+        # The tree measured well over a thousand functions at the time this
+        # harness was written; a collapse to a handful would mean the walk
+        # stopped finding files rather than that the mask is safe.
+        self.assertGreater(len(pairs), 1000)
+
+    def test_the_mask_measurably_lowers_something(self):
+        # A harness that would pass on a no-op mask proves nothing, so pin that
+        # the mask actually moves numbers somewhere in the tree.
+        moved = [where for where, got, was in self.measure_tree()
+                 if got["metrics"] != was["metrics"]]
+        self.assertGreater(len(moved), 100)
+
+
 if __name__ == "__main__":
     unittest.main()
