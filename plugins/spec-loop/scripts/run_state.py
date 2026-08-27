@@ -500,8 +500,7 @@ def _escalation_sections(body):
 
 def _section_line(section, prefix):
     """The section's first line starting with `prefix`, or "" (PURE)."""
-    return next((line for line in section.splitlines()
-                 if line.startswith(prefix)), "")
+    return next((line for line in section.splitlines() if line.startswith(prefix)), "")
 
 
 def _escalation_identity(section):
