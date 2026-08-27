@@ -574,7 +574,7 @@ def _mask_python_literals(text):
 # Brace-language scan mask
 # --------------------------------------------------------------------------
 # Brace languages get no stdlib tokenizer, so this is a hand character
-# scanner over four constructs: the two comment forms and the three string
+# scanner over five constructs: the two comment forms and the three string
 # forms. Template literals are handled separately from the flat forms
 # because a ${...} interpolation holds real code -- blanking a whole template
 # deletes genuine operators and UNDER-counts a function, the dangerous
