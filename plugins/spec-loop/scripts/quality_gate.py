@@ -583,19 +583,28 @@ def _mask_python_literals(text):
 # parser's expectation of the next token, which a character scanner does not
 # have, so a lone slash outside a comment is stepped over and a regex
 # literal's interior stays visible. Three residuals follow from that. First,
-# a quote character inside a regex literal opens a phantom string. The quote
-# alternatives exclude the newline, so the phantom cannot outlive its own
-# line: on a line carrying an odd number of quote characters it never closes
-# and the whole file falls back to raw text, but on a line carrying an even
-# number it pairs off with a later quote and can cover real operator
-# punctuation lying between the two, which lowers a count silently. Second, a
-# doubled slash inside a regex literal reads as a line comment and masks the
-# rest of that line, which lowers a count silently as well. Both of those are
-# bounded to their own line by construction. Third, and unbounded: a
-# star-slash sequence inside a regex literal's character contents reads as a
-# block-comment opener, and the block-comment alternative's closing search
-# crosses newlines, so it would otherwise pair with the next real block
-# comment anywhere later in the source and blank every line between the two.
+# a quote character inside a regex literal opens a phantom string, and that
+# phantom can cover real operator punctuation lying between it and a later
+# quote, which lowers a count silently. Two limits a reader might expect are
+# NOT there, both measured against _mask_cbrace_literals and pinned by
+# TestRegexQuotePhantom. An odd number of quote characters on the line does
+# not force the whole-file fallback: a trailing line comment swallows the
+# unpaired quote before end-of-line, so the mask succeeds with a real
+# boolean operator hidden, and that line's branch count drops from 2 to 1.
+# Nor is the phantom held to one line: the quote alternative accepts a
+# backslash followed by any character, the newline included, so a backslash
+# in final position on the opening line carries the phantom onto the next
+# line and hides real operator punctuation there, with the same shape
+# repeatable to extend it further. Second, a doubled slash inside a regex
+# literal reads as a line comment and masks the rest of that line, which
+# lowers a count silently as well. Neither residual is guarded; both are
+# recorded rather than fixed, and hardening the scanner against them is
+# deferred to a slice that can carry its own differential re-measurement.
+# Third, and unbounded: a star-slash sequence inside a regex literal's
+# character contents reads as a block-comment opener, and the block-comment
+# alternative's closing search crosses newlines, so it would otherwise pair
+# with the next real block comment anywhere later in the source and blank
+# every line between the two.
 # The scanner guards against this one directly: once a bare slash has been
 # stepped over on the current source line, a later star-slash sequence on
 # that same line is refused rather than treated as a comment opener, and the

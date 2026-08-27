@@ -122,6 +122,27 @@ CPP_DIGIT_SEPARATOR_LINE = "int x = 1'000 + (a ? b : c) + 2'000;\n"
 CPP_DIGIT_SEPARATOR_FUNCTION = (
     "int f(int a) { int x = 1'000 + (a ? 2 : 3) + 2'000; return x; }\n")
 
+# The measured counter-example to the claim that an odd number of quote
+# characters on a line forces a whole-file fallback: the first two quotes sit
+# inside single-character regex literals and pair into a phantom string over the
+# real boolean operator, the third is swallowed by the trailing line comment, so
+# the odd count never survives to end-of-line.
+REGEX_QUOTE_PHANTOM_SOURCE = (
+    "x = /'/.test(a) && /'/.test(b); // don't\n"
+    "y = p && q;\n"
+)
+
+# The measured counter-example to the claim that such a phantom stays on its own
+# line. _CB_FLAT_RE's escape alternative accepts a backslash followed by ANY
+# character, the newline included, so a backslash in final position on the
+# opening line carries the phantom forward and hides a real boolean operator on
+# the NEXT line. Chaining that shape extends the phantom arbitrarily.
+REGEX_QUOTE_PHANTOM_MULTILINE = (
+    "a = /'\\\n"
+    "p && q'/ ;\n"
+    "z = 1;\n"
+)
+
 
 def unmasked(text, lang):
     """Identity stand-in for qg._strip_for_scan, so a test can measure the same
@@ -694,6 +715,46 @@ class TestScanLangForPath(unittest.TestCase):
         self.assertEqual(
             qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "cbrace"),
             CBRACE_SOURCE_WITH_LITERALS)
+
+
+class TestRegexQuotePhantom(unittest.TestCase):
+    """The regex-versus-quote residual as the code actually behaves, measured
+    through the real callable. Two documented safety claims were falsified
+    here: the mask succeeds on an odd quote count, and the phantom it opens
+    can reach past the end of its own line."""
+
+    def test_an_odd_quote_count_does_not_force_the_fallback(self):
+        # Three quote characters on line one, mask still succeeds.
+        self.assertIsNotNone(
+            qg._mask_cbrace_literals(REGEX_QUOTE_PHANTOM_SOURCE))
+
+    def test_the_phantom_hides_one_real_boolean_operator(self):
+        first_raw = REGEX_QUOTE_PHANTOM_SOURCE.split("\n")[0]
+        masked = qg._mask_cbrace_literals(REGEX_QUOTE_PHANTOM_SOURCE)
+        first_masked = masked.split("\n")[0]
+        self.assertEqual(qg._branch_count(first_raw), 2)
+        self.assertEqual(qg._branch_count(first_masked), 1)
+
+    def test_a_plain_phantom_does_not_reach_the_next_line(self):
+        # Narrow by design: this pins ONE spot-checked shape, the one with no
+        # backslash before the newline. It is NOT a general boundary claim --
+        # see the multiline test below for the shape that crosses.
+        masked = qg._mask_cbrace_literals(REGEX_QUOTE_PHANTOM_SOURCE)
+        rows = masked.split("\n")
+        raw_rows = REGEX_QUOTE_PHANTOM_SOURCE.split("\n")
+        self.assertEqual(rows[1], raw_rows[1])
+
+    def test_a_trailing_backslash_carries_the_phantom_past_the_newline(self):
+        # The falsified line-boundedness claim, pinned: the mask succeeds and
+        # the hidden boolean operator sits on the SECOND line.
+        masked = qg._mask_cbrace_literals(REGEX_QUOTE_PHANTOM_MULTILINE)
+        self.assertIsNotNone(masked)
+        self.assertEqual(qg._branch_count(REGEX_QUOTE_PHANTOM_MULTILINE), 2)
+        self.assertEqual(qg._branch_count(masked), 1)
+        rows = masked.split("\n")
+        raw_rows = REGEX_QUOTE_PHANTOM_MULTILINE.split("\n")
+        self.assertNotEqual(rows[1], raw_rows[1])
+        self.assertEqual(rows[2], raw_rows[2])
 
 
 class TestScanTokensFallbackPaths(unittest.TestCase):
