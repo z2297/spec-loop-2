@@ -362,6 +362,81 @@ class TestRenderEscalation(unittest.TestCase):
         self.assertIn("- Answered-at: %s" % LATER, body)
 
 
+class TestPlaceEscalationSection(unittest.TestCase):
+    """place_escalation_section: one section per distinct question."""
+
+    def sections(self, body):
+        return [line for line in body.splitlines() if line.startswith("## ")]
+
+    def test_an_empty_page_gains_the_section(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        self.assertEqual(len(self.sections(body)), 1)
+        self.assertTrue(body.startswith(rs.ESCALATIONS_HEADER))
+
+    def test_an_identical_re_emit_replaces_rather_than_appends(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        again = rs.place_escalation_section(body, "s1", escalation())
+        self.assertEqual(len(self.sections(again)), 1)
+        self.assertEqual(again, body)
+
+    def test_a_different_context_under_the_same_id_gets_its_own_section(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        second = escalation(context="A different incident with its own decision.")
+        again = rs.place_escalation_section(body, "s1", second)
+        self.assertEqual(len(self.sections(again)), 2)
+        self.assertIn("A different incident", again)
+
+    def test_a_different_question_under_the_same_id_gets_its_own_section(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        second = escalation(question="Something else entirely?")
+        again = rs.place_escalation_section(body, "s1", second)
+        self.assertEqual(len(self.sections(again)), 2)
+
+    def test_a_different_id_gets_its_own_section(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        again = rs.place_escalation_section(body, "s1", escalation(id="s1:ambiguity"))
+        self.assertEqual(len(self.sections(again)), 2)
+
+    def test_a_re_emit_without_an_answer_leaves_a_recorded_answer_standing(self):
+        answered = escalation(status="ANSWERED", answer="bound them", answered_at=LATER)
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", answered)
+        again = rs.place_escalation_section(body, "s1", escalation())
+        self.assertEqual(again, body)
+        self.assertIn("- Answer: bound them", again)
+        self.assertIn("(status: ANSWERED)", again)
+
+    def test_a_re_emit_carrying_an_answer_updates_the_section_in_place(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        answered = escalation(status="ANSWERED", answer="bound them", answered_at=LATER)
+        again = rs.place_escalation_section(body, "s1", answered)
+        self.assertEqual(len(self.sections(again)), 1)
+        self.assertIn("- Answer: bound them", again)
+
+    def test_replacement_keeps_the_original_position(self):
+        first = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        both = rs.place_escalation_section(first, "s2", escalation(id="s2:ambiguity"))
+        answered = escalation(status="ANSWERED", answer="bound them", answered_at=LATER)
+        final = rs.place_escalation_section(both, "s1", answered)
+        self.assertEqual(len(self.sections(final)), 2)
+        self.assertIn("[s1]", self.sections(final)[0])
+        self.assertIn("[s2]", self.sections(final)[1])
+
+    def test_the_anchor_prefix_comes_from_the_anchor_template(self):
+        self.assertEqual(rs.ID_ANCHOR_PREFIX, rs.ID_ANCHOR.split("%s")[0])
+
+    def test_splitting_a_page_is_lossless(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        body = rs.place_escalation_section(body, "s2", escalation(id="s2:ambiguity"))
+        head, sections = rs._escalation_sections(body)
+        self.assertEqual(head + "".join(sections), body)
+        self.assertEqual(len(sections), 2)
+
+    def test_a_page_with_no_sections_splits_to_no_sections(self):
+        head, sections = rs._escalation_sections(rs.ESCALATIONS_HEADER)
+        self.assertEqual(head, rs.ESCALATIONS_HEADER)
+        self.assertEqual(sections, [])
+
+
 class TestAnswerWriteBack(unittest.TestCase):
     def setUp(self):
         self.body = (rs.ESCALATIONS_HEADER

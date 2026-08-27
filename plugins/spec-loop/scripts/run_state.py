@@ -90,6 +90,7 @@ ESCALATIONS_HEADER = ("# Escalations\n\n"
                       "into the matching entry.\n\n")
 
 ID_ANCHOR = "<!-- escalation-id: %s -->"
+ID_ANCHOR_PREFIX = ID_ANCHOR.split("%s")[0]
 SUMMARY_LIMIT = 200
 # Payload keys, in priority order, that may carry a human-readable one-liner.
 # Module-level for the same reason as the messages below: a wrapped literal
@@ -480,6 +481,76 @@ def render_escalation(scope, record):
     lines.append("- Answered-at:%s"
                  % (" " + record["answered_at"] if record.get("answered_at") else ""))
     return "\n".join(lines) + "\n\n"
+
+
+def _escalation_sections(body):
+    """Split an escalations.md body into its head and its `## ` sections (PURE).
+
+    The head is everything before the first heading. Joining the head with
+    every section reproduces the input exactly, so one section can be
+    rewritten and every other stays byte-identical to its rendering.
+    """
+    lines = body.splitlines(True)
+    starts = [index for index, line in enumerate(lines) if line.startswith("## ")]
+    bounds = starts + [len(lines)]
+    head = "".join(lines[:starts[0]]) if starts else body
+    sections = ["".join(lines[bounds[i]:bounds[i + 1]]) for i in range(len(starts))]
+    return head, sections
+
+
+def _section_line(section, prefix):
+    """The section's first line starting with `prefix`, or "" (PURE)."""
+    return next((line for line in section.splitlines()
+                 if line.startswith(prefix)), "")
+
+
+def _escalation_identity(section):
+    """The rendered fields that identify one escalation section (PURE).
+
+    Identity is the id anchor plus the rendered context and decision lines.
+    Two sections share an identity only given the same id, an identically
+    rendered question, and an identically rendered context -- the one
+    situation that means the same question reached the page twice. Title,
+    options and answer are deliberately excluded: they may legitimately
+    differ between a record and its own re-emit.
+    """
+    return (_section_line(section, ID_ANCHOR_PREFIX).strip(),
+            _section_line(section, "- Context:").strip(),
+            _section_line(section, "- The decision:").strip())
+
+
+def _section_has_answer(section):
+    """True given a rendered Answer line that carries text (PURE)."""
+    line = _section_line(section, "- Answer:")
+    return bool(line[len("- Answer:"):].strip())
+
+
+def place_escalation_section(body, scope, record):
+    """The escalations.md body with `record` rendered exactly once (PURE).
+
+    De-duplication is by true identity alone (see `_escalation_identity`). A
+    record matching a section already on the page rewrites that section in
+    place, keeping its position, so a re-emitted escalation-opened stops
+    adding a second copy of the same question. A record differing in either
+    field is a different question and gets its own section appended: no two
+    questions are ever merged, and no recorded answer is ever moved onto a
+    question that did not receive it. One rule protects an existing decision:
+    a matching record carrying no answer of its own leaves an already-answered
+    section untouched, so a bare re-emit cannot blank an answer or reset a
+    status. This function decides rendering only. Whether the human gate still
+    sees the escalation is `open_escalations`, which is deliberately separate
+    and stays fail-safe.
+    """
+    section = render_escalation(scope, record)
+    head, sections = _escalation_sections(body)
+    identity = _escalation_identity(section)
+    at = next((index for index, existing in enumerate(sections)
+               if _escalation_identity(existing) == identity), None)
+    if at is None:
+        return body + section
+    keep = _section_has_answer(sections[at]) and not _section_has_answer(section)
+    sections[at] = sections[at] if keep else section
+    return head + "".join(sections)
 
 
 def answer_escalation(body, escalation_id, answer, answered_at):
