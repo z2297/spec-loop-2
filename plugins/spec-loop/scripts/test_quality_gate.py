@@ -444,12 +444,18 @@ class TestCognitiveApprox(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 class TestStripForScan(unittest.TestCase):
-    def test_a_non_python_language_is_returned_byte_for_byte(self):
-        # This slice masks python only; the brace scanner keeps today's
-        # behaviour until the follow-up slice.
-        self.assertEqual(
-            qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "cbrace"),
-            CBRACE_SOURCE_WITH_LITERALS)
+    def test_a_brace_language_line_shape_survives_the_mask(self):
+        masked = qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "cbrace")
+        raw_rows = CBRACE_SOURCE_WITH_LITERALS.split("\n")
+        masked_rows = masked.split("\n")
+        raw_widths = [len(r) for r in raw_rows]
+        masked_widths = [len(r) for r in masked_rows]
+        self.assertEqual(len(masked_rows), len(raw_rows))
+        self.assertEqual(masked_widths, raw_widths)
+
+    def test_an_unknown_language_is_returned_byte_for_byte(self):
+        got = qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "ruby")
+        self.assertEqual(got, CBRACE_SOURCE_WITH_LITERALS)
 
     def test_line_count_and_line_lengths_survive_the_mask(self):
         masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
@@ -543,6 +549,42 @@ class TestMaskFailsTowardRaw(unittest.TestCase):
 
     def test_an_all_blank_file_is_not_treated_as_corruption(self):
         self.assertFalse(qg._mask_lost_too_much(["", "  "], ["", "  "]))
+
+
+class TestCbraceMaskFill(unittest.TestCase):
+    """What the brace-language fill is allowed to change, character by
+    character."""
+
+    def test_braces_and_newlines_survive_inside_a_literal(self):
+        masked = qg._mask_cbrace_literals("x = '{a}'\n")
+        self.assertEqual(masked.count("{"), 1)
+        self.assertEqual(masked.count("}"), 1)
+        self.assertEqual(masked.count("\n"), 1)
+        self.assertEqual(len(masked), len("x = '{a}'\n"))
+
+    def test_literal_content_becomes_the_shared_sentinel(self):
+        masked = qg._mask_cbrace_literals("x = 'ab'\n")
+        self.assertEqual(masked, "x = " + qg._SCAN_SENTINEL * 4 + "\n")
+
+    def test_code_outside_a_literal_is_byte_for_byte(self):
+        masked = qg._mask_cbrace_literals("const a = b;\n")
+        self.assertEqual(masked, "const a = b;\n")
+
+    def test_an_unterminated_construct_yields_none(self):
+        self.assertIsNone(
+            qg._mask_cbrace_literals(CBRACE_UNTERMINATED_SOURCE))
+
+    def test_the_corruption_guard_inside_the_cbrace_mask_falls_back(self):
+        # The guard AS WRITTEN inside _mask_cbrace_literals. Masking never
+        # empties a line (the sentinel is non-whitespace), so the signal is
+        # forced rather than constructed from real source -- the same
+        # technique the python mask's guard test uses.
+        with mock.patch.object(qg, "_mask_lost_too_much", return_value=True):
+            self.assertIsNone(qg._mask_cbrace_literals("x = 1;\n"))
+
+    def test_an_unterminated_brace_source_still_yields_raw_counts(self):
+        masked = qg._strip_for_scan(CBRACE_UNTERMINATED_SOURCE, "cbrace")
+        self.assertEqual(masked, CBRACE_UNTERMINATED_SOURCE)
 
 
 class TestScanTokensFallbackPaths(unittest.TestCase):
@@ -757,10 +799,21 @@ class TestAnalyzeBuiltinMasksLiterals(unittest.TestCase):
         self.assertEqual(probe["metrics"]["nesting_depth"], 2)
         self.assertEqual(probe["metrics"]["parameter_count"], 2)
 
-    def test_a_brace_language_keeps_todays_counts(self):
+    def test_a_brace_language_literal_stops_being_counted(self):
         outer = self.measure(CBRACE_SOURCE_WITH_LITERALS, "m.js")["outer"]
-        raw = self.measure_unmasked(CBRACE_SOURCE_WITH_LITERALS, "m.js")
-        self.assertEqual(outer["metrics"], raw["outer"]["metrics"])
+        raw = self.measure_unmasked(
+            CBRACE_SOURCE_WITH_LITERALS, "m.js")["outer"]
+        got = outer["metrics"]
+        was = raw["metrics"]
+        # The fixture's literal carries six fake branches; the one real
+        # branch is the ternary on the return line.
+        self.assertLess(
+            got["cyclomatic_complexity"], was["cyclomatic_complexity"])
+        self.assertEqual(got["cyclomatic_complexity"], 2)
+        self.assertEqual(got["nesting_depth"], was["nesting_depth"])
+        self.assertEqual(got["method_lines"], was["method_lines"])
+        self.assertEqual(outer["line_start"], raw["line_start"])
+        self.assertEqual(outer["line_end"], raw["line_end"])
 
     def test_an_untokenizable_python_file_still_yields_raw_counts(self):
         broken = "def probe(a):\n    return a  # " + BRANCH_WORDS_IN_LITERALS \

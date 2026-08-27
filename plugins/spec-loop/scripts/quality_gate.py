@@ -28,10 +28,11 @@ Pipeline:
      ts / java / c# / go styles, language by extension) and estimates each
      metric by branch-keyword counting, signature parsing, and indent/brace
      nesting. Branch counting reads a masked copy of the source in which the
-     content of python string literals and comments has been replaced by a
-     sentinel, so words and punctuation inside them are not measured as
-     branching; a tokenizer failure falls back to the raw text. Every such
-     finding is marked "source": "builtin-heuristic".
+     content of string literals and comments has been replaced by a sentinel
+     -- python via stdlib tokenize, brace languages via a hand scanner that
+     keeps ${} interpolation code visible -- so words and punctuation inside
+     them are not measured as branching; a scanner failure falls back to the
+     raw text. Every such finding is marked "source": "builtin-heuristic".
      cognitive_complexity is ONLY ever produced by this heuristic (a
      nesting-weighted approximation) or skipped -- it is never attributed to a
      real tool.
@@ -436,7 +437,9 @@ def _count_params(sig):
 # non-whitespace sentinel rather than spaces, because _cognitive_approx derives
 # its nesting level from leading whitespace: space-fill would RAISE the measured
 # cognitive complexity of dozens of functions. Every failure path returns the
-# raw text, so the worst case remains today's over-count.
+# raw text, so the worst case remains today's over-count. Two maskers sit
+# behind this seam: python via stdlib tokenize, brace languages via the hand
+# scanner below.
 
 _SCAN_SENTINEL = "x"
 
@@ -684,14 +687,61 @@ def _cb_template_step(text, pos, stop):
     return None
 
 
+# The fill preserves the newline and the two brace characters. Line count and
+# line lengths matter because a masked body must cover exactly the same lines
+# as its raw body, and brace positions matter because _cognitive_approx's
+# brace-language arm derives its nesting level from the brace counts it sees
+# on the masked text: dropping a brace out of a literal could RAISE the
+# weight of every following line, and the mask is only ever allowed to lower
+# a count. Neither character carries a branch word or operator punctuation,
+# so preserving both is measurement-neutral. Same shape as the reason the
+# sentinel is non-whitespace.
+_CB_PRESERVED = "\n{}"
+
+
+def _cb_masked_char(ch):
+    """The mask character of one source character: the newline and the two
+    brace characters survive, everything else becomes the sentinel.
+    (PURE)"""
+    if ch in _CB_PRESERVED:
+        return ch
+    return _SCAN_SENTINEL
+
+
+def _mask_cbrace_literals(text):
+    """`text` with comment and string content replaced by the non-whitespace
+    sentinel, preserving line count, line lengths and brace positions, else
+    None to fall back to the raw text. Code inside a ${} interpolation stays
+    visible. (PURE)"""
+    spans = _cbrace_spans(text, 0, len(text))
+    if spans is None:
+        return None
+    chars = list(text)
+    for begin, end in spans:
+        chars[begin:end] = [_cb_masked_char(ch) for ch in chars[begin:end]]
+    masked = "".join(chars)
+    if _mask_lost_too_much(text.split("\n"), masked.split("\n")):
+        return None
+    return masked
+
+
+def _mask_for_lang(text, lang):
+    """The masked form of `text` in one language family, else None once no
+    mask applies. (PURE)"""
+    if lang == "python":
+        return _mask_python_literals(text)
+    if lang == "cbrace":
+        return _mask_cbrace_literals(text)
+    return None
+
+
 def _strip_for_scan(text, lang):
     """`text` with string-literal and comment content masked out, so words and
-    punctuation inside literals stop being measured as real branching. Python is
-    masked via stdlib tokenize; every other language is returned unchanged, so
-    the brace scanner keeps its current behaviour. (PURE)"""
-    if lang != "python":
-        return text
-    masked = _mask_python_literals(text)
+    punctuation inside literals stop being measured as real branching. Python
+    is masked via stdlib tokenize, brace languages via the hand scanner that
+    keeps ${} interpolation code visible. Any other language family, and
+    every mask failure, returns the raw text. (PURE)"""
+    masked = _mask_for_lang(text, lang)
     if masked is None:
         return text
     return masked
