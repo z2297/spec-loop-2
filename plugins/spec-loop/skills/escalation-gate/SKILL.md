@@ -80,9 +80,13 @@ and its context says exactly that about itself. The lost-slice record carries ne
 nothing to carry, and its context does not announce the gap: it states only that a null result
 proves nothing about which guard ran. Read that absence as absence, not as a claim about the
 cause. The trigger reports a machine failure and is never answerable by re-dispatching an agent,
-so only a human or the controller resolves it — and only the exception record spells the choice
-out as three options, retry the slice, skip it, or stop the run; the lost-slice record asks one
-question, whether to re-run the wave, and carries a single generic recommended-default option),
+so only a human or the controller resolves it. Both records now offer the same three
+controller-named options, retry the slice, skip it, or stop the run, each detail naming the
+CONTROLLER as what applies it — matched to the `options` argument the wave-entry fallback
+passes to `esc`, alongside the one `runSliceError` already passed. What still separates the two
+is the evidence and the ask: the exception record carries the exception text and the last
+stage/role dispatched and asks which of the three to take, while the lost-slice record carries
+neither and asks only whether to re-run the wave),
 and the council's **over-scope flag** (`critique.over_scope.flag`). The flag is a record: it is
 carried into the `council-verdict` payload and the slice sidecar with its reason, and it raises no
 escalation, changes no verdict, suppresses no split, and blocks nothing. There are exactly five
