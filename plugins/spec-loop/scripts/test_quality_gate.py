@@ -4,11 +4,13 @@
 Covers the PURE diff parser on embedded fixture text, config loading (defaults /
 loaded / disabled / malformed), the pure metric primitives (parameter counting,
 branch counting, nesting depth, CRAP, cognitive approximation), the scan mask
-that hides python string-literal and comment content from the two branch
-scans (including its fall-back-to-raw paths), a differential harness
-comparing masked against raw measurement over every heuristic-readable file
-in the plugin tree, the builtin heuristic function extraction for python and
-brace languages, backend CSV/JSON
+that hides string-literal and comment content from the two branch scans for
+python and the JS/TypeScript family alike (including its extension routing, the
+brace languages left deliberately unmasked, the measured regex-versus-quote
+residuals, and every fall-back-to-raw path), a differential harness comparing
+masked against raw measurement over every heuristic-readable file in the plugin
+tree, the builtin heuristic function extraction for python and brace languages,
+backend CSV/JSON
 parsing and backend+heuristic merging with per-metric sourcing (cognitive is
 NEVER attributed to a tool), coverage parsing (cobertura + lcov) and CRAP
 assembly, custom-gate evaluation (metric-form evaluated here, command-form
@@ -77,6 +79,94 @@ MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE = (
     "        ''' " + "if" + " b " + "else" + " 'z'\n"
     "        return s\n"
     "    return b\n"
+)
+
+# A template literal whose interpolation carries REAL operators, plus a
+# comment and a single-quoted string that carry fake ones. Module level, for
+# the reason given above the python fixtures.
+CBRACE_TEMPLATE_SOURCE = (
+    "function probe(e) {\n"
+    "    // a comment that isn't code: " + BRANCH_WORDS_IN_LITERALS + "\n"
+    "    const s = `msg ${String((e && e.message) || e)} "
+    + BRANCH_WORDS_IN_LITERALS + "`;\n"
+    "    /* block " + BRANCH_WORDS_IN_LITERALS + " */\n"
+    "    " + "if" + " (s) { return s; }\n"
+    "    return '" + BRANCH_WORDS_IN_LITERALS + "';\n"
+    "}\n"
+)
+
+CBRACE_UNTERMINATED_SOURCE = (
+    "function probe(a) {\n"
+    "    const s = 'never closed " + BRANCH_WORDS_IN_LITERALS + ";\n"
+    "    return a;\n"
+    "}\n"
+)
+
+CBRACE_APOSTROPHE_COMMENTS_SOURCE = (
+    "function probe(a, b) {\n"
+    "    // it doesn't matter\n"
+    "    " + "if" + " (a) { return b; }\n"
+    "    // and it isn't a literal\n"
+    "    " + "for" + " (const x of b) { a += x; }\n"
+    "    return a;\n"
+    "}\n"
+)
+
+# Three shapes that a JS-quoting mask corrupts in a NON-JS brace language. In
+# Rust a single quote opens a lifetime, in C++ it also serves as a digit
+# separator, so two of them on one line pair into a phantom string spanning the
+# real code between them. Measured raw-versus-masked branch counts are pinned
+# below. The third fixture is the C++ shape wrapped in an extractable function,
+# used to drive the routing through analyze_builtin end to end.
+RUST_LIFETIME_LINE = (
+    "fn f(a: &'x A, b: &'y B) -> bool { helper(&'x a) && other(&'y b) }\n")
+CPP_DIGIT_SEPARATOR_LINE = "int x = 1'000 + (a ? b : c) + 2'000;\n"
+CPP_DIGIT_SEPARATOR_FUNCTION = (
+    "int f(int a) { int x = 1'000 + (a ? 2 : 3) + 2'000; return x; }\n")
+
+# The measured counter-example to the claim that an odd number of quote
+# characters on a line forces a whole-file fallback: the first two quotes sit
+# inside single-character regex literals and pair into a phantom string over the
+# real boolean operator, the third is swallowed by the trailing line comment, so
+# the odd count never survives to end-of-line.
+REGEX_QUOTE_PHANTOM_SOURCE = (
+    "x = /'/.test(a) && /'/.test(b); // don't\n"
+    "y = p && q;\n"
+)
+
+# The measured counter-example to the claim that such a phantom stays on its own
+# line. _CB_FLAT_RE's escape alternative accepts a backslash followed by ANY
+# character, the newline included, so a backslash in final position on the
+# opening line carries the phantom forward and hides a real boolean operator on
+# the NEXT line. Chaining that shape extends the phantom arbitrarily.
+REGEX_QUOTE_PHANTOM_MULTILINE = (
+    "a = /'\\\n"
+    "p && q'/ ;\n"
+    "z = 1;\n"
+)
+
+# A JSX text node where an apostrophe is prose, not a string opener. The hand
+# scanner has no model of JSX text, so the two contractions on the text line
+# pair into a phantom string covering the real code between them, hiding the
+# genuine boolean operator. Measured raw-versus-masked branch counts are
+# pinned below.
+JSX_APOSTROPHE_FUNCTION = (
+    "function Row(p) {\n"
+    "  return (\n"
+    "    <p>It's {p.a && p.b} - don't worry</p>\n"
+    "  );\n"
+    "}\n"
+)
+
+# A backtick inside a regex literal's character contents. The template
+# alternative's closing search crosses newlines with no escape needed, so it
+# would otherwise pair with the next real backtick anywhere later in the
+# source and blank real code -- including a genuine boolean operator --
+# between the two.
+BACKTICK_REGEX_PHANTOM_SOURCE = (
+    "const open = /`/;\n"
+    "function f(a){ return a && a.x ? 1 : 2; }\n"
+    "const close = /`/;\n"
 )
 
 
@@ -413,12 +503,18 @@ class TestCognitiveApprox(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 class TestStripForScan(unittest.TestCase):
-    def test_a_non_python_language_is_returned_byte_for_byte(self):
-        # This slice masks python only; the brace scanner keeps today's
-        # behaviour until the follow-up slice.
-        self.assertEqual(
-            qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "cbrace"),
-            CBRACE_SOURCE_WITH_LITERALS)
+    def test_a_brace_language_line_shape_survives_the_mask(self):
+        masked = qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "js")
+        raw_rows = CBRACE_SOURCE_WITH_LITERALS.split("\n")
+        masked_rows = masked.split("\n")
+        raw_widths = [len(r) for r in raw_rows]
+        masked_widths = [len(r) for r in masked_rows]
+        self.assertEqual(len(masked_rows), len(raw_rows))
+        self.assertEqual(masked_widths, raw_widths)
+
+    def test_an_unknown_language_is_returned_byte_for_byte(self):
+        got = qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "ruby")
+        self.assertEqual(got, CBRACE_SOURCE_WITH_LITERALS)
 
     def test_line_count_and_line_lengths_survive_the_mask(self):
         masked = qg._strip_for_scan(LITERAL_HEAVY_SOURCE, "python")
@@ -514,6 +610,220 @@ class TestMaskFailsTowardRaw(unittest.TestCase):
         self.assertFalse(qg._mask_lost_too_much(["", "  "], ["", "  "]))
 
 
+class TestCbraceMaskFill(unittest.TestCase):
+    """What the brace-language fill is allowed to change, character by
+    character."""
+
+    def test_braces_and_newlines_survive_inside_a_literal(self):
+        masked = qg._mask_cbrace_literals("x = '{a}'\n")
+        self.assertEqual(masked.count("{"), 1)
+        self.assertEqual(masked.count("}"), 1)
+        self.assertEqual(masked.count("\n"), 1)
+        self.assertEqual(len(masked), len("x = '{a}'\n"))
+
+    def test_literal_content_becomes_the_shared_sentinel(self):
+        masked = qg._mask_cbrace_literals("x = 'ab'\n")
+        self.assertEqual(masked, "x = " + qg._SCAN_SENTINEL * 4 + "\n")
+
+    def test_code_outside_a_literal_is_byte_for_byte(self):
+        masked = qg._mask_cbrace_literals("const a = b;\n")
+        self.assertEqual(masked, "const a = b;\n")
+
+    def test_an_unterminated_construct_yields_none(self):
+        self.assertIsNone(
+            qg._mask_cbrace_literals(CBRACE_UNTERMINATED_SOURCE))
+
+    def test_the_corruption_guard_inside_the_cbrace_mask_falls_back(self):
+        # The guard AS WRITTEN inside _mask_cbrace_literals. Masking never
+        # empties a line (the sentinel is non-whitespace), so the signal is
+        # forced rather than constructed from real source -- the same
+        # technique the python mask's guard test uses.
+        with mock.patch.object(qg, "_mask_lost_too_much", return_value=True):
+            self.assertIsNone(qg._mask_cbrace_literals("x = 1;\n"))
+
+    def test_an_unterminated_brace_source_still_yields_raw_counts(self):
+        masked = qg._strip_for_scan(CBRACE_UNTERMINATED_SOURCE, "js")
+        self.assertEqual(masked, CBRACE_UNTERMINATED_SOURCE)
+
+    def test_a_star_slash_inside_a_regex_literal_does_not_open_a_phantom_comment(self):
+        # A stepped-over slash inside a character class, followed by a `*`,
+        # forms a star-slash sequence that would otherwise open a
+        # block-comment span reaching all the way to the next real block
+        # comment much later in the source, silently dropping the branches
+        # of every line in between. The scan is required to refuse this
+        # opener and fall back to raw text instead.
+        source = (
+            "const re = /[/*]/;\n"
+            "function f(a){ ternary(a, a) ; }\n"
+            "/* real comment */\n"
+            "function g(b){ ternary(b, 1) ; }\n"
+        )
+        self.assertIsNone(qg._mask_cbrace_literals(source))
+        self.assertEqual(qg._strip_for_scan(source, "js"), source)
+
+    def test_an_ordinary_multiline_block_comment_still_masks(self):
+        source = "/* line one\nline two */\nconst a = b;\n"
+        masked = qg._mask_cbrace_literals(source)
+        self.assertIsNotNone(masked)
+        self.assertEqual(masked.count("\n"), source.count("\n"))
+        self.assertNotIn("line", masked)
+        self.assertIn("const a = b;", masked)
+
+    def test_a_backtick_inside_a_regex_literal_does_not_open_a_phantom_template(self):
+        # A stepped-over slash on a source line, followed later by a
+        # backtick, would otherwise open a template-literal span reaching
+        # all the way to the next real backtick much later in the source,
+        # silently hiding the boolean operator on the line in between. The
+        # scan is required to refuse this opener and fall back to raw text.
+        self.assertIsNone(
+            qg._mask_cbrace_literals(BACKTICK_REGEX_PHANTOM_SOURCE))
+        self.assertEqual(
+            qg._strip_for_scan(BACKTICK_REGEX_PHANTOM_SOURCE, "js"),
+            BACKTICK_REGEX_PHANTOM_SOURCE)
+
+    def test_an_ordinary_template_literal_still_masks(self):
+        source = "const a = `line one\nline two`;\n"
+        masked = qg._mask_cbrace_literals(source)
+        self.assertIsNotNone(masked)
+        self.assertEqual(masked.count("\n"), source.count("\n"))
+        self.assertNotIn("line", masked)
+
+
+class TestScanLangForPath(unittest.TestCase):
+    """Which extensions the scan mask is allowed to lex. The hand scanner
+    implements JS/TypeScript quoting rules alone, so every other brace
+    extension has to stay on raw text -- today's over-count, the safe
+    direction."""
+
+    def test_the_js_family_extensions_are_masked(self):
+        self.assertEqual(qg._scan_lang_for("a.js"), "js")
+        self.assertEqual(qg._scan_lang_for("a.mjs"), "js")
+        self.assertEqual(qg._scan_lang_for("a.cjs"), "js")
+        self.assertEqual(qg._scan_lang_for("a.ts"), "js")
+
+    def test_a_python_path_keeps_the_python_mask(self):
+        self.assertEqual(qg._scan_lang_for("a.py"), "python")
+
+    def test_the_other_brace_extensions_are_left_on_raw_text(self):
+        self.assertIsNone(qg._scan_lang_for("a.rs"))
+        self.assertIsNone(qg._scan_lang_for("a.c"))
+        self.assertIsNone(qg._scan_lang_for("a.h"))
+        self.assertIsNone(qg._scan_lang_for("a.cpp"))
+        self.assertIsNone(qg._scan_lang_for("a.cc"))
+        self.assertIsNone(qg._scan_lang_for("a.hpp"))
+        self.assertIsNone(qg._scan_lang_for("a.go"))
+        self.assertIsNone(qg._scan_lang_for("a.java"))
+        self.assertIsNone(qg._scan_lang_for("a.cs"))
+        self.assertEqual(qg._lang_for("a.rs"), "cbrace")
+
+    def test_jsx_and_tsx_are_also_left_on_raw_text(self):
+        # The hand scanner has no model of a JSX text node, where an
+        # apostrophe is prose, not a string opener, so these two extensions
+        # stay on raw text for a different reason than the other brace
+        # languages above -- see test_a_jsx_apostrophe_pair_keeps_both_branches.
+        self.assertIsNone(qg._scan_lang_for("a.jsx"))
+        self.assertIsNone(qg._scan_lang_for("a.TSX"))
+        self.assertEqual(qg._lang_for("a.jsx"), "cbrace")
+        self.assertEqual(qg._lang_for("a.tsx"), "cbrace")
+
+    def test_an_unknown_extension_is_left_on_raw_text(self):
+        self.assertIsNone(qg._scan_lang_for("a.rb"))
+
+    def test_a_rust_lifetime_pair_keeps_both_branches(self):
+        # The defect this routing prevents, measured on the real callables:
+        # lexed with JS rules the two lifetimes pair into a phantom string
+        # over the boolean operator between them, dropping 2 branches to 1.
+        self.assertEqual(qg._branch_count(RUST_LIFETIME_LINE), 2)
+        self.assertEqual(
+            qg._branch_count(qg._mask_cbrace_literals(RUST_LIFETIME_LINE)), 1)
+        scanned = qg._strip_for_scan(
+            RUST_LIFETIME_LINE, qg._scan_lang_for("lib.rs"))
+        self.assertEqual(scanned, RUST_LIFETIME_LINE)
+        self.assertEqual(qg._branch_count(scanned), 2)
+
+    def test_a_cplusplus_digit_separator_pair_keeps_both_branches(self):
+        self.assertEqual(qg._branch_count(CPP_DIGIT_SEPARATOR_LINE), 2)
+        self.assertEqual(
+            qg._branch_count(
+                qg._mask_cbrace_literals(CPP_DIGIT_SEPARATOR_LINE)), 1)
+        scanned = qg._strip_for_scan(
+            CPP_DIGIT_SEPARATOR_LINE, qg._scan_lang_for("a.cpp"))
+        self.assertEqual(scanned, CPP_DIGIT_SEPARATOR_LINE)
+        self.assertEqual(qg._branch_count(scanned), 2)
+
+    def test_analyze_builtin_keeps_both_branches_in_a_cplusplus_file(self):
+        # The end-to-end pin: this drives the routing through the product
+        # entry point, so a mis-wired analyze_builtin fails here rather than
+        # passing on hand-composed calls. Measured before the routing landed,
+        # this reported 1; the raw line has 2.
+        findings, _ = qg.analyze_builtin(
+            "a.cpp", CPP_DIGIT_SEPARATOR_FUNCTION, [(1, 1)])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(
+            findings[0]["metrics"]["cyclomatic_complexity"], 2)
+
+    def test_a_jsx_apostrophe_pair_keeps_both_branches(self):
+        # The defect this routing prevents, measured on the real callables:
+        # lexed with JS quoting rules the two contractions on the text line
+        # pair into a phantom string over the boolean operator between them,
+        # dropping 2 branches to 1.
+        findings, _ = qg.analyze_builtin(
+            "Row.jsx", JSX_APOSTROPHE_FUNCTION, [(1, 5)])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(
+            findings[0]["metrics"]["cyclomatic_complexity"], 2)
+        scanned = qg._strip_for_scan(
+            JSX_APOSTROPHE_FUNCTION, qg._scan_lang_for("Row.tsx"))
+        self.assertEqual(scanned, JSX_APOSTROPHE_FUNCTION)
+
+    def test_the_extraction_family_name_is_no_longer_a_mask_language(self):
+        # "cbrace" still selects the brace extraction model, so it must NOT
+        # double as a mask language: handed to the mask it returns raw text.
+        self.assertEqual(
+            qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "cbrace"),
+            CBRACE_SOURCE_WITH_LITERALS)
+
+
+class TestRegexQuotePhantom(unittest.TestCase):
+    """The regex-versus-quote residual as the code actually behaves, measured
+    through the real callable. Two documented safety claims were falsified
+    here: the mask succeeds on an odd quote count, and the phantom it opens
+    can reach past the end of its own line."""
+
+    def test_an_odd_quote_count_does_not_force_the_fallback(self):
+        # Three quote characters on line one, mask still succeeds.
+        self.assertIsNotNone(
+            qg._mask_cbrace_literals(REGEX_QUOTE_PHANTOM_SOURCE))
+
+    def test_the_phantom_hides_one_real_boolean_operator(self):
+        first_raw = REGEX_QUOTE_PHANTOM_SOURCE.split("\n")[0]
+        masked = qg._mask_cbrace_literals(REGEX_QUOTE_PHANTOM_SOURCE)
+        first_masked = masked.split("\n")[0]
+        self.assertEqual(qg._branch_count(first_raw), 2)
+        self.assertEqual(qg._branch_count(first_masked), 1)
+
+    def test_a_plain_phantom_does_not_reach_the_next_line(self):
+        # Narrow by design: this pins ONE spot-checked shape, the one with no
+        # backslash before the newline. It is NOT a general boundary claim --
+        # the multiline test below pins the shape that crosses.
+        masked = qg._mask_cbrace_literals(REGEX_QUOTE_PHANTOM_SOURCE)
+        rows = masked.split("\n")
+        raw_rows = REGEX_QUOTE_PHANTOM_SOURCE.split("\n")
+        self.assertEqual(rows[1], raw_rows[1])
+
+    def test_a_trailing_backslash_carries_the_phantom_past_the_newline(self):
+        # The falsified line-boundedness claim, pinned: the mask succeeds and
+        # the hidden boolean operator sits on the SECOND line.
+        masked = qg._mask_cbrace_literals(REGEX_QUOTE_PHANTOM_MULTILINE)
+        self.assertIsNotNone(masked)
+        self.assertEqual(qg._branch_count(REGEX_QUOTE_PHANTOM_MULTILINE), 2)
+        self.assertEqual(qg._branch_count(masked), 1)
+        rows = masked.split("\n")
+        raw_rows = REGEX_QUOTE_PHANTOM_MULTILINE.split("\n")
+        self.assertNotEqual(rows[1], raw_rows[1])
+        self.assertEqual(rows[2], raw_rows[2])
+
+
 class TestScanTokensFallbackPaths(unittest.TestCase):
     """_scan_tokens's two guards send the whole mask back to raw text, but
     stdlib tokenize never produces either shape for real source, so each is
@@ -543,6 +853,82 @@ class TestScanLinesForFallback(unittest.TestCase):
         lines = source.splitlines()
         with mock.patch.object(qg, "_strip_for_scan", longer_scan):
             self.assertEqual(qg._scan_lines_for(source, "python", lines), lines)
+
+
+class TestCbraceSpanScanner(unittest.TestCase):
+    """The span scanner is what decides which characters the brace-language
+    mask is allowed to blank. Every case is driven through the real
+    callables."""
+
+    def spans(self, text):
+        return qg._cbrace_spans(text, 0, len(text))
+
+    def covered(self, text):
+        """The concatenated text of every span the scanner reported."""
+        return "".join(text[a:b] for a, b in self.spans(text))
+
+    def test_a_line_comment_is_one_span_to_the_newline(self):
+        text = "a = 1 // note\nb = 2\n"
+        self.assertEqual(self.covered(text), "// note")
+
+    def test_a_block_comment_span_crosses_lines(self):
+        text = "a\n/* one\ntwo */\nb\n"
+        self.assertEqual(self.covered(text), "/* one\ntwo */")
+
+    def test_both_quote_flavours_are_spans_including_delimiters(self):
+        text = "x = 'a' + \"b\"\n"
+        self.assertEqual(self.covered(text), "'a'\"b\"")
+
+    def test_an_escaped_quote_does_not_close_a_string(self):
+        text = "x = 'a\\'b' + 1\n"
+        self.assertEqual(self.covered(text), "'a\\'b'")
+
+    def test_an_apostrophe_inside_a_comment_opens_nothing(self):
+        text = "// it doesn't\nif (a) { b() }\n"
+        self.assertEqual(self.covered(text), "// it doesn't")
+
+    def test_template_interpolation_code_is_not_covered(self):
+        text = "x = `m ${a && b} t`\n"
+        covered = self.covered(text)
+        self.assertIn("m ", covered)
+        self.assertNotIn("&&", covered)
+
+    def test_a_string_inside_an_interpolation_is_covered(self):
+        text = "x = `m ${f('q')} t`\n"
+        covered = self.covered(text)
+        self.assertIn("'q'", covered)
+        self.assertNotIn("f(", covered)
+
+    def test_a_brace_inside_an_interpolated_string_does_not_close_it(self):
+        text = "x = `m ${f('}')} t`\n"
+        covered = self.covered(text)
+        self.assertIn("'}'", covered)
+        self.assertNotIn("f(", covered)
+
+    def test_an_escaped_backtick_does_not_close_a_template(self):
+        # Drives the escape hop inside _cb_template_hop: the whole literal,
+        # escaped delimiter included, comes back as one span.
+        text = "x = `m \\` t` + 1\n"
+        self.assertEqual(self.covered(text), "`m \\` t`")
+
+    def test_a_lone_slash_is_stepped_over_as_division(self):
+        text = "x = a / b\n"
+        self.assertEqual(self.spans(text), [])
+
+    def test_an_unterminated_string_fails_toward_raw(self):
+        self.assertIsNone(self.spans("x = 'open\n"))
+
+    def test_an_unterminated_block_comment_fails_toward_raw(self):
+        self.assertIsNone(self.spans("x = 1 /* open\n"))
+
+    def test_an_unterminated_template_fails_toward_raw(self):
+        self.assertIsNone(self.spans("x = `open\n"))
+
+    def test_an_unterminated_interpolation_fails_toward_raw(self):
+        self.assertIsNone(self.spans("x = `m ${a\n"))
+
+    def test_an_unterminated_string_inside_an_interpolation_fails(self):
+        self.assertIsNone(self.spans("x = `m ${f('open} t`\n"))
 
 
 # --------------------------------------------------------------------------
@@ -650,10 +1036,21 @@ class TestAnalyzeBuiltinMasksLiterals(unittest.TestCase):
         self.assertEqual(probe["metrics"]["nesting_depth"], 2)
         self.assertEqual(probe["metrics"]["parameter_count"], 2)
 
-    def test_a_brace_language_keeps_todays_counts(self):
+    def test_a_brace_language_literal_stops_being_counted(self):
         outer = self.measure(CBRACE_SOURCE_WITH_LITERALS, "m.js")["outer"]
-        raw = self.measure_unmasked(CBRACE_SOURCE_WITH_LITERALS, "m.js")
-        self.assertEqual(outer["metrics"], raw["outer"]["metrics"])
+        raw = self.measure_unmasked(
+            CBRACE_SOURCE_WITH_LITERALS, "m.js")["outer"]
+        got = outer["metrics"]
+        was = raw["metrics"]
+        # The fixture's literal carries six fake branches; the one real
+        # branch is the ternary on the return line.
+        self.assertLess(
+            got["cyclomatic_complexity"], was["cyclomatic_complexity"])
+        self.assertEqual(got["cyclomatic_complexity"], 2)
+        self.assertEqual(got["nesting_depth"], was["nesting_depth"])
+        self.assertEqual(got["method_lines"], was["method_lines"])
+        self.assertEqual(outer["line_start"], raw["line_start"])
+        self.assertEqual(outer["line_end"], raw["line_end"])
 
     def test_an_untokenizable_python_file_still_yields_raw_counts(self):
         broken = "def probe(a):\n    return a  # " + BRANCH_WORDS_IN_LITERALS \
@@ -678,6 +1075,73 @@ class TestAnalyzeBuiltinMasksLiterals(unittest.TestCase):
         self.assertEqual(
             masked["metrics"]["cognitive_complexity"],
             raw["metrics"]["cognitive_complexity"])
+
+
+class TestCbraceMaskedMetrics(unittest.TestCase):
+    """The three constructs the brace-language mask must get right, measured
+    end to end through analyze_builtin."""
+
+    def measure(self, source, path):
+        findings, _ = qg.analyze_builtin(
+            path, source, [(1, len(source.splitlines()))])
+        return {f["function"]: f for f in findings}
+
+    def measure_unmasked(self, source, path):
+        with mock.patch.object(qg, "_strip_for_scan", unmasked):
+            return self.measure(source, path)
+
+    def test_real_operators_inside_an_interpolation_are_still_counted(self):
+        masked = self.measure(CBRACE_TEMPLATE_SOURCE, "m.js")["probe"]
+        # The real branches: the two operators inside ${...} and the one
+        # branch keyword. Base path plus three.
+        self.assertEqual(masked["metrics"]["cyclomatic_complexity"], 4)
+
+    def test_the_template_and_comment_text_is_not_counted(self):
+        masked = self.measure(CBRACE_TEMPLATE_SOURCE, "m.js")["probe"]
+        raw = self.measure_unmasked(CBRACE_TEMPLATE_SOURCE, "m.js")["probe"]
+        got = masked["metrics"]
+        was = raw["metrics"]
+        self.assertLess(
+            got["cyclomatic_complexity"], was["cyclomatic_complexity"])
+        self.assertLess(
+            got["cognitive_complexity"], was["cognitive_complexity"])
+
+    def test_the_shape_metrics_and_the_span_are_untouched(self):
+        masked = self.measure(CBRACE_TEMPLATE_SOURCE, "m.js")["probe"]
+        raw = self.measure_unmasked(CBRACE_TEMPLATE_SOURCE, "m.js")["probe"]
+        got = masked["metrics"]
+        was = raw["metrics"]
+        self.assertEqual(got["nesting_depth"], was["nesting_depth"])
+        self.assertEqual(got["method_lines"], was["method_lines"])
+        self.assertEqual(got["parameter_count"], was["parameter_count"])
+        self.assertEqual(masked["line_start"], raw["line_start"])
+        self.assertEqual(masked["line_end"], raw["line_end"])
+
+    def test_an_apostrophe_in_a_comment_does_not_blank_the_code(self):
+        # A strings-only scanner opens at the first comment's apostrophe a
+        # literal it can never close, since the quote alternatives exclude
+        # the newline, so the whole file loses its mask and reverts to
+        # today's over-count. Both real branches must survive AND the mask
+        # must succeed -- the assertIsNotNone is what makes this test bite
+        # on a strings-only scanner, because the equalities below hold
+        # either way once the mask falls back to raw text.
+        source = CBRACE_APOSTROPHE_COMMENTS_SOURCE
+        self.assertIsNotNone(qg._mask_cbrace_literals(source))
+        masked = self.measure(source, "m.js")["probe"]
+        raw = self.measure_unmasked(source, "m.js")["probe"]
+        got = masked["metrics"]
+        was = raw["metrics"]
+        self.assertEqual(
+            got["cyclomatic_complexity"], was["cyclomatic_complexity"])
+        self.assertEqual(
+            got["cognitive_complexity"], was["cognitive_complexity"])
+
+    def test_the_mjs_extension_takes_the_same_path(self):
+        masked = self.measure(CBRACE_TEMPLATE_SOURCE, "m.mjs")["probe"]
+        raw = self.measure_unmasked(CBRACE_TEMPLATE_SOURCE, "m.mjs")["probe"]
+        self.assertLess(
+            masked["metrics"]["cyclomatic_complexity"],
+            raw["metrics"]["cyclomatic_complexity"])
 
 
 class TestMatchBraceEnd(unittest.TestCase):
@@ -1160,6 +1624,96 @@ def scanned_sources():
     return found
 
 
+WORKFLOW_JS = PLUGIN_ROOT / "workflows" / "slice-wave.workflow.js"
+
+
+class TestCbraceMaskOverTheRealWorkflow(unittest.TestCase):
+    """The brace-language mask measured against the file that motivated it:
+    directions plus a floor under each masked value, so a regression that
+    masked MORE than it should also fails."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = WORKFLOW_JS.read_text(encoding="utf-8")
+
+    def analyze(self, source):
+        findings, _ = qg.analyze_builtin(
+            str(WORKFLOW_JS), source, [(1, len(source.splitlines()))])
+        return {f["function"]: f for f in findings}
+
+    def analyze_unmasked(self, source):
+        with mock.patch.object(qg, "_strip_for_scan", unmasked):
+            return self.analyze(source)
+
+    def check_comes_down(self, name, new, old, floor):
+        """One function's masked-versus-raw move: cognitive strictly down but
+        no lower than the value measured as this pin landed, and cyclomatic
+        never up. The floor is the upper bound on how much may be masked."""
+        got = new[name]["metrics"]
+        was = old[name]["metrics"]
+        self.assertLess(
+            got["cognitive_complexity"], was["cognitive_complexity"])
+        self.assertGreaterEqual(got["cognitive_complexity"], floor)
+        self.assertLessEqual(
+            got["cyclomatic_complexity"], was["cyclomatic_complexity"])
+
+    def check_masks_cleanly(self, path):
+        text = path.read_text(encoding="utf-8")
+        self.assertIsNotNone(
+            qg._mask_cbrace_literals(text), msg=str(path))
+
+    def test_the_mask_does_not_blank_the_file(self):
+        # The guard against the failure mode a strings-only scanner produces
+        # here: an apostrophe inside a line comment opens a literal that can
+        # never close, _mask_cbrace_literals returns None, and the whole file
+        # reverts to today's over-count. Function signatures live in code,
+        # never inside a literal, so a working mask must also yield the
+        # identical function list.
+        masked = qg._mask_cbrace_literals(self.source)
+        self.assertIsNotNone(masked)
+        raw_funcs = qg._extract_functions_cbrace(self.source.splitlines())
+        masked_funcs = qg._extract_functions_cbrace(masked.splitlines())
+        self.assertEqual(masked_funcs, raw_funcs)
+        self.assertGreater(len(raw_funcs), 60)
+
+    def test_the_three_motivating_functions_all_come_down(self):
+        new = self.analyze(self.source)
+        old = self.analyze_unmasked(self.source)
+        self.check_comes_down("globToRe", new, old, 17)
+        self.check_comes_down("stageFixLoop", new, old, 13)
+        self.check_comes_down("runSliceError", new, old, 12)
+
+    def test_stage_fix_loop_gains_real_headroom(self):
+        # It measures cognitive EXACTLY at the threshold before the mask and
+        # passes only because the check is value <= threshold, so it is the
+        # live instance this change rescues.
+        limit = qg.DEFAULT_THRESHOLDS["cognitive_complexity"]
+        old = self.analyze_unmasked(self.source)["stageFixLoop"]
+        new = self.analyze(self.source)["stageFixLoop"]
+        self.assertEqual(old["metrics"]["cognitive_complexity"], limit)
+        self.assertLess(new["metrics"]["cognitive_complexity"], limit)
+
+    def test_the_mask_does_not_rescue_glob_to_re(self):
+        # Honest limit, pinned: the miscount inflates globToRe, it does not
+        # create the violation. The function is genuinely over threshold
+        # before and after.
+        limit = qg.DEFAULT_THRESHOLDS["cognitive_complexity"]
+        new = self.analyze(self.source)["globToRe"]
+        self.assertGreater(new["metrics"]["cognitive_complexity"], limit)
+
+    def test_the_mask_succeeds_on_every_brace_source_in_the_tree(self):
+        # Named for what it proves and no more: the mask closes every
+        # construct it recognises in every brace source here, so no file
+        # silently falls back to raw counts. It is NOT a proof about regex
+        # literals -- a regex holding an even number of quotes masks cleanly
+        # and this still passes. The regex residual is backed by the pasted
+        # grep in the slice report instead.
+        brace = [p for p in scanned_sources() if p.suffix != ".py"]
+        self.assertGreater(len(brace), 0)
+        for path in brace:
+            self.check_masks_cleanly(path)
+
+
 class TestDifferentialAgainstRawScan(unittest.TestCase):
     """The mask may only ever LOWER a complexity count, and it may never move a
     function's span, its nesting depth, its length or its parameter count.
@@ -1221,6 +1775,17 @@ class TestDifferentialAgainstRawScan(unittest.TestCase):
         moved = [where for where, got, was in self.measure_tree()
                  if got["metrics"] != was["metrics"]]
         self.assertGreater(len(moved), 100)
+
+    def test_a_brace_language_file_is_measurably_lowered(self):
+        # The tree-wide "something moved" test above would pass on a mask
+        # that only ever touched python, so pin the brace-language half
+        # separately.
+        moved = []
+        for where, got, was in self.measure_tree():
+            brace = (".js " in where) or (".mjs " in where)
+            if brace and got["metrics"] != was["metrics"]:
+                moved.append(where)
+        self.assertGreater(len(moved), 10)
 
 
 if __name__ == "__main__":
