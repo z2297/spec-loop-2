@@ -43,8 +43,13 @@ is handed to you, use it verbatim rather than reconstructing it.
 
 Replan **≤1** · per-task implementer retry **≤1** · fix rounds **≤2** · total agent
 dispatches capped by tier: **10 / 18 / 32** for Tier 1 / 2 / 3. Count every dispatch,
-including re-reviews. Hitting a cap or a bound with work outstanding is a `budget-exhausted`
-escalation, not a reason to continue unbounded or to declare done without evidence.
+including re-reviews. A bound is never a reason to continue unbounded or to declare done
+without evidence — but exhausting one is not a resource problem. Only two things here are
+`budget-exhausted`: the tier agent cap, and the per-stage token floor (the wave budget left is
+below what a single stage needs). Every loop bound escalates instead as the thing that actually
+stalled — a spent replan as `council-objection`, a spent task retry as `ambiguity` or the
+blocker the task reported (Pipeline 3), findings surviving both fix rounds as `review-block`,
+or `quality-gate-block` when the survivors are gate violations.
 
 ## Pipeline
 
@@ -90,7 +95,9 @@ brief, the plan and conventions paths, `shared_constraints`, and the test/build 
 per-task review below Tier 3; at Tier 3 run the per-task review your tier table specifies.
 Handle statuses: `NEEDS_CONTEXT` → answer from the plan or codebase and re-dispatch once
 (that is the task's one retry); a genuine `BLOCKED`, or a second failure on the same task →
-escalate (`material-assumption` or `review-block` as fits) and return `ESCALATED`. Roll up
+escalate and return `ESCALATED`. Pick the trigger the way the workflow does: a dispatch that
+came back with **no result** is `ambiguity` (see step 4), never `internal-error`; a `BLOCKED`
+that states a real blocker is `material-assumption` or `review-block` as fits. Roll up
 every `concerns[]` and `deviations[]` — the reviewer needs them.
 
 **4 — Review ∥ quality gate (one message).** Build the review package once with the handed-in
@@ -142,12 +149,23 @@ regardless of how the work went.
 ## Escalations
 
 Every escalation is an EscalationRecord in `escalations[]`: stable id `<slice-id>:<trigger>`,
-one of the six triggers (`ambiguity`, `material-assumption`, `review-block`,
-`council-objection`, `quality-gate-block`, `budget-exhausted`), the context, the precise
-question, options with one marked `recommended`, and `if_unanswered`. Proceed-and-log stays the
-default — surface only genuine ambiguity or a material assumption touching behavior, public
-contracts, persisted data, security, or an external integration. A slice with any open
-escalation returns `ESCALATED`.
+one of the seven triggers (`ambiguity`, `material-assumption`, `review-block`,
+`council-objection`, `quality-gate-block`, `budget-exhausted`, `internal-error`), the context,
+the precise question, options with one marked `recommended`, and `if_unanswered`.
+Proceed-and-log stays the default — surface only genuine ambiguity or a material assumption
+touching behavior, public contracts, persisted data, security, or an external integration. A
+slice with any open escalation returns `ESCALATED`. `budget-exhausted` is only for the tier
+agent cap or the per-stage token floor (see Loop bounds), never for a spent loop bound.
+`internal-error` is narrower still: an unhandled exception that aborted the slice, and
+nothing else. A dispatch that comes back with **no result** is not one — the workflow
+classifies both shapes of that as `ambiguity` (a planner returning nothing, and a task whose
+retry also returned nothing, recorded as a terminal dispatch failure), and you classify them
+identically; `ambiguity` is answerable and `internal-error` deliberately is not, so
+mislabelling one costs the human the ability to answer it. An `internal-error` context
+carries the real error text and names the stage/role you were actually running when it
+aborted: you drive every stage serially, so unlike the workflow you DO know which one it was
+— say it. Hedge only for a failure inside step 4's concurrent review ∥ quality-gate message,
+where either dispatch may be the one that died; there, name both and say which is unclear.
 
 ## Return
 

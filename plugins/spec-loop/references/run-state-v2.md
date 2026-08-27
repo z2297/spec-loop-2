@@ -98,7 +98,7 @@ prose about the slice.
 ```jsonc
 {
   "id": "s1:review-block",     // "<slice-id>:<trigger>[:<round>]" — stable across resumes
-  "trigger": "ambiguity | material-assumption | review-block | council-objection | quality-gate-block | budget-exhausted",
+  "trigger": "ambiguity | material-assumption | review-block | council-objection | quality-gate-block | budget-exhausted | internal-error",
   "title": "<short title>",
   "context": "<what the loop was doing and why it cannot decide>",
   "question": "<the precise question>",
@@ -109,6 +109,15 @@ prose about the slice.
   "answer": null, "answered_at": null
 }
 ```
+
+`budget-exhausted` is raised only by the loop's two structural guards (agent cap, stage
+token floor); `internal-error` covers the two machine-failure shapes the loop actually
+produces — an unhandled exception that aborted a slice, and a slice that returned no result
+at all — either of which may itself have a host- or agent-layer cause (e.g. a rejected agent
+call on a hard token or rate limit) that the record does not pretend to rule out. It is not
+a catch-all for every other failure: a failure the loop can name keeps the trigger that
+names it, so a spent replan stays `council-objection` and a blocked task — including a task
+dispatch that returned no result — stays `ambiguity`. Neither is a judgment trigger.
 
 ## `events.jsonl` — the machine channel
 

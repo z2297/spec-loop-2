@@ -1244,9 +1244,20 @@ class EscalationSourceTests(unittest.TestCase):
         self.assertEqual(e["title"], "")
         self.assertEqual(e["trigger"], "budget-exhausted")
 
+    def test_internal_error_parses_out_of_an_escalation_id(self):
+        # The id's second segment is the trigger by contract, so a crash id
+        # must resolve — _trigger_from_id gates on ESCALATION_TRIGGERS.
+        def build(run_dir):
+            write_dag_v2(run_dir, [slice_obj("s1")])
+            write_events(run_dir, [
+                ("s1", "escalation-opened", {"id": "s1:internal-error"}),
+            ])
+        run = self.scan(build)
+        self.assertEqual(run["escalations"][0]["trigger"], "internal-error")
+
     def test_a_malformed_id_yields_no_made_up_trigger(self):
         # The id's second segment is only accepted when it is one of the
-        # contract's six triggers, so a hand-edited id cannot surface garbage.
+        # contract's known triggers, so a hand-edited id cannot surface garbage.
         def build(run_dir):
             write_dag_v2(run_dir, [slice_obj("s1")])
             write_events(run_dir, [
@@ -1264,6 +1275,20 @@ class EscalationSourceTests(unittest.TestCase):
                                                          trigger="made-up")])
         run = self.scan(build)
         self.assertEqual(run["escalations"][0]["trigger"], "review-block")
+
+    def test_a_record_trigger_of_internal_error_is_kept_as_itself(self):
+        # The record path, not the id path: _enum_or_none nulls any trigger
+        # outside ESCALATION_TRIGGERS, so a crash record must be listed there
+        # or every crash escalation renders with no trigger at all. The id is
+        # deliberately trigger-less here to isolate _enum_or_none from the
+        # _trigger_from_id fallback.
+        def build(run_dir):
+            write_dag_v2(run_dir, [slice_obj("s1")])
+            write_sidecar(run_dir, "s1", status="ESCALATED", escalations=[
+                escalation_record("s1", trigger="internal-error"),
+            ])
+        run = self.scan(build)
+        self.assertEqual(run["escalations"][0]["trigger"], "internal-error")
 
     def test_nested_and_named_payload_id_forms_are_both_accepted(self):
         # v2 pins the EscalationRecord but not how an event wraps it.

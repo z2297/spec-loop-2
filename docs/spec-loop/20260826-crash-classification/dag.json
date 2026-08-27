@@ -1,0 +1,136 @@
+{
+  "schema_version": 2,
+  "run_id": "20260826-crash-classification",
+  "branch": "spec-loop-run/20260826-crash-classification",
+  "base_branch": "main",
+  "mode": "workflow",
+  "created": "2026-08-26T20:05:00Z",
+  "test_command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; claude plugin validate .",
+  "shared_constraints": [
+    "plugin_root is the frozen installed cache /Users/zachmcmurry/.claude/plugins/cache/spec-loop/spec-loop/2.2.0/, verified byte-identical to the pre-run repo. NOTHING this run ships in slice-wave.workflow.js executes during this run. Never claim behavioural verification of the JS.",
+    "Never remove 'budget-exhausted' from any enum or tuple. Its MEANING narrows; the string stays, so the completed run 20260825-scope-ceiling keeps validating and rendering.",
+    "The new trigger is exactly one value, named 'internal-error' (HUMAN-DECIDED, answers-recorded.md A2). It covers BOTH the caught-exception case (slice-wave.workflow.js:856) and the slice-returned-nothing case (:878). Do not introduce a second value.",
+    "The JS schema enum (slice-wave.workflow.js:40) and run_state.py:67 must land in the SAME slice. run_state.py:204 is fail-closed. This is a release-safety/bisectability requirement, not an intra-run safety one (the workflow never calls run_state.py; the controller uses the frozen cache copy).",
+    "'internal-error' is substring-safe in BOTH directions against all six existing triggers, which run_metrics.py:1692 requires. Do not rename it to anything containing or contained by an existing value.",
+    "The new trigger is NOT prompt-answerable. Do NOT add it to ANSWERABLE_TRIGGERS (slice_wave_contract_base.py:79-81); do NOT give it an answerFor site. ADD a mirror of test_slice_wave_contract.py:131 pinning that it has none.",
+    "Do not claim this run shortens runs. It delivers honest, actionable, correctly-bucketed escalations and fast diagnosis. Wall-clock improvement is an unproven hypothesis for the NEXT run. [skeptic lane, accepted]",
+    "Every success criterion must be reported with HOW it was verified: real test execution, or source-text pattern match only. [skeptic lane, accepted]",
+    "Corrected measurement: true human answer latency on run 20260825-scope-ceiling was ~35-39 min total (~6% of 568 min); the two crash escalations were answered in 1.1 and 0.6 min. The 85/76-minute windows were CONTROLLER DIAGNOSIS, not human idle. Any reasoning citing '161 minutes of human idle' is working from a corrected-away figure.",
+    "Automatic retry of a crashed stage is OUT of scope. The skeptic lane considered it and explicitly declined to escalate for it; the human confirmed (answers-recorded.md A3).",
+    "A crash's blast radius is already exactly one slice: runSlice() :859-866 catches and returns an ESCALATED result rather than rethrowing, so parallel() :871 and sibling slices are unaffected. Do not 'fix' sibling isolation; it already holds.",
+    "Contract-test modules were split purely to keep each module's whole-file class_lines under 300 (test_slice_wave_contract.py:8-11). Place new contract tests so BOTH modules stay under the threshold; use named snippet constants in slice_wave_contract_base.py, never inline literals in assertions.",
+    "agents/slice-worker-fallback.md is the BEHAVIOURAL spec for the inline-mode twin, not prose. If it keeps the old classification, inline-mode runs keep the defect.",
+    "Sweep slice-wave.workflow.js:637-646 - its comment asserts the catch-all relabels to 'budget-exhausted', which this change makes false.",
+    "FORWARD-COMPAT HAZARD (controller risk lane R1): run_state.py:204 fails CLOSED, so a sidecar carrying 'internal-error' CANNOT be persisted by an older install. A repo emitting it against a 2.2.0 cache gets the sidecar REJECTED and the slice falsely reported ESCALATED. The CHANGELOG entry MUST state that repo and installed plugin must be updated together. schema_version stays 2 (additive enum change).",
+    "Stage attribution is IN scope and load-bearing (HUMAN-DECIDED, answers-recorded.md A3). The crash record must name the stage/role in flight, not just the exception string. dispatch() :430 already receives a `role`; initSliceState() :450 has no stage field today."
+  ],
+  "scope_ceiling": [
+    "Do NOT fix the underlying crash causes. r.commits.head was fixed in 2.2.0; the StructuredOutput retry cap is an agent-layer limit outside this repo. This run changes CLASSIFICATION and REPORTING only.",
+    "Do NOT retune CAPS or BUDGET_STAGE_FLOOR values.",
+    "Do NOT redesign the escalation system, the five-trigger judgment test, or the escalation-gate decision procedure beyond adding the new classification to it.",
+    "Do NOT fix the known duplicate-section bug in rendered escalations.md (deferred by run 20260825-scope-ceiling with its own record).",
+    "Do NOT add automatic retry of a crashed stage.",
+    "Do NOT change how the controller (commands/spec-loop.md) batches escalation rounds.",
+    "Do NOT add a controller-side answer path that lets a budget-exhausted answer actually raise CAPS or the budget for a re-dispatch. Genuine gap, but a capability addition; record as a deferral.",
+    "Do NOT change the esc() escalation-id scheme (:255). answerFor matching depends on it."
+  ],
+  "slices": [
+    {
+      "id": "s1",
+      "goal": "Give machine failures their own escalation trigger 'internal-error', narrowing 'budget-exhausted' to its designed resource meaning, and make the crash record diagnostic by naming the stage/role in flight. Covers: the JS schema enum (slice-wave.workflow.js:40); runSliceError() :856; the wave-entry slice-lost record :878; a stage/role field on state (initSliceState :450) set from the role dispatch() :430 already receives; all three Python ESCALATION_TRIGGERS tuples (run_state.py:67, run_metrics.py:119, dashboard_server.py:149); sweeping the now-false comment at :637-646; and tests for every one of those, including a mirror of test_slice_wave_contract.py:131 pinning 'internal-error' as non-answerable. AMENDED MID-WAVE by the controller: the slice-planner's Task 6 also updates the normative contracts it just shipped against - references/run-state-v2.md:101, skills/escalation-gate/SKILL.md:72-80, agents/slice-worker-fallback.md:146 - reading them from the shipped code. The controller accepted that cut (it avoids both the stale-docs failure mode and a second wave) and moved those three files from s2 into s1's declared file list so the declaration matches reality and no false over-scope flag is raised.",
+      "files": [
+        "plugins/spec-loop/workflows/slice-wave.workflow.js",
+        "plugins/spec-loop/scripts/run_state.py",
+        "plugins/spec-loop/scripts/run_metrics.py",
+        "plugins/spec-loop/scripts/dashboard_server.py",
+        "plugins/spec-loop/scripts/slice_wave_contract_base.py",
+        "plugins/spec-loop/scripts/test_slice_wave_contract.py",
+        "plugins/spec-loop/scripts/test_run_state.py",
+        "plugins/spec-loop/scripts/test_run_metrics.py",
+        "plugins/spec-loop/scripts/test_dashboard_server.py",
+        "plugins/spec-loop/references/run-state-v2.md",
+        "plugins/spec-loop/skills/escalation-gate/SKILL.md",
+        "plugins/spec-loop/agents/slice-worker-fallback.md"
+      ],
+      "subsystems": [
+        "wave-orchestration",
+        "run-state",
+        "metrics",
+        "dashboard",
+        "contract-tests"
+      ],
+      "deps": [],
+      "risk_tier": 3,
+      "depth": 0,
+      "status": "complete"
+    },
+    {
+      "id": "s2",
+      "goal": "Close out the classification change with the one deliverable s1 does not cover, plus an INDEPENDENT staleness audit read against s1's merged diff rather than against any plan. (1) CHANGELOG.md: an entry for the new 'internal-error' trigger that MUST carry the forward-compat warning from shared constraint 15 - run_state.py:204 fails closed, so a sidecar carrying 'internal-error' cannot be persisted by an older install and the slice would be falsely reported ESCALATED; repo and installed plugin must be updated together. schema_version stays 2. (2) An independent audit that no stale claim about the old classification survives ANYWHERE in plugins/spec-loop/ - code comments, docstrings, reference docs, agent definitions, skills - treating s1's own greps as claims to re-verify, not as evidence. Fix anything found. (3) Confirm by reading them that references/risk-tiers.md:88 and references/migration-from-v1.md:64 remain accurate under the narrowed meaning and need no edit (s1's planner asserted this; verify it). Note risk-tiers.md:88's claim that the agent caps are the budget-exhausted record's 'only source' was FALSE before this change and is TRUE after it.",
+      "files": [
+        "CHANGELOG.md",
+        "plugins/spec-loop/references/risk-tiers.md",
+        "plugins/spec-loop/references/migration-from-v1.md",
+        "plugins/spec-loop/agents/slice-worker-fallback.md",
+        "plugins/spec-loop/scripts/test_slice_wave_contract_scope.py"
+      ],
+      "subsystems": [
+        "release-notes",
+        "contracts",
+        "consistency-audit"
+      ],
+      "deps": [
+        "s1"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "status": "complete"
+    },
+    {
+      "id": "r1",
+      "goal": "Phase-5 remediation: fix all nine cross-slice integration-review findings (1 P1, 6 P2, 2 P3), then the fifth overclaim instance and three follow-on inaccuracies the re-review found.",
+      "files": [
+        "plugins/spec-loop/workflows/slice-wave.workflow.js",
+        "plugins/spec-loop/agents/slice-worker-fallback.md",
+        "plugins/spec-loop/references/run-state-v2.md",
+        "plugins/spec-loop/skills/escalation-gate/SKILL.md",
+        "plugins/spec-loop/scripts/slice_wave_contract_base.py",
+        "plugins/spec-loop/scripts/test_slice_wave_contract_crash.py",
+        "plugins/spec-loop/scripts/test_run_metrics.py",
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "wave-orchestration",
+        "contracts",
+        "inline-mode",
+        "contract-tests"
+      ],
+      "deps": [
+        "s1",
+        "s2"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "status": "complete",
+      "remediation": true
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "slice_ids": [
+        "s1"
+      ],
+      "workflow_run_id": "wf_be128c72-ab8",
+      "status": "collected"
+    },
+    {
+      "index": 2,
+      "slice_ids": [
+        "s2"
+      ],
+      "workflow_run_id": "wf_063c09cb-d8a",
+      "status": "collected"
+    }
+  ]
+}

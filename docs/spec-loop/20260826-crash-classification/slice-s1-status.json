@@ -1,0 +1,285 @@
+{
+  "schema_version": 2,
+  "id": "s1",
+  "status": "DONE",
+  "branch": "spec-loop/20260826-crash-classification/s1",
+  "commits": {
+    "base": "8d0e2c13ba95e4f0aae04941428ea9ecaae3944b",
+    "head": "6ac5fe7"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "OBJECT",
+    "concerns": 11,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 5,
+  "review": {
+    "confirmed": 8,
+    "refuted": 8,
+    "evidence_failed": 0,
+    "fix_rounds": 3,
+    "residual": [
+      "RESOLVED after the sidecar's own review round, controller-verified in the diff: the crash context's categorical claim 'This is a loop or agent-contract bug, NOT a cap or budget limit' was replaced at slice-wave.workflow.js:886 with the provable claim that neither structural guard fired, plus an explicit both-ways caveat that it may equally be a host- or agent-layer resource failure and that the exception text is the evidence, not the classification. Pinned by test_the_crash_record_claims_only_what_the_code_can_prove.",
+      "RESOLVED: the ungrammatical title 'slice crashed after before any agent was dispatched' is fixed by branching the title (:882-884); both renderings read as correct English. Pinned by test_the_title_is_grammatical_when_no_agent_was_dispatched.",
+      "RESOLVED: all three crash-record options now open 'The CONTROLLER must act on this at the next dispatch:', and Skip/Stop each state that nothing in the loop enforces them. Wording only - no controller branch added, as the scope ceiling requires. Pinned by test_every_option_says_the_controller_must_act_on_it.",
+      "RESOLVED: the em-dash-stacked internal-error parenthetical in escalation-gate/SKILL.md is rewritten with named subjects and no ambiguous pronoun.",
+      "RESOLVED (new breakage the fix round itself introduced, caught by re-review): slice_wave_contract_base.py's docstring still said 'two' importing modules after a third was split out; now says three and names all three.",
+      "RESOLVED (disclosed by the fixer, not in the original findings): references/run-state-v2.md carried the SAME categorical cause claim that was removed from the record. Reworded to define budget-exhausted as raised only by the two structural guards and internal-error as the catch-all for everything else, naming host/agent-layer resource failures explicitly.",
+      "ACCEPTED AS RESIDUAL (not fixed, recorded): state.stage is a single last-writer-wins field shared by concurrent dispatches (critic panel via parallel() :580-582; reviewer lanes alongside the gate :694-699), so the named stage may not be the one that threw, and the wave-entry lost-slice record carries no stage at all. The run's ceiling forbids redesigning stage tracking, so the CLAIM was corrected instead: the record now says it reports the most recent dispatch rather than a per-throw stage, and both doc sites match. The exception text travels with the record, so a mislabel is self-correcting rather than silent.",
+      "ACCEPTED AS RESIDUAL (deferred with its own event): the quality gate's builtin heuristic counts control-flow keywords inside STRING LITERALS, so operator-facing prose inflates a function's complexity. runSliceError now measures cognitive 14 against a threshold of 15 - thin headroom that exists only because prose counts as control flow. A future 'if' in any of those strings will trip the gate on code whose real branching is one ternary."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; claude plugin validate .",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand at 6ac5fe7, all six segments run as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 106 tests OK; plugins/spec-loop/scripts/ Ran 1153 tests OK; coverage 'PASS: all per-file and total floors met' TOTAL 96.7% (5972/6173) vs 90% floor; node dashboard assets 48 tests 48 pass 0 fail; claude plugin validate 'Validation passed'.",
+    "scope": "full",
+    "tree_sha": "1d650656c08b3bbfa892cc5e5b51a97239ce2016"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "ACCEPTED by prior-run precedent (run 20260825-scope-ceiling, s1:quality-gate-block: 'ACCEPT AS PRE-EXISTING DEBT, no threshold weakened'), no threshold weakened and nothing added to coverage_omit.txt. CONTROLLER-MEASURED first-hand at 6ac5fe7: 156 checks, non-vacuous, exactly EIGHT failures and all eight pre-existing - seven whole-file class_lines (dashboard_server.py 1362, run_metrics.py 1843, run_state.py 918, test_dashboard_server.py 2467, test_run_metrics.py 1348, test_run_state.py 1269, slice-wave.workflow.js 805, all vs a 300 threshold; every one of those files was already 882-2804 lines at base 8d0e2c1 and none is a new file) plus parameter_count on dispatch() (5 vs 4, signature 'dispatch(slice, state, role, prompt, opts)' byte-identical at base and head). The THREE nesting_depth violations this slice originally introduced (8/7/5 vs 3) are GONE - controller-verified they no longer appear. Zero new violations attributable to this slice."
+  },
+  "escalations": [],
+  "agents_used": 19,
+  "wave": 1,
+  "events": [
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "OBJECT",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 8,
+        "deferred": [
+          "CONSISTENCY (defer). Task 1's rationale — \"the 4-space hanging-indent style already used by passing sibling tests in the same files\" — is overstated. The immediately-preceding sibling `test_dashboard_server.py:1246-1249` (`test_an_id_known_only_to_the_events_log_is_carried_honestly`) uses the identical column-36 continuation being reindented away, and `test_a_record_trigger_outside_the_contract_falls_back_to_the_id` (:1267) aligns at column 55; both escape the gate only because they are not in the diff. The GATE RULING correctly bars touching them. Worth one sentence in the report so the file's mixed style is a known, deliberate state rather than a surprise for the next editor.",
+          "DESIGN/test strength (defer). `test_internal_error_is_substring_safe_against_every_other_trigger` (test_run_metrics.py:465-471) asserts containment against the Python literal `\"internal-error\"`, so it pins the NAMING constraint but never exercises `_legacy_match_triggers` (run_metrics.py:1693), the code the constraint exists to protect. It would stay green if that matcher's semantics changed. A stronger version feeds v1 prose containing \"internal-error\" through the legacy path and asserts exactly one matched trigger. Out of scope to add now; log it.",
+          "No rollback path for a run dir once it carries an internal-error sidecar, and it is worse than the constraint's phrasing. I verified persist_slice (plugins/spec-loop/scripts/run_state.py:967-975) raises SidecarInvalid 'writing nothing' — so on a plugin downgrade to 2.2.0 the crash sidecar, its events, AND its report are all discarded, not merely mis-flagged: the diagnostic this run exists to deliver is lost entirely and the slice reports ESCALATED with no record of why. schema_version stays 2 (human-decided, additive), and the same-commit landing is correctly satisfied, so no in-repo skew exists. Out of s1's file list, hence defer: a CHANGELOG/release note stating that run dirs written by this version are not readable by 2.2.0 would close it."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "replan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "deferred",
+      "payload": {
+        "summary": "CONSISTENCY (defer). Task 1's rationale — \"the 4-space hanging-indent style already used by passing sibling tests in the same files\" — is overstated. The immediately-preceding sibling `test_dashboard_server.py:1246-1249` (`test_an_id_known_only_to_the_events_log_is_carried_honestly`) uses the identical column-36 continuation being reindented away, and `test_a_record_trigger_outside_the_contract_falls_back_to_the_id` (:1267) aligns at column 55; both escape the gate only because they are not in the diff. The GATE RULING correctly bars touching them. Worth one sentence in the report so the file's mixed style is a known, deliberate state rather than a surprise for the next editor.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "deferred",
+      "payload": {
+        "summary": "DESIGN/test strength (defer). `test_internal_error_is_substring_safe_against_every_other_trigger` (test_run_metrics.py:465-471) asserts containment against the Python literal `\"internal-error\"`, so it pins the NAMING constraint but never exercises `_legacy_match_triggers` (run_metrics.py:1693), the code the constraint exists to protect. It would stay green if that matcher's semantics changed. A stronger version feeds v1 prose containing \"internal-error\" through the legacy path and asserts exactly one matched trigger. Out of scope to add now; log it.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "deferred",
+      "payload": {
+        "summary": "No rollback path for a run dir once it carries an internal-error sidecar, and it is worse than the constraint's phrasing. I verified persist_slice (plugins/spec-loop/scripts/run_state.py:967-975) raises SidecarInvalid 'writing nothing' — so on a plugin downgrade to 2.2.0 the crash sidecar, its events, AND its report are all discarded, not merely mis-flagged: the diagnostic this run exists to deliver is lost entirely and the slice reports ESCALATED with no record of why. schema_version stays 2 (human-decided, additive), and the same-commit landing is correctly satisfied, so no in-repo skew exists. Out of s1's file list, hence defer: a CHANGELOG/release note stating that run dirs written by this version are not readable by 2.2.0 would close it.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:0",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:2",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:4",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 8
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260826-crash-classification/s1/plugins/spec-loop/workflows/slice-wave.workflow.js, /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260826-crash-classification/s1/plugins/spec-loop/scripts/slice_wave_contract_base.py, /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260826-crash-classification/s1/plugins/spec-loop/scripts/test_slice_wave_contract.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "review-summary",
+      "payload": {
+        "findings": 5,
+        "confirmed": 8,
+        "refuted": 8,
+        "fix_rounds": 1,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

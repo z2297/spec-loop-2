@@ -5,7 +5,9 @@ ceiling threaded into `packet()`.
 See `slice_wave_contract_base.py` for the module-wide rationale, and
 `test_slice_wave_contract.py` for the sibling module covering guarded
 task-result reads, quality-gate-block answer injection, and the
-record-only `over_scope` critique field. Split purely to keep each
+record-only `over_scope` critique field (with
+`test_slice_wave_contract_crash.py` covering `internal-error`). Split
+purely to keep each
 module's whole-file `class_lines` under the quality gate's 300-line
 threshold; no test here depends on anything in the sibling.
 
@@ -249,8 +251,10 @@ class TestTheRunScopeCeilingReachesEveryAgent(WorkflowSourceTestCase):
         # Regression: `(CTX.scope_ceiling || []).length` was null-safe but not
         # type-safe - truthy for a non-empty STRING too, and the very next
         # read (`.map(...)`) is undefined on a string, throwing a TypeError
-        # that the catch-all mislabels as a budget escalation. packet() must
-        # never touch `CTX.scope_ceiling` directly; only the helper may.
+        # that the catch-all now classifies as 'internal-error' - before crash
+        # classification such errors were mislabeled as a budget escalation.
+        # packet() must never touch `CTX.scope_ceiling` directly; only the
+        # helper may.
         packet = self.between(PACKET_START, PACKET_END)
         self.assertNotIn("CTX.scope_ceiling", packet)
         self.assertIn(SCOPE_CEILING_READ, packet)

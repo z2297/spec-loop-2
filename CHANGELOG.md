@@ -7,6 +7,77 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+### Added
+- **`internal-error` escalation trigger** — a seventh `EscalationRecord.trigger` value for machine
+  failure, one string covering both shapes of it: an unhandled exception that aborted a slice
+  (`workflows/slice-wave.workflow.js` — the catch-all at :892) and a slice that returned no result
+  at all (:919). The enum lives at :40. The crash record leads with the real exception text and the
+  last stage/role dispatched before the failure, in that order — a guaranteed ordering, so the
+  400-character limit `render_escalation()` puts on a context cuts the fixed classification prose
+  before either diagnostic. The ordering is not a promise that both diagnostics fit: measured
+  against the longest stage text, an exception message past ~286 characters pushes the stage
+  attribution out of the rendered context entirely (its "starting point, not a culprit" caveat drops
+  at ~200), and only the exception text, which leads, is truncated last. That stage is the most
+  recent dispatch, **not** a per-throw stage: the whole stage sequence sits under one `try`, so the
+  loop cannot know which stage threw, and the record says "after", not "in", and says why. It also
+  refuses to guess the cause: all an exception reaching the catch-all proves is that neither
+  structural guard *raised* its escalation record — not that the crash started outside a guard,
+  since `budget.remaining()` is called inside the token-floor guard itself — so it may be a loop or
+  agent-contract bug and it may equally be a host- or agent-layer resource failure (a rejected agent
+  call on a hard token or rate limit, say) — the exception text is the evidence, not the label. The
+  lost-slice record at :919 follows the same rule in the same words: neither guard *raised* its
+  escalation record, "and that is all a null result proves, not that no guard check ran" — and it no
+  longer denies a resource cause it cannot rule out. It is not a judgment trigger and it is not
+  answerable by re-dispatching an agent: its three options (retry the slice, skip it, stop the run)
+  are controller actions, and each option's detail names the controller as what applies it. Added to
+  `ESCALATION_TRIGGERS` in `run_state.py`, `run_metrics.py` and `dashboard_server.py`, to the record
+  shape in `references/run-state-v2.md`, and to the enumerations in
+  `skills/escalation-gate/SKILL.md` and `agents/slice-worker-fallback.md` — the last of these being
+  the behavioral spec for the inline-mode twin, which must classify identically.
+
+### Changed
+- **`budget-exhausted` narrowed to a resource signal** — the string stays and its position in the
+  enum is unchanged; only its meaning narrows. It is now raised solely by the loop's two structural
+  guards, the per-slice agent cap and the per-stage token floor (`slice-wave.workflow.js:425` and
+  `:427`), both of which keep their existing wording. It no longer covers an unhandled exception or
+  a lost slice: through 2.2.0 the catch-all relabelled every uncaught error as a `budget-exhausted`
+  "wave interrupted" escalation, which in run 20260825-scope-ceiling asked for budget on behalf of
+  an unguarded optional-field read — a `TypeError` that no amount of budget would have prevented —
+  and the lost-slice record carried the same trigger. Both are now `internal-error`. The claim
+  is deliberately about that concrete failure, not about uncaught errors in general — as the
+  Added entry above says, some of those really are resource failures.
+  There are still exactly five *judgment* triggers; neither `budget-exhausted` nor `internal-error`
+  is one, and `internal-error` is deliberately outside the answerable set, which stays at five.
+- **`schema_version` stays `2`** — adding an enum value is an additive change to the sidecar
+  contract, so the version is deliberately not bumped (human-decided). `SCHEMA_VERSION` in
+  `run_state.py` and `run_metrics.py` is unchanged, and existing run directories carrying
+  `budget-exhausted` records still validate and still bucket as `budget-exhausted` rather than
+  degrading to `other`.
+
+#### Compatibility: a plugin downgrade to 2.2.0 DISCARDS an affected run dir
+
+This is worse than a mis-labelled trigger, and it is not symmetric with a normal additive change.
+`run_state.py`'s `persist_slice` validates the whole `SliceResult` **before** it writes anything and
+raises `SidecarInvalid` on an unrecognised `trigger`; only after validation passes does it write the
+sidecar, append the slice's events, and render `slice-<id>-report.md`. Under 2.2.0, whose
+`ESCALATION_TRIGGERS` has no `internal-error`, a slice that escalated with that trigger therefore
+produces **no sidecar, no events and no report at all** — not a wrongly-labelled record. The slice
+reports `ESCALATED` with nothing on disk saying why, and the diagnostic information the escalation
+existed to deliver is gone.
+
+Consequences, stated plainly: a run directory written by this version is **not readable by 2.2.0**,
+and the repository and the installed plugin must be updated together. Re-running the affected slice
+under 2.2.0 will not recover the record, because the record was never written.
+
+### Scope and limits of this change
+
+Verifiability ceiling: nothing this entry describes in `workflows/slice-wave.workflow.js` has been
+executed. The loop resolves its workflow from the installed plugin cache, so the merged file takes
+effect only after a plugin reinstall. Those claims rest on a real `node` parse of the source plus
+source-text contract assertions (`test_slice_wave_contract_crash.py`), which prove a construct is
+present and cannot prove it behaves. The Python-side tuple, validation, metrics and dashboard
+changes are covered by executed tests.
+
 ## [2.2.0] - 2026-08-26
 ### Added
 - **Run-level scope ceiling** — an optional `scope_ceiling` list in `dag.json` (validated

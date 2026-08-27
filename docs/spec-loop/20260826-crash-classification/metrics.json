@@ -1,0 +1,238 @@
+{
+  "schema_version": 2,
+  "run_id": "20260826-crash-classification",
+  "run_schema_detected": 2,
+  "generated_at": "2026-08-27T00:56:21+00:00",
+  "sources": {
+    "dag": true,
+    "dag_schema_version": 2,
+    "events": 87,
+    "events_skipped": 0,
+    "events_truncated": false,
+    "event_types": {
+      "agent-dispatch": 43,
+      "baseline": 1,
+      "council-verdict": 3,
+      "decision": 11,
+      "deferred": 10,
+      "escalation-answered": 1,
+      "escalation-opened": 1,
+      "integration-check": 2,
+      "phase5-gate": 2,
+      "quality-gate": 4,
+      "review-summary": 5,
+      "run-created": 1,
+      "wave-collected": 1,
+      "wave-dispatched": 2
+    },
+    "sidecars": 3,
+    "runbook": true
+  },
+  "safety": {
+    "basis": "events-jsonl+sidecar-v2",
+    "escalations": {
+      "basis": "events-jsonl",
+      "total": 1,
+      "open": 0,
+      "answered": 1,
+      "by_trigger": {
+        "quality-gate-block": 1
+      },
+      "per_scope": {
+        "s1": 1
+      },
+      "unkeyed_events": 0
+    },
+    "decisions_total": 11,
+    "deferrals_total": 10,
+    "over_scope_deferrals": null,
+    "autonomy_ratio": 0.9167,
+    "escalation_answer_latency_s": null,
+    "council": {
+      "basis": "events-jsonl+sidecar-v2",
+      "verdicts": {
+        "ENDORSE_WITH_CONCERNS": 2,
+        "OBJECT": 1
+      },
+      "object_rate": 0.3333,
+      "safety_objections": 0,
+      "concerns_total": 35,
+      "concerns_deferred": 4,
+      "by_member": null,
+      "slice_verdicts": {
+        "ENDORSE_WITH_CONCERNS": 1,
+        "OBJECT": 1,
+        "SKIPPED": 1
+      },
+      "over_scope_flags": 0
+    },
+    "reversibility_mix": {
+      "high": 3,
+      "moderate": 2,
+      "n/a": 5,
+      "trivial": 1
+    },
+    "precedent_reuse": {
+      "count": 1,
+      "rate": 0.0909
+    }
+  },
+  "quality": {
+    "basis": "events-jsonl+sidecar-v2",
+    "quality_gate": {
+      "basis": "events-jsonl+sidecar-v2",
+      "measurements": 4,
+      "scopes": 3,
+      "first_pass": 1,
+      "first_pass_rate": 0.3333,
+      "refactor_passes_total": null,
+      "failures": 3,
+      "final_status_counts": {
+        "FAIL": 3
+      }
+    },
+    "review": {
+      "basis": "events-jsonl+sidecar-v2",
+      "counters": {
+        "confirmed": 17,
+        "refuted": 8,
+        "evidence_failed": 0,
+        "fix_rounds": 6,
+        "residual": 23
+      },
+      "verified_findings": 25,
+      "refuted_rate": 0.32,
+      "evidence_failed_drop_rate": 0.0,
+      "fix_rounds_total": 6,
+      "residual_total": 23,
+      "findings_total": 23,
+      "reviewer_dispatches": 8,
+      "findings_per_reviewer_dispatch": 2.9,
+      "refuted_by_fixer": null,
+      "refuted_by_fixer_rate": null,
+      "block_escalations": 0
+    },
+    "merges": {
+      "basis": "events-jsonl",
+      "count": 0,
+      "commits": null
+    },
+    "splits": {
+      "basis": "dag-json",
+      "total_slices": 3,
+      "split_parents": 0,
+      "split_rate": 0.0,
+      "max_depth": 0,
+      "remediation_slices": 1,
+      "risk_tiers": {
+        "2": 1,
+        "3": 2
+      }
+    },
+    "integration": {
+      "basis": "events-jsonl",
+      "checks": [
+        {
+          "scope": "wave1",
+          "result": null
+        },
+        {
+          "scope": "wave2",
+          "result": null
+        }
+      ],
+      "check_failures": 0,
+      "gate": "PASS",
+      "remediation_slices": 1
+    },
+    "requirement_coverage": {
+      "basis": "runbook-table",
+      "delivered": 13,
+      "partial": 0,
+      "deferred": 2,
+      "rate": 0.8667
+    },
+    "slice_outcomes": {
+      "basis": "sidecar-v2",
+      "counts": {
+        "DONE": 3
+      }
+    },
+    "tests": {
+      "basis": "sidecar-v2",
+      "results": {
+        "GREEN - CONTROLLER-MEASURED first-hand at 3b0bbf8, six segments as separate invocations: marketplace OK; 106 tests OK; 1159 tests OK; coverage PASS all floors met TOTAL 96.7%; 48 node tests 48 pass 0 fail; plugin validate passed.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand at 6ac5fe7, all six segments run as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 106 tests OK; plugins/spec-loop/scripts/ Ran 1153 tests OK; coverage 'PASS: all per-file and total floors met' TOTAL 96.7% (5972/6173) vs 90% floor; node dashboard assets 48 tests 48 pass 0 fail; claude plugin validate 'Validation passed'.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand at c190781, all six segments as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 106 tests OK; plugins/spec-loop/scripts/ Ran 1154 tests OK; coverage 'PASS: all per-file and total floors met' TOTAL 96.7% (5972/6173); node dashboard assets 48 tests 48 pass 0 fail; claude plugin validate 'Validation passed'.": 1
+      }
+    }
+  },
+  "performance": {
+    "basis": "events-jsonl",
+    "run_wall_clock_s": 16992.0,
+    "started_at": "2026-08-26T20:03:31+00:00",
+    "finished_at": "2026-08-27T00:46:43+00:00",
+    "slices": null,
+    "waves": [
+      {
+        "wave": 1,
+        "slices": 1,
+        "status": "collected",
+        "dispatched_via_workflow": true,
+        "agent_count": 16,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 3725.9
+      },
+      {
+        "wave": 2,
+        "slices": 1,
+        "status": "collected",
+        "dispatched_via_workflow": true,
+        "agent_count": null,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": null
+      }
+    ],
+    "agents": {
+      "basis": "events-jsonl",
+      "count": 43,
+      "timed": 0,
+      "total_s": null,
+      "by_agent": null,
+      "by_model": null,
+      "by_role": null,
+      "by_effort": {
+        "high": 17,
+        "low": 18,
+        "medium": 8
+      }
+    },
+    "engine_active_s": null,
+    "human_wait_s": null
+  },
+  "tokens": {
+    "basis": "wave-collected-events",
+    "totals": null,
+    "dispatches": 43,
+    "dispatches_with_tokens": 0,
+    "coverage_rate": 0.0,
+    "by_model": null,
+    "by_role": null,
+    "by_agent": null,
+    "by_scope": null,
+    "wave_totals": {
+      "basis": "wave-collected-events",
+      "total": 1016853,
+      "waves": [
+        {
+          "wave": 1,
+          "subagent_tokens": 1016853
+        }
+      ],
+      "waves_reporting": 1,
+      "waves_total": 1
+    }
+  }
+}

@@ -69,14 +69,19 @@ Do not act. Return an `EscalationRecord` and let the controller batch it:
 When uncertain whether something is "material": if a reasonable reviewer could reject the slice
 over it, it is material → surface it.
 
-The enum lives in `slice-wave.workflow.js` (`ESCALATION.trigger`). Two things that are
+The enum lives in `slice-wave.workflow.js` (`ESCALATION.trigger`). Three things that are
 deliberately NOT judgment triggers, and must never be turned into one: `budget-exhausted` (the
-workflow's guard emits it when a structural cap is hit — agent cap, stage token floor, lost
-slice; it asks for a resource, not a decision) and the council's **over-scope flag**
-(`critique.over_scope.flag`). The flag is a record: it is carried into the `council-verdict`
-payload and the slice sidecar with its reason, and it raises no escalation, changes no verdict,
-suppresses no split, and blocks nothing. There are exactly five triggers; an over-scope flag is
-not a sixth.
+workflow's guard emits it when a structural cap is hit — agent cap, stage token floor; it asks for a
+resource, not a decision), `internal-error` (an unhandled exception aborted a slice, or a slice
+returned no result at all; the exception record carries the real exception text together with the
+last stage/role dispatched before the failure, which is the most recent dispatch rather than a
+per-throw stage — the lost-slice record carries neither, having nothing to carry, and says
+so. This trigger reports a machine failure and asks the controller to retry, skip, or stop
+the run, and no agent prompt can apply such an answer, so the trigger is never answerable by
+re-dispatching an agent), and the council's **over-scope flag** (`critique.over_scope.flag`).
+The flag is a record: it is carried into the `council-verdict` payload and the slice sidecar with
+its reason, and it raises no escalation, changes no verdict, suppresses no split, and blocks
+nothing. There are exactly five JUDGMENT triggers; an over-scope flag is not a sixth.
 
 ### Precedent check (before returning any SURFACE escalation)
 

@@ -1,0 +1,165 @@
+{
+  "schema_version": 2,
+  "id": "s2",
+  "status": "DONE",
+  "branch": "spec-loop/20260826-crash-classification/s2",
+  "commits": {
+    "base": "f9f2bd8a8c57be1ba2e6db19dd873b7f8094a575",
+    "head": "c190781"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 8,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 3,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "RESOLVED (a REAL correctness defect in a behavioural spec, and the controller had mis-verified it): agents/slice-worker-fallback.md:46 claimed 'Hitting a cap or a bound with work outstanding is a budget-exhausted escalation', but the paragraph enumerates replan <=1, per-task retry <=1 and fix rounds <=2 as 'bounds' - and the shipped workflow classifies a spent replan as council-objection (:548/:558), a spent task retry as ambiguity (:636), and findings surviving fix rounds as review-block/quality-gate-block (:779). Only the tier agent cap (:425) and the per-stage token floor (:427) raise budget-exhausted. Both that sentence and s1's cross-reference at :150 (which pointed the reader straight at the wrong paragraph) are corrected. Verified by grep over all nine esc() sites.",
+      "RESOLVED (a THIRD instance of the run's signature overclaim pattern, predicted and found): slice-wave.workflow.js:912, the wave-entry lost-slice record, asserted 'Not a resource limit.' - the same unprovable categorical claim already removed from the crash record and from run-state-v2.md, just aimed the other way. A thunk resolving to null proves nothing about cause, and a host- or agent-layer rejection kills a slice the same silent way. Replaced with the provable claim: neither structural guard fired, so the cause is unknown here. Trigger, title and question unchanged.",
+      "RESOLVED (plan conformance): the slice's first attempt delivered only Task 1. The staleness audit was re-run with real command output over the whole plugin tree and INDEPENDENTLY re-executed by the re-review lane, which matched the fixer's output byte-for-byte rather than trusting it; Task 3's read-confirmation of risk-tiers.md:88 and migration-from-v1.md:64 was completed with quoted lines.",
+      "RESOLVED (P3): the CHANGELOG 'Verifiability ceiling' paragraph moved out of the downgrade subsection to its own top-level '### Scope and limits of this change' heading, matching the released 2.2.0 entry's precedent.",
+      "CONFIRMED NEEDING NO EDIT (third independent reading): risk-tiers.md:88 and migration-from-v1.md:64 are accurate under the narrowed meaning. risk-tiers.md:88's claim that the per-slice agent caps are the budget-exhausted record's 'only source' was FALSE before this run (the catch-all was a second source) and is TRUE after it - a doc claim this run repaired without editing it."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; claude plugin validate .",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand at c190781, all six segments as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 106 tests OK; plugins/spec-loop/scripts/ Ran 1154 tests OK; coverage 'PASS: all per-file and total floors met' TOTAL 96.7% (5972/6173); node dashboard assets 48 tests 48 pass 0 fail; claude plugin validate 'Validation passed'.",
+    "scope": "full",
+    "tree_sha": "65888d5d2becc7a68c3458494c1e2b9abb308d6b"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "ACCEPTED under the standing gate ruling, no threshold weakened and nothing added to coverage_omit.txt. CONTROLLER-MEASURED first-hand at c190781 over s2's own diff (base f9f2bd8): 14 checks, non-vacuous, exactly ONE failure - slice-wave.workflow.js whole-file class_lines 805 vs a 300 threshold. That is the same pre-existing whole-file finding already accepted for this run (the file was 882 lines at base 8d0e2c1 and is not a new file), NOT a new function-level violation. Zero new violations attributable to s2."
+  },
+  "escalations": [],
+  "agents_used": 10,
+  "wave": 2,
+  "events": [
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council"
+        ],
+        "safety": false,
+        "concerns_folded": 8,
+        "deferred": [],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:full",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "quality-gate",
+      "payload": {
+        "status": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "review-summary",
+      "payload": {
+        "findings": 3,
+        "confirmed": 0,
+        "refuted": 0,
+        "fix_rounds": 0,
+        "reviewers": 1
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

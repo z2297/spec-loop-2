@@ -123,6 +123,7 @@ ESCALATION_TRIGGERS = (
     "council-objection",
     "quality-gate-block",
     "budget-exhausted",
+    "internal-error",
 )
 REVERSIBILITY_BUCKETS = ("trivial", "moderate", "high", "n/a")
 GATE_RESULTS = ("PASS", "FAIL", "SKIPPED")
