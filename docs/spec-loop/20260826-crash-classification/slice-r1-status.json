@@ -1,0 +1,99 @@
+{
+  "schema_version": 2,
+  "id": "r1",
+  "status": "DONE",
+  "branch": "spec-loop/20260826-crash-classification/r1",
+  "commits": {
+    "base": "8558a95005dbaa0bc6b0f0476c8b37e6e1db27aa",
+    "head": "3b0bbf8"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "SKIPPED",
+    "concerns": 0
+  },
+  "tasks_completed": 2,
+  "review": {
+    "confirmed": 9,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 2,
+    "residual": [
+      "RESOLVED INT-1 (P1): agents/slice-worker-fallback.md told the inline twin that 'a stage that died with no result is internal-error', but the shipped workflow classifies a planner no-result (:481) and a task no-result (:636 via taskBlockReason :608) as ambiguity; only the SLICE-level lost thunk (:919) is internal-error, and a single-slice inline agent cannot experience it. The divergence converted an ANSWERABLE escalation (ambiguity has an answerFor site at :316) into an unanswerable one. Twin now classifies identically, with the reason stated.",
+      "RESOLVED INT-2 (P2, FOURTH instance of the run's signature overclaim): CHANGELOG asserted 'a resource request for a failure that no resource would have prevented' of EVERY uncaught error, contradicting the same entry's own text 19 lines above. Now attached to the concrete 2.2.0 TypeError.",
+      "RESOLVED INT-3 (P2): the crash record said 'so this crash came from neither' guard, but budget.remaining() is called INSIDE the token-floor guard (:426), so a throw from there originates in a guard and arrives with no escRecord. Now claims only that neither guard RAISED its record. The comment at :858-866 was making the same overclaim and was corrected too.",
+      "RESOLVED INT-4 (P2, FUNCTIONAL - caused by the controller's own earlier fix instruction): leading the context with the exception text pushed the stage attribution to offset ~545 of a 913-char context, past run_state.py:467's 400-char render truncation, so the run's HEADLINE DIAGNOSTIC never reached escalations.md while the title still asserted 'slice crashed after <stage>'. Reordered so both lead; the attribution now ends at offset 68-154. Independently re-measured by the re-review lane, which reconstructed the template from source and applied _one_line's exact semantics. Pinned by test_the_stage_attribution_survives_the_400_char_context_render.",
+      "RESOLVED INT-5 (P2): run-state-v2.md defined internal-error as 'the catch-all for every other failure', which read literally swallows a spent replan (council-objection :548) and a blocked task (ambiguity :636). Narrowed to the two shapes the code produces.",
+      "RESOLVED INT-6 (P2, the run's most valuable test addition): NOTHING pinned the trigger enum or the mutual agreement of its five homes - a future edit touching one home would stay fully green while run_state.py's fail-closed validator silently discarded an entire sidecar, its events and its report. New executed class TestTheTriggerEnumAgreesAcrossAllFiveHomes asserts the three Python tuples are identical AND that the workflow's enum source line carries exactly those values in order, anchored so a moved line fails loudly.",
+      "RESOLVED INT-7 (P2): the twin was told 'you cannot know which stage threw' - a limitation of the WORKFLOW's shared last-writer-wins state.stage that does not apply to a serial inline agent. It now names the stage it was actually running, hedging only for its one concurrent step.",
+      "RESOLVED INT-8 (P3) and INT-9 (P3): SKILL.md's unconditional claim qualified (the lost-slice shape carries neither exception text nor stage); a stale line citation dropped in favour of naming _legacy_match_triggers.",
+      "RESOLVED (FIFTH instance, found by the re-review lane after the first eight were fixed): the lost-slice record at :919 still said 'Neither structural guard FIRED' - the same unprovable word corrected in its sibling at :886 eleven lines up - and the remediation had edited CHANGELOG.md:25 to describe that record as already correct, replacing an accurate line with an inaccurate one. Both fixed. All five instances are now pinned as forbidden-phrase constants in slice_wave_contract_base.py (CRASH_STAGE_OVERCLAIM, CRASH_GUARD_ORIGIN_OVERCLAIM, CRASH_CAUSE_OVERCLAIM, CRASH_BUDGET_DENIAL_OVERCLAIM, GUARD_FIRED_OVERCLAIM), the last banned across the WHOLE workflow source so it cannot return in either record.",
+      "SWEPT CLEAN: a deliberate hunt for a SIXTH instance ran the pattern's tells (fired|came from|originat|would have prevented|no resource|rule out|never reaches|not a budget|caused by|the cause is) across the whole plugin tree and CHANGELOG.md, read all 26 hits in context, and found none - every survivor is an honest hedge, a provable control-flow statement, or one of the constants that exist to ban the pattern."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; claude plugin validate .",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand at 3b0bbf8, six segments as separate invocations: marketplace OK; 106 tests OK; 1159 tests OK; coverage PASS all floors met TOTAL 96.7%; 48 node tests 48 pass 0 fail; plugin validate passed.",
+    "scope": "full",
+    "tree_sha": "64e6e2d87ed34c02152190aeb65b5d928dd58663"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "ACCEPTED under the standing gate ruling. CONTROLLER-MEASURED at 3b0bbf8: 206 checks, vacuous=FALSE, exactly EIGHT failures - the same accepted pre-existing set (7 whole-file class_lines + parameter_count on dispatch). The remediation captured the gate at the pre-edit HEAD 8558a95 before touching anything and proved NEW:[] GONE:[]. runSliceError metrics unchanged at cyclomatic 8/10, cognitive 14/15, method_lines 12/50, nesting 1/3."
+  },
+  "escalations": [],
+  "agents_used": 3,
+  "wave": 3,
+  "events": [
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "remediate",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fifth-overclaim-closeout",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 8
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "review-summary",
+      "payload": {
+        "findings": 9,
+        "confirmed": 9,
+        "refuted": 0,
+        "fix_rounds": 2,
+        "reviewers": 2
+      }
+    }
+  ]
+}
