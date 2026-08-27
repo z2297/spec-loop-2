@@ -16,8 +16,10 @@ export const meta = {
 //   - loop bounds: replan ≤1, task retry ≤1, fix rounds ≤2, debug-fix ≤1
 //   - per-slice agent caps by review tier: 10 / 18 / 32
 //   - fail-closed synthesis: an unusable agent return is never an approval
-//   - answers injection: args.answers["<sliceId>:<trigger>"] resumes an
-//     escalated stage; unchanged stages replay from the journal cache
+//   - answers injection: args.answers["<sliceId>:<trigger>"], or
+//     ["<sliceId>:<trigger>:<round>"] from the second round on, resumes an
+//     escalated stage (escId writes the id, latestAnswer reads it back);
+//     unchanged stages replay from the journal cache
 //
 // The controller stamps timestamps and persists results (run_state.py) —
 // this script has no clock and no filesystem, by design.
@@ -252,9 +254,36 @@ function scopeCeilingList(ctx) {
   return []
 }
 
+// Answer keys belonging to one slice+trigger: the bare "<slice-id>:<trigger>"
+// plus every round-suffixed sibling of it. Triggers are a closed enum and the
+// base always ends with the whole trigger, so no trigger's family can absorb
+// another's key. (PURE over A.answers)
+function answerKeysFor(sliceId, trigger) {
+  const base = `${sliceId}:${trigger}`
+  return Object.keys(A.answers || {}).filter(k => k === base || k.startsWith(`${base}:`))
+}
+
+// Which round this dispatch is raising. A round is one DISPATCH of the slice:
+// escalated() is terminal, so a slice raises at most one record per dispatch and
+// an in-memory counter would reset to 1 on every re-dispatch and collide again.
+// The controller keys each answer by the escalation id it answers, so the number
+// of answered rounds already in args.answers is the one counter that survives a
+// resume unchanged — the same answers map always reproduces the same id. Round 1
+// keeps the bare id, so every id and answer key written before the round suffix
+// existed still matches. (PURE)
+function escRound(sliceId, trigger) {
+  return answerKeysFor(sliceId, trigger).length + 1
+}
+
+function escId(sliceId, trigger) {
+  const round = escRound(sliceId, trigger)
+  const base = `${sliceId}:${trigger}`
+  return round === 1 ? base : `${base}:${round}`
+}
+
 function esc(slice, trigger, title, context, question, options) {
   return {
-    id: `${slice.id}:${trigger}`,
+    id: escId(slice.id, trigger),
     trigger, title, context, question,
     options: options && options.length ? options : [{ label: 'Proceed with the recommended default', detail: context, recommended: true }],
     if_unanswered: 'pause this slice; continue all independent slices',
@@ -290,7 +319,7 @@ const packet = (slice) => [
 ].filter(Boolean).join('\n')
 
 const answerFor = (slice, trigger) => {
-  const a = humanAnswer(`${slice.id}:${trigger}`)
+  const a = latestAnswer(slice.id, trigger)
   return a ? `\nHUMAN ANSWER to your earlier "${trigger}" escalation (apply it, do not re-raise): ${a}` : ''
 }
 
@@ -302,7 +331,7 @@ const answerFor = (slice, trigger) => {
 // answer for a human resuming the escalation to see in the transcript
 // without instructing the reporter to change what it reports.
 const answerContext = (slice, trigger) => {
-  const a = humanAnswer(`${slice.id}:${trigger}`)
+  const a = latestAnswer(slice.id, trigger)
   return a ? `\nHUMAN ANSWER on the earlier "${trigger}" escalation, for context only — it does NOT change what you report: the suite result and quality.summary_pass/violations stay verbatim from the real output: ${a}` : ''
 }
 
@@ -480,7 +509,7 @@ async function stagePlan(slice, state) {
     { agentType: 'spec-loop:slice-planner', schema: PLAN_RESULT, effort: 'low' })
   if (!plan) return { stop: escalated(slice, state, esc(slice, 'ambiguity', 'planner returned no result', 'The planner dispatch failed terminally.', 'Retry the slice, or drop it?', [])) }
   if (plan.status === 'SPLIT') return { stop: doneResult(slice, state, 'SPLIT', { split: plan.split }) }
-  if (plan.status === 'ESCALATE') return { stop: escalated(slice, state, { ...esc(slice, plan.escalation.trigger, plan.escalation.title, plan.escalation.context, plan.escalation.question, plan.escalation.options), id: `${slice.id}:${plan.escalation.trigger}` }) }
+  if (plan.status === 'ESCALATE') return { stop: escalated(slice, state, esc(slice, plan.escalation.trigger, plan.escalation.title, plan.escalation.context, plan.escalation.question, plan.escalation.options)) }
   return { plan }
 }
 
@@ -544,6 +573,21 @@ function humanAnswer(id) {
   return (A.answers || {})[id]
 }
 
+// The answer to the NEWEST answered round of one slice+trigger. The controller
+// keys an answer by the escalation id it answers, so round 2's answer arrives
+// under "<slice-id>:<trigger>:2", and an answer written before the suffix
+// existed is keyed bare. Both are matched here, deliberately: dropping the bare
+// key would make every previously written answer unfindable, and the answer to
+// round N is exactly the context the dispatch that raises round N+1 needs. An
+// unparsable suffix ranks as round 1 rather than being dropped. (PURE)
+function latestAnswer(sliceId, trigger) {
+  const base = `${sliceId}:${trigger}`
+  const rank = (key) => Number(key.slice(base.length + 1)) || 1
+  const keys = answerKeysFor(sliceId, trigger).sort((a, b) => rank(a) - rank(b))
+  const newest = keys[keys.length - 1]
+  return newest === undefined ? undefined : humanAnswer(newest)
+}
+
 function councilObjectionEscalation(slice, state, ob, safety) {
   return escalated(slice, state, esc(slice, 'council-objection', `${safety ? 'SAFETY — ' : ''}council objects: ${ob.objection.reason.slice(0, 60)}`, ob.objection.reason, ob.objection.question, [{ label: ob.objection.recommendation, detail: 'critic-recommended default', recommended: true }]))
 }
@@ -554,7 +598,7 @@ function councilObjectionEscalation(slice, state, ob, safety) {
 // into downstream prompts via answerFor().
 async function resolveCouncilObjection(slice, state, ctx) {
   const { plan, ob, safety } = ctx
-  if (humanAnswer(`${slice.id}:council-objection`)) return { plan }
+  if (latestAnswer(slice.id, 'council-objection')) return { plan }
   if (safety || !ob.fixable_by_replan || state.replanned) return { stop: councilObjectionEscalation(slice, state, ob, safety) }
   state.replanned = true
   const revised = await dispatch(slice, state, 'replan', replanPrompt(slice, plan, ob),
