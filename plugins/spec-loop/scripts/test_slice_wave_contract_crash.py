@@ -23,7 +23,7 @@ import run_state
 from slice_wave_contract_base import (
     ANSWERABLE_TRIGGERS, CRASH_BUDGET_DENIAL_OVERCLAIM, CRASH_CAUSE_OVERCLAIM,
     CRASH_CLASSIFICATION_SENTENCE, CRASH_CLASSIFIED_PASSTHROUGH,
-    CRASH_CONTEXT_RENDER_LIMIT, CRASH_ERROR_EXPR, CRASH_ERROR_FIRST,
+    CRASH_ERROR_EXPR, CRASH_ERROR_FIRST,
     CRASH_GUARD_ORIGIN_OVERCLAIM, CRASH_HOST_LAYER_CAVEAT,
     CRASH_OPTION_CONTROLLER_ACTS,
     CRASH_OPTION_RETRY, CRASH_OPTION_SKIP, CRASH_OPTION_STOP,
@@ -43,6 +43,10 @@ from slice_wave_contract_base import (
 # role name), so the render check below measures the worst realistic case.
 SAMPLE_MESSAGE = "Cannot read properties of undefined (reading 'head')"
 LONGEST_STAGE = "none (the crash happened before any agent was dispatched)"
+# The template's LAST sentence. It is evicted by the renderer's truncation at
+# this worst-case length, which is what makes the ordering assertion below a
+# real constraint rather than a tautology.
+CONTEXT_TAIL = "task(s) had already completed"
 
 
 class TestTheCrashRecordNamesTheLastDispatchedStage(WorkflowSourceTestCase):
@@ -179,24 +183,36 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         return fallback[start + 1:fallback.index("`,", start)]
 
     def rendered_crash_context(self, message, stage_text):
-        """The context as run_state.render_escalation() would render it."""
+        """The `- Context:` line escalations.md actually receives, produced by
+        the REAL run_state.render_escalation(). Re-implementing its collapse
+        and truncate here protected nothing: the copy sliced unconditionally
+        and appended no ellipsis, so it disagreed with _one_line() on two of
+        its three behaviours and could not have caught a change to either."""
         filled = self.crash_context().replace(CRASH_ERROR_EXPR, message)
         filled = filled.replace("${stageText}", stage_text)
         filled = filled.replace("${state.tasksCompleted}", "2")
-        return " ".join(filled.split())[:CRASH_CONTEXT_RENDER_LIMIT - 1]
+        record = {"id": "s1:internal-error", "trigger": "internal-error",
+                  "title": "slice crashed", "context": filled,
+                  "question": "Retry, skip, or stop."}
+        section = run_state.render_escalation("s1", record)
+        return next(line for line in section.splitlines()
+                    if line.startswith("- Context: "))
 
-    def test_the_stage_attribution_survives_the_400_char_context_render(self):
-        # run_state.render_escalation() renders "- Context: %s" through
-        # _one_line(..., 400), so anything past 400 collapsed characters never
-        # reaches escalations.md - which is also the corpus a later run's
+    def test_the_stage_attribution_survives_the_real_context_render(self):
+        # run_state.render_escalation() collapses the context and truncates it
+        # through _one_line(), so anything past that budget never reaches
+        # escalations.md - which is also the corpus a later run's
         # escalation-gate precedent check reads. The stage attribution is this
         # record's headline diagnostic and the title asserts it, so it and its
-        # caveat must sit inside that budget, ahead of the fixed prose.
+        # caveat must sit inside the budget, ahead of the fixed prose. The
+        # budget is not named here: the assertion runs the real renderer, so
+        # the test cannot drift from whatever limit render_escalation applies.
         rendered = self.rendered_crash_context(SAMPLE_MESSAGE, LONGEST_STAGE)
         attribution = CRASH_STAGE_CONTEXT.replace("${stageText}", LONGEST_STAGE)
         self.assertIn(SAMPLE_MESSAGE, rendered)
         self.assertIn(attribution, rendered)
         self.assertIn(CRASH_STAGE_CAVEAT, rendered)
+        self.assertNotIn(CONTEXT_TAIL, rendered)
 
     def test_a_lost_slice_is_an_internal_error_too(self):
         # parallel() resolved the thunk to null: the slice died with no result

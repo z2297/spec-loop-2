@@ -162,11 +162,6 @@ CRASH_ERROR_EXPR = "${String((e && e.message) || e)}"
 CRASH_CLASSIFICATION_SENTENCE = "neither structural guard raised its escalation record"
 CRASH_GUARD_ORIGIN_OVERCLAIM = "so this crash came from neither"
 CRASH_HOST_LAYER_CAVEAT = "host- or agent-layer resource failure"
-# render_escalation() (run_state.py) collapses the context and hard-truncates it
-# at 400 characters, and escalations.md is the corpus the escalation gate's
-# precedent check reads. Both the exception text and the stage attribution have
-# to fit inside that budget, ahead of the fixed classification prose.
-CRASH_CONTEXT_RENDER_LIMIT = 400
 CRASH_STAGE_CAVEAT = "so a starting point, not a culprit"
 # The mirror-image overclaim this module now forbids: asserting "bug, NOT a
 # budget limit" is as unprovable as the old "budget" assertion it replaced.
