@@ -159,6 +159,15 @@ SLICE_LOST_RECORD = "esc(A.slices[i], 'internal-error', 'slice lost',"
 # Third instance of the same overclaim pattern: a thunk resolved to null
 # proves nothing about the cause, so the lost-slice record must not deny one.
 SLICE_LOST_CAUSE_DENIAL = "Not a resource limit."
+# Fifth instance, and the sibling of CRASH_GUARD_ORIGIN_OVERCLAIM above: a
+# guard "firing" asserts its CHECK never ran, which neither record can know.
+# All either one proves is that no guard RAISED an escalation record - a throw
+# from inside `budget.remaining()` starts in the token-floor guard and still
+# arrives with no escRecord. Forbidden across the WHOLE source, so the phrase
+# cannot come back in either the crash record or the lost-slice one.
+GUARD_FIRED_OVERCLAIM = "structural guard fired"
+SLICE_LOST_GUARD_PROVABLE = "Neither structural guard raised its escalation record"
+SLICE_LOST_CAUSE_UNKNOWN = "the cause is unknown here"
 STAGE_CRITIQUE_START = "async function stageCritique(slice, state, plan) {"
 STAGE_CRITIQUE_END = "// Stage T helpers"
 SPLIT_RETURN = "if (splitRec) return { stop: doneResult(slice, state, 'SPLIT'"

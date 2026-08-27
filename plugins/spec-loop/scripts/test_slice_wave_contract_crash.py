@@ -31,7 +31,9 @@ from slice_wave_contract_base import (
     CRASH_STAGE_OVERCLAIM,
     CRASH_STAGE_PRECISION, CRASH_TITLE_BRANCH, CRASH_TITLE_UNGRAMMATICAL,
     CRASH_TRIGGER, DISPATCH_GUARD_CALL, GUARD_BUDGET_TRIGGER,
-    SLICE_LOST_CAUSE_DENIAL, SLICE_LOST_RECORD, STAGE_ASSIGNMENT,
+    GUARD_FIRED_OVERCLAIM, SLICE_LOST_CAUSE_DENIAL,
+    SLICE_LOST_CAUSE_UNKNOWN, SLICE_LOST_GUARD_PROVABLE,
+    SLICE_LOST_RECORD, STAGE_ASSIGNMENT,
     STATE_STAGE_INIT, TRIGGER_ENUM_LINE,
     WorkflowSourceTestCase,
 )
@@ -216,6 +218,19 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
             "const results = await parallel(", "log(`wave ")
         self.assertNotIn(SLICE_LOST_CAUSE_DENIAL, wave_entry)
         self.assertIn(CRASH_HOST_LAYER_CAVEAT, wave_entry)
+
+    def test_the_lost_slice_record_claims_only_that_no_guard_record_came_back(self):
+        # Fifth instance, and the sibling of the crash record's: a guard that
+        # "fired" asserts its CHECK never ran, which a null result cannot show.
+        # A throw from inside `budget.remaining()` ORIGINATES in the token-floor
+        # guard and still arrives with no escRecord, so both records may claim
+        # only that no guard RAISED one. Forbidden across the whole source so
+        # neither record can reintroduce it.
+        wave_entry = self.between(
+            "const results = await parallel(", "log(`wave ")
+        self.assertIn(SLICE_LOST_GUARD_PROVABLE, wave_entry)
+        self.assertIn(SLICE_LOST_CAUSE_UNKNOWN, wave_entry)
+        self.assertNotIn(GUARD_FIRED_OVERCLAIM, self.src)
 
 
 class TestTheTriggerEnumAgreesAcrossAllFiveHomes(WorkflowSourceTestCase):

@@ -95,7 +95,9 @@ brief, the plan and conventions paths, `shared_constraints`, and the test/build 
 per-task review below Tier 3; at Tier 3 run the per-task review your tier table specifies.
 Handle statuses: `NEEDS_CONTEXT` → answer from the plan or codebase and re-dispatch once
 (that is the task's one retry); a genuine `BLOCKED`, or a second failure on the same task →
-escalate (`material-assumption` or `review-block` as fits) and return `ESCALATED`. Roll up
+escalate and return `ESCALATED`. Pick the trigger the way the workflow does: a dispatch that
+came back with **no result** is `ambiguity` (see step 4), never `internal-error`; a `BLOCKED`
+that states a real blocker is `material-assumption` or `review-block` as fits. Roll up
 every `concerns[]` and `deviations[]` — the reviewer needs them.
 
 **4 — Review ∥ quality gate (one message).** Build the review package once with the handed-in
