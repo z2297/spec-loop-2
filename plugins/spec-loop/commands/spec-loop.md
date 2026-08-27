@@ -130,7 +130,11 @@ deadlock is itself an escalation):
    precedent. Everything else: ONE `AskUserQuestion` round for ALL open escalations
    (recommended defaults first). Write answers back (`escalation-answered` events), keying
    each answer by the escalation's `id` verbatim — a round-suffixed id keeps its suffix in
-   the `answers` map, and the wave reads the newest answered round — then
+   the `answers` map, and the wave reads the newest answered round. The wave derives a
+   dispatch's round number solely from the keys already present in `answers`, so every
+   re-dispatch this run makes must hand the wave an `answers` map that still carries each
+   previously answered round's key alongside the newest one — dropping an earlier round's
+   key reissues the id that round already answered. Then
    **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
    whose sidecars are not DONE/SPLIT (merged work never re-enters a wave; its worktree is
    already gone) — same `ctx`, `answers` filled in, and `resumeFromRunId: <wf_id>` so the

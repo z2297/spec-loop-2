@@ -283,8 +283,8 @@ function escId(sliceId, trigger) {
 
 // `content` is `{title, context, question, options}`, grouped into one
 // parameter object because those four always travel together (one prompt's
-// worth of copy) while `slice` and `trigger` each drive a different part of
-// the id.
+// worth of copy), whereas `slice` and `trigger` each drive a different part
+// of the id.
 function esc(slice, trigger, content) {
   const { title, context, question, options } = content
   return {
