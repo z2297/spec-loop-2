@@ -272,6 +272,20 @@ LEGACY_ESCALATIONS = """\
 - Answer: **Option 1 — apply the council's proven remedy, then execute.**
 """
 
+# A v1 escalations.md whose Trigger lines carry the crash trigger, in the same
+# prose shape as LEGACY_ESCALATIONS. Kept separate from that fixture because
+# LegacyComputeTests pins exact per-trigger counts derived from it.
+LEGACY_ESCALATIONS_CRASH = """\
+# Escalations — legacy
+
+## [s4] Slice worker crashed mid-dispatch   (status: ANSWERED)
+- Trigger: internal-error (the dispatch raised and was caught by the wave harness)
+- Answer: **Proceed with the recommended default.**
+
+## [s5] Retry exhausted against a resource limit   (status: OPEN)
+- Trigger: budget-exhausted + internal-error (a resource signal, then a caught throw)
+"""
+
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -464,13 +478,16 @@ class EscalationPairingTests(unittest.TestCase):
         triggers = [r["trigger"] for r in result["records"]]
         self.assertEqual(triggers, ["internal-error"])
 
-    def test_internal_error_is_substring_safe_against_every_other_trigger(self):
-        # _legacy_match_triggers() in run_metrics.py matches by containment
-        # (no line number: it moved once already when internal-error landed).
-        others = [t for t in rm.ESCALATION_TRIGGERS if t != "internal-error"]
-        for other in others:
-            self.assertNotIn(other, "internal-error")
-            self.assertNotIn("internal-error", other)
+    def test_the_trigger_names_are_pairwise_non_substrings(self):
+        # A name-level property only: no canonical trigger contains another,
+        # which is what makes _legacy_match_triggers' containment matching
+        # unambiguous. The matcher itself is exercised in
+        # LegacyProseParserTests against real v1 prose; this method reads the
+        # constant and never reaches the parser.
+        for probe in rm.ESCALATION_TRIGGERS:
+            rest = [t for t in rm.ESCALATION_TRIGGERS if t != probe]
+            for other in rest:
+                self.assertNotIn(other, probe)
 
     def test_union_counts_a_duplicated_record_once(self):
         metrics = compute_for(v2_files(), run_id="20260730-v2")
@@ -1337,6 +1354,26 @@ class LegacyProseParserTests(unittest.TestCase):
             "## [s1] Pick a port   (status: OPEN)\n"
             "- Trigger: material-assumption\n- Answer:\n")
         self.assertEqual(open_escs[0]["status"], "OPEN")
+
+    def test_a_crash_trigger_line_matches_internal_error_through_the_real_parser(self):
+        # Drives rm.legacy_parse_escalations -> _legacy_body_fields ->
+        # _legacy_match_triggers on real v1 prose, so a change to the matcher's
+        # containment semantics turns this red. ESCALATION_TRIGGERS is imported,
+        # never re-listed here.
+        escs = rm.legacy_parse_escalations(LEGACY_ESCALATIONS_CRASH)
+        crash = escs[0]
+        self.assertEqual(crash["triggers"], ["internal-error"])
+        self.assertEqual(crash["trigger"], "internal-error")
+        spurious = set(rm.ESCALATION_TRIGGERS) - {"internal-error"}
+        self.assertEqual(set(crash["triggers"]) & spurious, set())
+
+    def test_a_crash_trigger_line_alongside_budget_exhausted_collects_both(self):
+        # _legacy_match_triggers collects every containment match, in
+        # ESCALATION_TRIGGERS declaration order.
+        escs = rm.legacy_parse_escalations(LEGACY_ESCALATIONS_CRASH)
+        both_in_declaration_order = ["budget-exhausted", "internal-error"]
+        self.assertEqual(escs[1]["triggers"], both_in_declaration_order)
+        self.assertEqual(escs[1]["status"], "OPEN")
 
 
 class LegacyComputeTests(unittest.TestCase):
