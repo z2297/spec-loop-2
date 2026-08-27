@@ -106,7 +106,6 @@ test("a crash before any dispatch yields the no-stage title", async () => {
     "none (the crash happened before any agent was dispatched)"));
 });
 
-const GENERIC_OPTION = "Proceed with the recommended default";
 const LOST = { parallel: async () => [null] };
 
 test("a lost slice escalates with the same trigger and its own title", async () => {
@@ -121,18 +120,40 @@ test("a lost slice escalates with the same trigger and its own title", async () 
   assert.ok(only(out).question.startsWith("Re-run the wave to retry this slice"));
 });
 
-// PINS CURRENT BEHAVIOUR, with an open question standing against it.
-// controller-verified-evidence.md section 2 records that widening the
-// lost-slice record to the same three labels as the crash record "may be the
-// better fix at the same cost" and is a live question standing before the human. A future
-// widening should read as "update this pinned expectation", never as a
-// regression.
-test("the lost-slice record gets ONE substituted generic option", async () => {
+// The lost-slice record used to rely on esc()'s empty-array substitution, which
+// yields ONE option labelled "Proceed with the recommended default" whose detail
+// repeats the whole context. The human ruled that widening this record to the same
+// three controller-named labels as the crash record is the fix. The record's own
+// question stays binary on purpose, so this test pins the OPTION SET by execution
+// and claims nothing about the ask.
+test("the lost-slice record carries the same three controller-named options", async () => {
   const rec = only(await runWave(ONE_SLICE(), LOST));
-  assert.equal(rec.options.length, 1);
-  assert.equal(rec.options[0].label, GENERIC_OPTION);
+  assert.deepEqual(rec.options.map((o) => o.label), RECORD_OPTIONS);
   assert.equal(rec.options[0].recommended, true);
-  assert.equal(rec.options[0].detail, rec.context);
+  assert.equal(rec.options[1].recommended, undefined);
+  assert.equal(rec.options[2].recommended, undefined);
+  rec.options.forEach((o) => assert.notEqual(o.detail, rec.context));
+  rec.options.forEach((o) => assert.ok(o.detail.includes("CONTROLLER")));
+});
+
+// The two internal-error records now share the trigger, the id shape and the three
+// option labels. What still separates them is the evidence and the ask: the crash
+// record carries exception text plus a stage attribution and asks which of the three
+// to take; the lost-slice record carries neither and asks the binary re-run question.
+// A future edit that collapses them into one indistinguishable record fails here.
+test("the crash and lost-slice records stay distinguishable after the widening", async () => {
+  const crash = only(await runWave(ONE_SLICE(), THROWS));
+  const lost = only(await runWave(ONE_SLICE(), LOST));
+  assert.equal(crash.trigger, lost.trigger);
+  assert.deepEqual(crash.options.map((o) => o.label), RECORD_OPTIONS);
+  assert.deepEqual(lost.options.map((o) => o.label), RECORD_OPTIONS);
+  assert.notEqual(crash.title, lost.title);
+  assert.equal(lost.title, "slice lost");
+  assert.notEqual(crash.context, lost.context);
+  assert.notEqual(crash.question, lost.question);
+  assert.ok(crash.context.startsWith("Error: BOOM."));
+  assert.ok(!lost.context.startsWith("Error:"));
+  assert.ok(!lost.context.includes("Last stage/role dispatched"));
 });
 
 const FOUR_IDS = ["s1", "s2", "s3", "s4"];

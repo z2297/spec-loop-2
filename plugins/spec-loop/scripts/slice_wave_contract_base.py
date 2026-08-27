@@ -34,14 +34,18 @@ is either a regression or an intentional contract change that belongs in
 one of the importing modules too.
 Companion lane: slice_wave_behaviour.test.mjs executes the workflow in a mock
 sandbox and pins the runtime record shapes it produces there, including the
-crash record's three option labels and the lost-slice record's one substituted
-label. It carries its own honest-limit header stating that it covers
-deterministic control flow only. The three crash labels therefore live in three
-non-historical places: the workflow itself, the CRASH_OPTION_RETRY /
-CRASH_OPTION_SKIP / CRASH_OPTION_STOP constants below, and RECORD_OPTIONS in
-that module. The substituted lost-slice label lives in two: the workflow's
-esc() default and GENERIC_OPTION in that module. A label change must move every
-one of them.
+crash record's three option labels and, now that the lost-slice record was
+widened to the same three controller-named labels, its option labels too. It
+carries its own honest-limit header stating that it covers deterministic
+control flow only. The three labels therefore live in three non-historical
+places, shared by both records: the workflow itself, spelling the three
+option details out at two call sites, runSliceError and the wave-entry
+fallback; the CRASH_OPTION_RETRY / CRASH_OPTION_SKIP / CRASH_OPTION_STOP
+constants below, scoped to the crash source text; and RECORD_OPTIONS in that
+module, pinning the runtime labels of both records. esc()'s single generic
+substitution remains live across its other empty-array call sites, but no
+harness constant pins that label anymore. A label change must move every one of
+them.
 
 Every pinned JS snippet is a module-level constant rather than a literal in
 a test body, and continuation lines use a 4-space hanging indent. Both are
