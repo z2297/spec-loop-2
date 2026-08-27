@@ -3,8 +3,12 @@
 
 Covers the PURE diff parser on embedded fixture text, config loading (defaults /
 loaded / disabled / malformed), the pure metric primitives (parameter counting,
-branch counting, nesting depth, CRAP, cognitive approximation), the builtin
-heuristic function extraction for python and brace languages, backend CSV/JSON
+branch counting, nesting depth, CRAP, cognitive approximation), the scan mask
+that hides python string-literal and comment content from the two branch
+scans (including its fall-back-to-raw paths), a differential harness
+comparing masked against raw measurement over every heuristic-readable file
+in the plugin tree, the builtin heuristic function extraction for python and
+brace languages, backend CSV/JSON
 parsing and backend+heuristic merging with per-metric sourcing (cognitive is
 NEVER attributed to a tool), coverage parsing (cobertura + lcov) and CRAP
 assembly, custom-gate evaluation (metric-form evaluated here, command-form
