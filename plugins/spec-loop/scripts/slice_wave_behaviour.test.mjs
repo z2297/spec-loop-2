@@ -105,3 +105,32 @@ test("a crash before any dispatch yields the no-stage title", async () => {
   assert.ok(only(out).context.includes(
     "none (the crash happened before any agent was dispatched)"));
 });
+
+const GENERIC_OPTION = "Proceed with the recommended default";
+const LOST = { parallel: async () => [null] };
+
+test("a lost slice escalates with the same trigger and its own title", async () => {
+  const out = await runWave(ONE_SLICE(), LOST);
+  assert.equal(out.results[0].status, "ESCALATED");
+  assert.equal(out.results[0].tasks_completed, 0);
+  assert.equal(out.results[0].agents_used, 0);
+  assert.deepEqual(out.results[0].quality, { status: "SKIPPED", detail: "slice never ran" });
+  assert.equal(only(out).id, "s1:" + CRASH_TRIGGER);
+  assert.equal(only(out).trigger, CRASH_TRIGGER);
+  assert.equal(only(out).title, "slice lost");
+  assert.ok(only(out).question.startsWith("Re-run the wave to retry this slice"));
+});
+
+// PINS CURRENT BEHAVIOUR, with an open question standing against it.
+// controller-verified-evidence.md section 2 records that widening the
+// lost-slice record to the same three labels as the crash record "may be the
+// better fix at the same cost" and is a live question standing before the human. A future
+// widening should read as "update this pinned expectation", never as a
+// regression.
+test("the lost-slice record gets ONE substituted generic option", async () => {
+  const rec = only(await runWave(ONE_SLICE(), LOST));
+  assert.equal(rec.options.length, 1);
+  assert.equal(rec.options[0].label, GENERIC_OPTION);
+  assert.equal(rec.options[0].recommended, true);
+  assert.equal(rec.options[0].detail, rec.context);
+});
