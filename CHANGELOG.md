@@ -29,8 +29,13 @@ All notable changes to the spec-loop plugin are documented here. The format is
   lost-slice record at :919 follows the same rule in the same words: neither guard *raised* its
   escalation record, "and that is all a null result proves, not that no guard check ran" — and it no
   longer denies a resource cause it cannot rule out. It is not a judgment trigger and it is not
-  answerable by re-dispatching an agent: its three options (retry the slice, skip it, stop the run)
-  are controller actions, and each option's detail names the controller as what applies it. Added to
+  answerable by re-dispatching an agent. The two records offer different things. The crash record
+  from `runSliceError` passes three explicit options — retry the slice, skip it, stop the run —
+  and each option's detail names the controller as what applies it, because the loop itself
+  implements none of the three. The lost-slice record passes an empty options array, so `esc()`
+  substitutes a single generic option labelled "Proceed with the recommended default" whose detail
+  repeats the context; its retry ask lives in its question, "Re-run the wave to retry this slice?",
+  not in an option. Either way the controller is what acts. Added to
   `ESCALATION_TRIGGERS` in `run_state.py`, `run_metrics.py` and `dashboard_server.py`, to the record
   shape in `references/run-state-v2.md`, and to the enumerations in
   `skills/escalation-gate/SKILL.md` and `agents/slice-worker-fallback.md` — the last of these being
