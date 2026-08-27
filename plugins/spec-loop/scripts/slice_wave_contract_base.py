@@ -176,7 +176,7 @@ CRASH_STAGE_CAVEAT = "so a starting point, not a culprit"
 CRASH_CAUSE_OVERCLAIM = "This is a loop or agent-contract bug"
 CRASH_BUDGET_DENIAL_OVERCLAIM = "NOT a cap or budget limit"
 GUARD_BUDGET_TRIGGER = "esc(slice, 'budget-exhausted',"
-SLICE_LOST_RECORD = "esc(A.slices[i], 'internal-error', 'slice lost',"
+SLICE_LOST_RECORD = "esc(A.slices[i], 'internal-error', {\n    title: 'slice lost',"
 # Third instance of the same overclaim pattern: a thunk resolved to null
 # proves nothing about the cause, so the lost-slice record must not deny one.
 SLICE_LOST_CAUSE_DENIAL = "Not a resource limit."

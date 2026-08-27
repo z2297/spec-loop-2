@@ -152,7 +152,8 @@ regardless of how the work went.
 ## Escalations
 
 Every escalation is an EscalationRecord in `escalations[]`: stable id `<slice-id>:<trigger>`,
-one of the seven triggers (`ambiguity`, `material-assumption`, `review-block`,
+plus `:<round>` from the second round of that trigger in that slice onward, one of the seven
+triggers (`ambiguity`, `material-assumption`, `review-block`,
 `council-objection`, `quality-gate-block`, `budget-exhausted`, `internal-error`), the context,
 the precise question, options with one marked `recommended`, and `if_unanswered`.
 Proceed-and-log stays the default — surface only genuine ambiguity or a material assumption
