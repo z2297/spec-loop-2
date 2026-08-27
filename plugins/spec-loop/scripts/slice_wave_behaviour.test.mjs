@@ -57,3 +57,51 @@ test("running the loaded wave resolves an object carrying a results array", asyn
   assert.ok(Array.isArray(out.results));
   assert.equal(out.results.length, 1);
 });
+
+const CRASH_TRIGGER = "internal-error";
+const RECORD_OPTIONS = ["Retry this slice", "Skip this slice", "Stop the run"];
+const ONE_SLICE = () => waveArgs([sliceFixture("s1")]);
+const THROWS = { agent: async () => { throw new Error("BOOM"); } };
+const only = (out) => out.results[0].escalations[0];
+
+test("an agent that throws escalates the slice with the internal-error trigger", async () => {
+  const out = await runWave(ONE_SLICE(), THROWS);
+  assert.equal(out.results.length, 1);
+  assert.equal(out.results[0].status, "ESCALATED");
+  assert.equal(out.results[0].escalations.length, 1);
+  assert.equal(only(out).id, "s1:" + CRASH_TRIGGER);
+  assert.equal(only(out).trigger, CRASH_TRIGGER);
+  assert.equal(only(out).status, "OPEN");
+});
+
+test("the crash record title names the last dispatched stage", async () => {
+  const out = await runWave(ONE_SLICE(), THROWS);
+  assert.equal(only(out).title, "slice crashed after plan");
+});
+
+test("the crash record carries the three controller-named options in order", async () => {
+  const out = await runWave(ONE_SLICE(), THROWS);
+  assert.deepEqual(only(out).options.map((o) => o.label), RECORD_OPTIONS);
+  assert.equal(only(out).options[0].recommended, true);
+  assert.equal(only(out).options[1].recommended, undefined);
+  assert.equal(only(out).options[2].recommended, undefined);
+});
+
+test("the guaranteed context ordering leads with the two variable diagnostics", async () => {
+  const ctx = only(await runWave(ONE_SLICE(), THROWS)).context;
+  assert.ok(ctx.startsWith("Error: BOOM."));
+  const stageAt = ctx.indexOf("Last stage/role dispatched before the failure: plan");
+  const causeAt = ctx.indexOf("Cause unknown");
+  const tasksAt = ctx.indexOf("task(s) had already completed");
+  assert.ok(stageAt > 0);
+  assert.ok(causeAt > stageAt);
+  assert.ok(tasksAt > causeAt);
+});
+
+test("a crash before any dispatch yields the no-stage title", async () => {
+  const budget = { total: 1, remaining: () => { throw new Error("NOBUDGET"); } };
+  const out = await runWave(ONE_SLICE(), { budget });
+  assert.equal(only(out).title, "slice crashed before any agent was dispatched");
+  assert.ok(only(out).context.includes(
+    "none (the crash happened before any agent was dispatched)"));
+});
