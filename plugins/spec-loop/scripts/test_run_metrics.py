@@ -509,6 +509,40 @@ class EscalationPairingTests(unittest.TestCase):
         self.assertEqual(merged[0]["opened"], "2026-07-30T10:00:00Z")
         self.assertEqual(merged[0]["trigger"], "ambiguity")
 
+    def test_two_rounds_of_one_trigger_stay_two_records(self):
+        first = {"id": "s1:internal-error", "scope": "s1",
+                 "trigger": "internal-error", "title": "round one",
+                 "status": "ANSWERED", "opened": "2026-07-30T10:00:00Z",
+                 "answered_at": "2026-07-30T10:05:00Z"}
+        second = dict(first, id="s1:internal-error:2", title="round two",
+                      status="OPEN", answered_at=None)
+        merged = rm.merge_escalation_records([], [first, second])
+        self.assertEqual([r["id"] for r in merged],
+                         ["s1:internal-error", "s1:internal-error:2"])
+        self.assertEqual([r["title"] for r in merged],
+                         ["round one", "round two"])
+        self.assertEqual([r["status"] for r in merged], ["ANSWERED", "OPEN"])
+
+    def test_one_round_seen_in_both_channels_stays_one_record(self):
+        events = [{"id": "s1:internal-error:2", "scope": "s1",
+                   "trigger": "internal-error", "title": None, "status": "OPEN",
+                   "opened": "2026-07-30T10:00:00Z", "answered_at": None}]
+        sidecars = [{"id": "s1:internal-error:2", "scope": "s1",
+                     "trigger": None, "title": "round two", "status": "ANSWERED",
+                     "opened": None, "answered_at": "2026-07-30T10:05:00Z"}]
+        merged = rm.merge_escalation_records(events, sidecars)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["status"], "ANSWERED")
+        self.assertEqual(merged[0]["title"], "round two")
+
+    def test_scope_survives_a_round_suffixed_id(self):
+        parsed = rm._parse_embedded_escalations(
+            [{"id": "s1:internal-error:2", "trigger": "internal-error",
+              "title": "round two", "status": "OPEN"}])
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["scope"], "s1")
+        self.assertEqual(parsed[0]["id"], "s1:internal-error:2")
+
 
 # ---------------------------------------------------------------------------
 # dag.json / sidecar / runbook parsing

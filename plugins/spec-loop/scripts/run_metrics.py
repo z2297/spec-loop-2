@@ -452,7 +452,12 @@ def _normalize_trigger(value):
 
 
 def merge_escalation_records(from_events, from_sidecars):
-    """Union the two escalation channels by id, events winning on conflict.
+    """Union the two escalation channels by the whole id, events winning on conflict.
+
+    The id carries a round component from the second escalation of one trigger in
+    one slice onward (``escId`` in slice-wave.workflow.js), so two rounds are two
+    ids and stay two records here; only a genuine re-emit of one round, seen in
+    both channels, merges.
 
     Sidecars are authoritative about a slice, but a run that escalated at
     intake has no sidecar at all, and an interrupted run may have events with
