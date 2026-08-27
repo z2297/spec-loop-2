@@ -134,3 +134,28 @@ test("the lost-slice record gets ONE substituted generic option", async () => {
   assert.equal(rec.options[0].recommended, true);
   assert.equal(rec.options[0].detail, rec.context);
 });
+
+const FOUR_IDS = ["s1", "s2", "s3", "s4"];
+const FOUR = () => waveArgs(FOUR_IDS.map(sliceFixture));
+// The prompt carries the slice id (planPrompt embeds it), so an agent that
+// throws the prompt's own id back gives each slice a distinguishable failure.
+const THROW_LABELLED = {
+  agent: async (prompt, opts) => { throw new Error("crash-of-" + opts.label); },
+};
+
+test("every slice in a width-4 wave gets its own result, positionally", async () => {
+  const out = await runWave(FOUR(), THROW_LABELLED);
+  assert.equal(out.results.length, 4);
+  assert.deepEqual(out.results.map((r) => r.id), FOUR_IDS);
+  assert.deepEqual(out.results.map((r) => r.status), ["ESCALATED", "ESCALATED", "ESCALATED", "ESCALATED"]);
+  assert.equal(out.wave_index, 0);
+  assert.equal(out.run_id, "20260827-harness");
+});
+
+test("each escalation id and context is attributed to its own slice", async () => {
+  const out = await runWave(FOUR(), THROW_LABELLED);
+  const recs = out.results.map((r) => r.escalations[0]);
+  assert.deepEqual(recs.map((r) => r.id), FOUR_IDS.map((i) => i + ":" + CRASH_TRIGGER));
+  assert.deepEqual(recs.map((r) => r.context.startsWith("Error: crash-of-")), [true, true, true, true]);
+  FOUR_IDS.forEach((id, i) => assert.ok(recs[i].context.includes("crash-of-" + id + ":plan")));
+});
