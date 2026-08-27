@@ -868,8 +868,8 @@ class TestAppendEvent(RunStateTestCase):
         rs.append_event(self.run_dir, rs.build_event(TS, "run", "run-created", {}))
         event = rs.build_event(LATER, "wave1", "wave-dispatched", {"index": 1})
         rs.append_event(self.run_dir, event)
-        self.assertEqual([e["type"] for e in self.events()],
-                         ["run-created", "wave-dispatched"])
+        types = [e["type"] for e in self.events()]
+        self.assertEqual(types, ["run-created", "wave-dispatched"])
 
     def test_unrendered_event_writes_no_prose(self):
         event = rs.build_event(TS, "wave1", "wave-dispatched", {"index": 1})
@@ -897,15 +897,16 @@ class TestAppendEvent(RunStateTestCase):
     def test_every_gate_event_type_is_logged(self):
         payload = {"summary": "s", "verdict": "ENDORSE", "status": "PASS",
                    "result": "PASS"}
-        for index, event_type in enumerate(
-                ("decision", "deferred", "council-verdict", "quality-gate",
-                 "integration-check", "phase5-gate")):
+        emitted = ("decision", "deferred", "council-verdict", "quality-gate",
+                   "integration-check", "phase5-gate")
+        for index, event_type in enumerate(emitted):
             event = rs.build_event(TS, "s%d" % index, event_type, payload)
             rs.append_event(self.run_dir, event)
         body = self.read("decisions-log.md")
-        for event_type in ("DECISION", "DEFERRED", "COUNCIL-VERDICT",
-                           "QUALITY-GATE", "INTEGRATION-CHECK", "PHASE5-GATE"):
-            self.assertIn(event_type, body)
+        logged = ("DECISION", "DEFERRED", "COUNCIL-VERDICT", "QUALITY-GATE",
+                  "INTEGRATION-CHECK", "PHASE5-GATE")
+        for marker in logged:
+            self.assertIn(marker, body)
 
     def test_escalation_opened_writes_a_full_entry(self):
         event = rs.build_event(TS, "s1", "escalation-opened", escalation())
@@ -1551,16 +1552,15 @@ class TestPinnedPayloadFacts(RunStateTestCase):
     def test_answers_pair_by_id_not_by_scope(self):
         # One slice can open several escalations; answering one must not close
         # its siblings.
-        first, second = escalation(), escalation(id="s1:ambiguity",
-                                                 trigger="ambiguity")
-        rs.persist_slice(self.run_dir,
-                         sidecar("ESCALATED", escalations=[first, second]),
-                         wave=1, ts=TS)
+        first = escalation()
+        second = escalation(id="s1:ambiguity", trigger="ambiguity")
+        body = sidecar("ESCALATED", escalations=[first, second])
+        rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
         payload = {"id": "s1:ambiguity", "answer": "ISO-8601"}
         event = rs.build_event(LATER, "s1", "escalation-answered", payload)
         rs.append_event(self.run_dir, event)
-        self.assertEqual([r["id"] for r in rs.open_escalations(self.run_dir)],
-                         ["s1:review-block"])
+        still_open = [r["id"] for r in rs.open_escalations(self.run_dir)]
+        self.assertEqual(still_open, ["s1:review-block"])
 
     def test_an_answer_from_another_scope_still_pairs_by_id(self):
         event = rs.build_event(TS, "s1", "escalation-opened", escalation())
@@ -1672,8 +1672,8 @@ class TestPinnedPayloadFacts(RunStateTestCase):
         payload = {"role": "reviewer", "model": None}
         event = rs.build_event(TS, "s1", "agent-dispatch", payload)
         rs.append_event(self.run_dir, event)
-        self.assertEqual(self.events()[0]["payload"], {"role": "reviewer",
-                                                      "model": None})
+        stored = self.events()[0]["payload"]
+        self.assertEqual(stored, {"role": "reviewer", "model": None})
 
     def test_no_emitted_payload_derives_a_duration(self):
         # ts is a batch collection stamp: nothing here may turn it into elapsed
