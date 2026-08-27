@@ -145,6 +145,30 @@ REGEX_QUOTE_PHANTOM_MULTILINE = (
     "z = 1;\n"
 )
 
+# A JSX text node where an apostrophe is prose, not a string opener. The hand
+# scanner has no model of JSX text, so the two contractions on the text line
+# pair into a phantom string covering the real code between them, hiding the
+# genuine boolean operator. Measured raw-versus-masked branch counts are
+# pinned below.
+JSX_APOSTROPHE_FUNCTION = (
+    "function Row(p) {\n"
+    "  return (\n"
+    "    <p>It's {p.a && p.b} - don't worry</p>\n"
+    "  );\n"
+    "}\n"
+)
+
+# A backtick inside a regex literal's character contents. The template
+# alternative's closing search crosses newlines with no escape needed, so it
+# would otherwise pair with the next real backtick anywhere later in the
+# source and blank real code -- including a genuine boolean operator --
+# between the two.
+BACKTICK_REGEX_PHANTOM_SOURCE = (
+    "const open = /`/;\n"
+    "function f(a){ return a && a.x ? 1 : 2; }\n"
+    "const close = /`/;\n"
+)
+
 
 def unmasked(text, lang):
     """Identity stand-in for qg._strip_for_scan, so a test can measure the same
@@ -645,6 +669,25 @@ class TestCbraceMaskFill(unittest.TestCase):
         self.assertNotIn("line", masked)
         self.assertIn("const a = b;", masked)
 
+    def test_a_backtick_inside_a_regex_literal_does_not_open_a_phantom_template(self):
+        # A stepped-over slash on a source line, followed later by a
+        # backtick, would otherwise open a template-literal span reaching
+        # all the way to the next real backtick much later in the source,
+        # silently hiding the boolean operator on the line in between. The
+        # scan is required to refuse this opener and fall back to raw text.
+        self.assertIsNone(
+            qg._mask_cbrace_literals(BACKTICK_REGEX_PHANTOM_SOURCE))
+        self.assertEqual(
+            qg._strip_for_scan(BACKTICK_REGEX_PHANTOM_SOURCE, "js"),
+            BACKTICK_REGEX_PHANTOM_SOURCE)
+
+    def test_an_ordinary_template_literal_still_masks(self):
+        source = "const a = `line one\nline two`;\n"
+        masked = qg._mask_cbrace_literals(source)
+        self.assertIsNotNone(masked)
+        self.assertEqual(masked.count("\n"), source.count("\n"))
+        self.assertNotIn("line", masked)
+
 
 class TestScanLangForPath(unittest.TestCase):
     """Which extensions the scan mask is allowed to lex. The hand scanner
@@ -656,9 +699,7 @@ class TestScanLangForPath(unittest.TestCase):
         self.assertEqual(qg._scan_lang_for("a.js"), "js")
         self.assertEqual(qg._scan_lang_for("a.mjs"), "js")
         self.assertEqual(qg._scan_lang_for("a.cjs"), "js")
-        self.assertEqual(qg._scan_lang_for("a.jsx"), "js")
         self.assertEqual(qg._scan_lang_for("a.ts"), "js")
-        self.assertEqual(qg._scan_lang_for("a.TSX"), "js")
 
     def test_a_python_path_keeps_the_python_mask(self):
         self.assertEqual(qg._scan_lang_for("a.py"), "python")
@@ -674,6 +715,16 @@ class TestScanLangForPath(unittest.TestCase):
         self.assertIsNone(qg._scan_lang_for("a.java"))
         self.assertIsNone(qg._scan_lang_for("a.cs"))
         self.assertEqual(qg._lang_for("a.rs"), "cbrace")
+
+    def test_jsx_and_tsx_are_also_left_on_raw_text(self):
+        # The hand scanner has no model of a JSX text node, where an
+        # apostrophe is prose, not a string opener, so these two extensions
+        # stay on raw text for a different reason than the other brace
+        # languages above -- see test_a_jsx_apostrophe_pair_keeps_both_branches.
+        self.assertIsNone(qg._scan_lang_for("a.jsx"))
+        self.assertIsNone(qg._scan_lang_for("a.TSX"))
+        self.assertEqual(qg._lang_for("a.jsx"), "cbrace")
+        self.assertEqual(qg._lang_for("a.tsx"), "cbrace")
 
     def test_an_unknown_extension_is_left_on_raw_text(self):
         self.assertIsNone(qg._scan_lang_for("a.rb"))
@@ -710,6 +761,20 @@ class TestScanLangForPath(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(
             findings[0]["metrics"]["cyclomatic_complexity"], 2)
+
+    def test_a_jsx_apostrophe_pair_keeps_both_branches(self):
+        # The defect this routing prevents, measured on the real callables:
+        # lexed with JS quoting rules the two contractions on the text line
+        # pair into a phantom string over the boolean operator between them,
+        # dropping 2 branches to 1.
+        findings, _ = qg.analyze_builtin(
+            "Row.jsx", JSX_APOSTROPHE_FUNCTION, [(1, 5)])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(
+            findings[0]["metrics"]["cyclomatic_complexity"], 2)
+        scanned = qg._strip_for_scan(
+            JSX_APOSTROPHE_FUNCTION, qg._scan_lang_for("Row.tsx"))
+        self.assertEqual(scanned, JSX_APOSTROPHE_FUNCTION)
 
     def test_the_extraction_family_name_is_no_longer_a_mask_language(self):
         # "cbrace" still selects the brace extraction model, so it must NOT

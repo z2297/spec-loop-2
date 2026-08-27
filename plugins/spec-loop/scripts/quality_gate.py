@@ -98,16 +98,23 @@ _EXT_LANG = {
 }
 
 # The subset of the brace extensions whose scan mask may be lexed by the hand
-# scanner below. It implements JS/TypeScript quoting rules alone, where a single
-# quote always opens a string. In Rust a single quote usually opens a lifetime,
-# in C++ it also serves as a digit separator, so two of them on one line pair
-# into a phantom string covering the real code between them -- measured, that
-# turns 2 branches into 1 with no signal, the one direction this mask is never
-# allowed to move a count. Rust, C, C++, Go, Java and C# therefore keep their
-# raw text: they stay on today's over-count, which is the safe direction,
-# rather than being lexed by quoting rules that are not theirs.
+# scanner below. It implements plain JS/TypeScript quoting rules alone, where
+# a single quote always opens a string. In Rust a single quote usually opens
+# a lifetime, in C++ it also serves as a digit separator, so two of them on
+# one line pair into a phantom string covering the real code between them --
+# measured, that turns 2 branches into 1 with no signal, the one direction
+# this mask is never allowed to move a count. Rust, C, C++, Go, Java and C#
+# therefore keep their raw text: they stay on today's over-count, which is
+# the safe direction, rather than being lexed by quoting rules that are not
+# theirs. JSX and TSX carry the same residual for a different reason: the
+# scanner has no model of a JSX text node, where an apostrophe is prose, not
+# a string opener, so two contractions on one JSX text line pair into a
+# phantom string over real code between them -- measured on
+# `function Row(p) { return (<p>It's {p.a && p.b} - don't worry</p>); }`,
+# cyclomatic_complexity 1 where the raw branch count is 2. `.jsx` and `.tsx`
+# therefore also stay on raw text.
 _JS_MASK_EXTS = frozenset(
-    {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"})
+    {".js", ".mjs", ".cjs", ".ts"})
 
 # Branch keywords whose occurrence adds one to cyclomatic complexity. Matched as
 # whole words (or operators) so an identifier like `ifield` is not counted.
@@ -464,11 +471,13 @@ def _count_params(sig):
 # its nesting level from leading whitespace: space-fill would RAISE the measured
 # cognitive complexity of dozens of functions. Every failure path returns the
 # raw text, so the worst case remains today's over-count. Two maskers sit
-# behind this seam: python via stdlib tokenize, the JS/TypeScript family
-# (.js, .jsx, .mjs, .cjs, .ts, .tsx) via the hand scanner below. The remaining
-# brace extensions -- .rs, .c, .h, .cpp, .cc, .hpp, .go, .java, .cs -- are
+# behind this seam: python via stdlib tokenize, the plain JS/TypeScript family
+# (.js, .mjs, .cjs, .ts) via the hand scanner below. The remaining brace
+# extensions -- .rs, .c, .h, .cpp, .cc, .hpp, .go, .java, .cs -- are
 # deliberately NOT masked, because the hand scanner lexes JS quoting rules
-# alone. _scan_lang_for holds that routing.
+# alone. .jsx and .tsx are ALSO deliberately NOT masked, because the scanner
+# has no model of a JSX text node and an apostrophe inside one is prose, not
+# a string opener. _scan_lang_for holds that routing.
 
 _SCAN_SENTINEL = "x"
 
@@ -582,7 +591,7 @@ def _mask_python_literals(text):
 # literal. Telling a regex literal from a division operator needs the
 # parser's expectation of the next token, which a character scanner does not
 # have, so a lone slash outside a comment is stepped over and a regex
-# literal's interior stays visible. Three residuals follow from that. First,
+# literal's interior stays visible. Four residuals follow from that. First,
 # a quote character inside a regex literal opens a phantom string, and that
 # phantom can cover real operator punctuation lying between it and a later
 # quote, which lowers a count silently. Two limits a reader might expect are
@@ -608,10 +617,19 @@ def _mask_python_literals(text):
 # The scanner guards against this one directly: once a bare slash has been
 # stepped over on the current source line, a later star-slash sequence on
 # that same line is refused rather than treated as a comment opener, and the
-# whole scan fails toward raw text instead of silently under-counting. That
-# guard is verified by a dedicated test rather than a repo sweep, because a
-# sweep can only bound occurrences that already exist, not ones a later file
-# introduces. Measured at the time this landed, the sweep of regex-literal
+# whole scan fails toward raw text instead of silently under-counting. Fourth,
+# also unbounded: a backtick inside a regex literal's character contents
+# reads as a template-literal opener, and the template alternative's closing
+# search crosses newlines with no escape needed, so it would otherwise pair
+# with the next real backtick anywhere later in the source and blank every
+# line between the two, exactly as the star-slash shape above does. The
+# scanner guards against this one the same way: once a bare slash has been
+# stepped over on the current source line, a later backtick on that same
+# line is refused rather than treated as a template-literal opener, and the
+# whole scan fails toward raw text instead. Both guards are verified by a
+# dedicated test rather than a repo sweep, because a sweep can only bound
+# occurrences that already exist, not ones a later file introduces. Measured
+# at the time this landed, the sweep of regex-literal
 # uses in this repo surfaced none containing a quote character, every
 # doubled slash the scanner treated as a line comment was a genuine trailing
 # comment after a properly closed regex literal, and the scanner closes every
@@ -653,11 +671,18 @@ def _cb_flat_step(text, pos, stop, slash_since_newline):
 def _cb_step(text, pos, stop, slash_since_newline):
     """One scanner step from `pos`: (next_pos, mask_spans,
     slash_since_newline), else None to fail toward raw text. The
-    lone-slash memory resets at the newline that ends its line. (PURE)"""
+    lone-slash memory resets at the newline that ends its line. A backtick
+    reached after a lone slash on the same line is refused rather than
+    treated as a template-literal opener, mirroring the star-slash guard in
+    `_cb_flat_step`: its closing search would otherwise cross newlines and
+    pair with a real backtick far later in the file, blanking real code in
+    between; refusing sends the whole scan back to raw text instead. (PURE)"""
     ch = text[pos]
     if ch == "\n":
         return pos + 1, [], False
     if ch == "`":
+        if slash_since_newline:
+            return None
         got = _cb_template_step(text, pos, stop)
         if got is None:
             return None
