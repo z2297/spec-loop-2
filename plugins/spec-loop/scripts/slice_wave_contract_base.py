@@ -108,9 +108,17 @@ SPLIT_SUPPRESSION = "return (rec && depth < 2 && verdict !== 'OBJECT') ? rec : n
 OBJECTION_SELECTION = "ob: (safety || objections[0])"
 REPLAN_VETO = "if (safety || !ob.fixable_by_replan || state.replanned)"
 FINDING_CATEGORIES = "category: { enum: ["
-# The trigger enum has five homes: this line, and the ESCALATION_TRIGGERS
-# tuple in run_state.py, run_metrics.py and dashboard_server.py.
+# The trigger enum has six homes: this line, the ESCALATION_TRIGGERS tuple in
+# run_state.py, run_metrics.py and dashboard_server.py, and two PROSE
+# enumerations - the fallback agent's escalation section and the run-state
+# contract reference - located by the two locator constants below. Earlier
+# this comment said five and then listed four; the guard that names it now
+# asserts over all six.
 TRIGGER_ENUM_LINE = "trigger: { enum: ["
+TRIGGER_PROSE_LEAD = "one of the seven triggers ("
+TRIGGER_UNION_PREFIX = '"trigger": "'
+FALLBACK_MD = Path(__file__).resolve().parents[1] / "agents" / "slice-worker-fallback.md"
+RUN_STATE_MD = Path(__file__).resolve().parents[1] / "references" / "run-state-v2.md"
 COUNCIL_VERDICT_EVENT = "type: 'council-verdict'"
 SCOPE_HELPER = "function scopeRecord("
 DERIVE_INPUTS_FN = "function deriveCouncilInputs(verdicts) {"
@@ -162,11 +170,6 @@ CRASH_ERROR_EXPR = "${String((e && e.message) || e)}"
 CRASH_CLASSIFICATION_SENTENCE = "neither structural guard raised its escalation record"
 CRASH_GUARD_ORIGIN_OVERCLAIM = "so this crash came from neither"
 CRASH_HOST_LAYER_CAVEAT = "host- or agent-layer resource failure"
-# render_escalation() (run_state.py) collapses the context and hard-truncates it
-# at 400 characters, and escalations.md is the corpus the escalation gate's
-# precedent check reads. Both the exception text and the stage attribution have
-# to fit inside that budget, ahead of the fixed classification prose.
-CRASH_CONTEXT_RENDER_LIMIT = 400
 CRASH_STAGE_CAVEAT = "so a starting point, not a culprit"
 # The mirror-image overclaim this module now forbids: asserting "bug, NOT a
 # budget limit" is as unprovable as the old "budget" assertion it replaced.
