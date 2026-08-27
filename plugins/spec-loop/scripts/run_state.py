@@ -7,7 +7,8 @@ script (shapes pinned in references/run-state-v2.md):
     slice-<id>-status.json   the tool-validated SliceResult sidecar
     events.jsonl             the append-only machine channel (run_metrics reads it)
     decisions-log.md         human render of decision/deferred/gate events
-    escalations.md           human render of EscalationRecords, answers written back
+    escalations.md           human render of EscalationRecords, one section per
+                             distinct question, answers written back
     slice-<id>-report.md     short human summary of one sidecar
 
 Design decisions:
@@ -25,7 +26,11 @@ Design decisions:
   a side effect of appending the event, so a fact can never reach events.jsonl
   without reaching the human surface (or vice versa). Nothing parses the prose
   back — `escalations.md` carries an HTML-comment id anchor purely so an answer
-  can be written back to the right entry deterministically.
+  can be written back to the right entry deterministically. An
+  `escalation-opened` whose raw id, context and question already appear on
+  the page rewrites that section instead of adding a second copy
+  (`place_escalation_section`); the machine channel keeps every event either
+  way, and the human gate reads `open_escalations`, not the page.
 - **The sidecar is the single home of per-slice facts.** `persist-slice` emits
   only events that have their own type in the contract (`council-verdict`,
   `review-summary`, `quality-gate`, `escalation-*`); it never re-emits the
@@ -54,6 +59,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -90,6 +96,11 @@ ESCALATIONS_HEADER = ("# Escalations\n\n"
                       "into the matching entry.\n\n")
 
 ID_ANCHOR = "<!-- escalation-id: %s -->"
+ID_ANCHOR_PREFIX = ID_ANCHOR.split("%s")[0]
+IDENTITY_ANCHOR = "<!-- escalation-identity: %s -->"
+_IDENTITY_RE = re.compile(r"<!-- escalation-identity: (\w+) -->")
+STATUS_OPEN_MARK = "(status: OPEN)"
+STATUS_ANSWERED_MARK = "(status: ANSWERED)"
 SUMMARY_LIMIT = 200
 # Payload keys, in priority order, that may carry a human-readable one-liner.
 # Module-level for the same reason as the messages below: a wrapped literal
@@ -162,6 +173,22 @@ def _read_text(path):
             return fh.read()
     except OSError:
         return ""
+
+
+def _read_page(path):
+    """The text of an existing prose page, or None absent a file.
+
+    A page on disk that cannot be read raises RunStateError instead of
+    reporting empty text: a caller treating an unreadable page as an empty
+    one rewrites it from a bare header and drops every section already on it.
+    """
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+    except OSError as exc:
+        raise RunStateError("cannot read %s: %s" % (path, exc))
 
 
 def read_json(path):
@@ -456,56 +483,188 @@ def _ordered_options(record):
             + [o for o in options if not o.get("recommended")])
 
 
+def escalation_identity(record):
+    """A fingerprint of the fields that identify one EscalationRecord (PURE).
+
+    Computed from the RAW id, context and question, whitespace-collapsed. A
+    context longer than the render cap makes a fingerprint taken from the
+    rendered lines merge distinct questions, so the raw fields are the only
+    sound source. Title, options, status and answer are deliberately
+    excluded: they may legitimately differ between a record and its own
+    re-emit.
+    """
+    keys = ("id", "context", "question")
+    fields = [" ".join(str(record.get(key) or "").split()) for key in keys]
+    joined = "\x1f".join(fields)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]
+
+
 def render_escalation(scope, record):
-    """Render one EscalationRecord as its escalations.md entry (PURE)."""
+    """Render one EscalationRecord as its escalations.md entry (PURE).
+
+    The section carries two HTML-comment anchors: the id anchor an answer is
+    written back through, and the identity fingerprint de-duplication
+    matches on (see `escalation_identity`). Body lines are appended one at a
+    time by this single producer of a section's bytes.
+    """
     status = record.get("status") or "OPEN"
-    lines = ["## [%s] %s   (status: %s)"
-             % (scope, _one_line(record.get("title") or "(untitled)"), status),
-             ID_ANCHOR % (record.get("id") or "?"),
-             "- Trigger: %s" % (record.get("trigger") or "(not recorded)"),
-             "- Opened: %s" % (record.get("opened") or "(not recorded)"),
-             "- Context: %s" % _one_line(record.get("context") or "(not recorded)", 400),
-             "- The decision: %s" % _one_line(record.get("question") or "(not recorded)",
-                                              400),
-             "- Options:"]
+    title = _one_line(record.get("title") or "(untitled)")
+    context = _one_line(record.get("context") or "(not recorded)", 400)
+    question = _one_line(record.get("question") or "(not recorded)", 400)
+    unanswered = _one_line(record.get("if_unanswered") or "(not recorded)", 300)
+    answer = record.get("answer")
+    answered_at = record.get("answered_at")
+    lines = []
+    lines.append("## [%s] %s   (status: %s)" % (scope, title, status))
+    lines.append(ID_ANCHOR % (record.get("id") or "?"))
+    lines.append(IDENTITY_ANCHOR % escalation_identity(record))
+    lines.append("- Trigger: %s" % (record.get("trigger") or "(not recorded)"))
+    lines.append("- Opened: %s" % (record.get("opened") or "(not recorded)"))
+    lines.append("- Context: %s" % context)
+    lines.append("- The decision: %s" % question)
+    lines.append("- Options:")
     for position, option in enumerate(_ordered_options(record)):
         marker = "(RECOMMENDED DEFAULT) " if option.get("recommended") else ""
         detail = _one_line(option.get("detail") or "", 300)
-        lines.append("  %d. %s — %s%s" % (position + 1, option.get("label"),
-                                          marker, detail))
-    lines.append("- If unanswered: %s"
-                 % _one_line(record.get("if_unanswered") or "(not recorded)", 300))
-    answer = record.get("answer")
+        label = option.get("label")
+        lines.append("  %d. %s — %s%s" % (position + 1, label, marker, detail))
+    lines.append("- If unanswered: %s" % unanswered)
     lines.append("- Answer:%s" % (" " + _one_line(answer, 400) if answer else ""))
-    lines.append("- Answered-at:%s"
-                 % (" " + record["answered_at"] if record.get("answered_at") else ""))
+    lines.append("- Answered-at:%s" % (" " + answered_at if answered_at else ""))
     return "\n".join(lines) + "\n\n"
+
+
+def _escalation_sections(body):
+    """Split an escalations.md body into its head and its `## ` sections (PURE).
+
+    The head is everything before the first heading. Joining the head with
+    every section reproduces the input exactly, so one section can be
+    rewritten and every other stays byte-identical to its rendering.
+    """
+    lines = body.splitlines(True)
+    starts = [index for index, line in enumerate(lines) if line.startswith("## ")]
+    bounds = starts + [len(lines)]
+    head = "".join(lines[:starts[0]]) if starts else body
+    sections = ["".join(lines[bounds[i]:bounds[i + 1]]) for i in range(len(starts))]
+    return head, sections
+
+
+def _section_line(section, prefix):
+    """The section's first line starting with `prefix`, or "" (PURE)."""
+    return next((line for line in section.splitlines() if line.startswith(prefix)), "")
+
+
+def _section_identity(section):
+    """The identity fingerprint carried by a rendered section, or "" (PURE).
+
+    A section rendered before the fingerprint existed carries none and
+    yields the empty string, which equals no record's fingerprint. Such a
+    section is left exactly as it stands and a re-emit is appended beside it.
+    """
+    found = _IDENTITY_RE.search(section)
+    return found.group(1) if found else ""
+
+
+def _section_has_answer(section):
+    """True given a rendered Answer line that carries text (PURE)."""
+    line = _section_line(section, "- Answer:")
+    return bool(line[len("- Answer:"):].strip())
+
+
+def place_escalation_section(body, scope, record):
+    """The escalations.md body with `record` rendered exactly once (PURE).
+
+    De-duplication is by true identity alone: the fingerprint
+    `escalation_identity` takes from the record's raw id, context and
+    question. A record matching a section already on the page rewrites that
+    section in place, keeping its position, so a re-emitted escalation-opened
+    stops adding a second copy of the same question. A record differing in any
+    of those three raw fields is a different question and gets its own section
+    appended: no two questions are ever merged, and no recorded answer is ever
+    moved onto a question that did not receive it. One rule protects an
+    existing decision: a matching record carrying no answer of its own leaves
+    an already-answered section untouched, so a bare re-emit cannot blank an
+    answer or reset a status. This function decides rendering only. Whether the
+    human gate still sees the escalation is `open_escalations`, which is
+    deliberately separate and stays fail-safe.
+    """
+    section = render_escalation(scope, record)
+    head, sections = _escalation_sections(body)
+    identity = escalation_identity(record)
+    at = next((index for index, existing in enumerate(sections)
+               if _section_identity(existing) == identity), None)
+    if at is None:
+        return body + section
+    keep = _section_has_answer(sections[at]) and not _section_has_answer(section)
+    sections[at] = sections[at] if keep else section
+    return head + "".join(sections)
+
+
+def _anchor_section_is_open(lines, at):
+    """True given a heading above `lines[at]` still reading status OPEN (PURE)."""
+    above = reversed(lines[:at + 1])
+    heading = next((line for line in above if line.startswith("## ")), "")
+    return STATUS_OPEN_MARK in heading
+
+
+def _answer_target(lines, anchor):
+    """The anchor-line index an incoming answer belongs to, or None (PURE).
+
+    One id ordinarily owns one section, and that single occurrence is
+    returned, unchanged from before. An id owning several sections asked
+    several distinct questions (see `place_escalation_section`), and the answer
+    belongs to the last section still marked open, which is the round that is
+    waiting for one: `open_escalations` carries a single record per id,
+    replaced by each escalation-opened it reads, so the newest round is the
+    question the human was actually shown. An answer arriving once every
+    section is answered rewrites the first, as it always did.
+    """
+    hits = [index for index, line in enumerate(lines) if line.strip() == anchor]
+    still_open = [index for index in hits if _anchor_section_is_open(lines, index)]
+    return (still_open[-1:] or hits[:1] or [None])[0]
+
+
+def _mark_heading_answered(lines, at):
+    """Rewrite the nearest heading at or above index `at` to read ANSWERED.
+
+    Only the status mark changes, so a heading already reading ANSWERED and a
+    heading carrying any other status both survive untouched.
+    """
+    for index in range(at, -1, -1):
+        if lines[index].startswith("## "):
+            lines[index] = lines[index].replace(STATUS_OPEN_MARK, STATUS_ANSWERED_MARK)
+            return
+
+
+def _fill_answer_fields(lines, at, answer, answered_at):
+    """Rewrite the Answer and Answered-at lines of the section holding `at`.
+
+    The walk stops at the next heading, which keeps one answer inside the one
+    section it was written for.
+    """
+    for index in range(at + 1, len(lines)):
+        if lines[index].startswith("## "):
+            return
+        if lines[index].startswith("- Answer:"):
+            lines[index] = "- Answer: %s\n" % _one_line(answer or "", 400)
+        elif lines[index].startswith("- Answered-at:"):
+            lines[index] = "- Answered-at: %s\n" % answered_at
 
 
 def answer_escalation(body, escalation_id, answer, answered_at):
     """Write an answer into the matching escalations.md entry (PURE).
 
     Returns (updated markdown, matched?). The entry is located by its id
-    anchor, so re-titled or reordered entries still resolve.
+    anchor, so re-titled or reordered entries still resolve. Where one id owns
+    several sections, the target is chosen by `_answer_target`.
     """
     anchor = ID_ANCHOR % escalation_id
     lines = body.splitlines(True)
-    try:
-        at = next(i for i, line in enumerate(lines) if line.strip() == anchor)
-    except StopIteration:
+    at = _answer_target(lines, anchor)
+    if at is None:
         return body, False
-
-    for index in range(at, -1, -1):
-        if lines[index].startswith("## "):
-            lines[index] = lines[index].replace("(status: OPEN)", "(status: ANSWERED)")
-            break
-    for index in range(at + 1, len(lines)):
-        if lines[index].startswith("## "):
-            break
-        if lines[index].startswith("- Answer:"):
-            lines[index] = "- Answer: %s\n" % _one_line(answer or "", 400)
-        elif lines[index].startswith("- Answered-at:"):
-            lines[index] = "- Answered-at: %s\n" % answered_at
+    _mark_heading_answered(lines, at)
+    _fill_answer_fields(lines, at, answer, answered_at)
     return "".join(lines), True
 
 
@@ -824,29 +983,63 @@ def read_events(run_dir):
     return events
 
 
-def append_event(run_dir, ts, scope, event_type, payload):
-    """Append one event and render it onto the human surface it belongs to."""
-    event = {"ts": ts, "scope": scope, "type": event_type,
-             "payload": payload if payload is not None else {}}
-    _append_text(events_path(run_dir),
-                 json.dumps(event, ensure_ascii=False, sort_keys=False) + "\n")
+def _place_escalation(run_dir, scope, record):
+    """Render one opened escalation onto escalations.md, once per question.
 
+    The whole page is rewritten atomically because placement may rewrite a
+    section that is already on it (see `place_escalation_section`). A missing
+    page starts from the header, so the first escalation of a run produces the
+    same bytes it always did.
+    """
+    path = os.path.join(run_dir, ESCALATIONS_MD)
+    page = _read_page(path)
+    # A read that failed has already raised. A genuinely 0-byte page has no
+    # section to lose, so it starts from the header, as an absent one does.
+    body = page or ESCALATIONS_HEADER
+    _atomic_write(path, place_escalation_section(body, scope, record))
+
+
+def build_event(ts, scope, event_type, payload):
+    """One event object, ready to append (PURE).
+
+    The four fields travel as one value, which keeps `append_event` at two
+    parameters. A null payload becomes an empty object, so a caller passing
+    nothing records the same shape as a caller passing an empty dict.
+    """
+    body = payload if payload is not None else {}
+    return {"ts": ts, "scope": scope, "type": event_type, "payload": body}
+
+
+def _answer_on_page(run_dir, event):
+    """Write one escalation-answered event into escalations.md.
+
+    An answer with no matching entry is appended as its own orphan entry, so
+    a recorded answer always reaches the page.
+    """
+    path = os.path.join(run_dir, ESCALATIONS_MD)
+    payload = event["payload"]
+    answered_at = payload.get("answered_at") or event["ts"]
+    body = _read_page(path) or ""
+    answer = payload.get("answer")
+    updated, matched = answer_escalation(body, payload.get("id"), answer, answered_at)
+    if matched:
+        _atomic_write(path, updated)
+    else:
+        _append_text(path, _orphan_answer_entry(event), ESCALATIONS_HEADER)
+
+
+def append_event(run_dir, event):
+    """Append one event and render it onto the human surface it belongs to."""
+    line = json.dumps(event, ensure_ascii=False, sort_keys=False) + "\n"
+    _append_text(events_path(run_dir), line)
+    event_type = event["type"]
     if event_type == "escalation-opened":
-        _append_text(os.path.join(run_dir, ESCALATIONS_MD),
-                     render_escalation(scope, event["payload"]), ESCALATIONS_HEADER)
+        _place_escalation(run_dir, event["scope"], event["payload"])
     elif event_type == "escalation-answered":
-        path = os.path.join(run_dir, ESCALATIONS_MD)
-        body = _read_text(path)
-        updated, matched = answer_escalation(
-            body, event["payload"].get("id"), event["payload"].get("answer"),
-            event["payload"].get("answered_at") or ts)
-        if matched:
-            _atomic_write(path, updated)
-        else:
-            _append_text(path, _orphan_answer_entry(event), ESCALATIONS_HEADER)
+        _answer_on_page(run_dir, event)
     elif event_type in DECISION_EVENTS:
-        _append_text(os.path.join(run_dir, DECISIONS_LOG),
-                     decision_line(event) + "\n", DECISIONS_HEADER)
+        decision = decision_line(event) + "\n"
+        _append_text(os.path.join(run_dir, DECISIONS_LOG), decision, DECISIONS_HEADER)
     return event
 
 
@@ -984,7 +1177,7 @@ def persist_slice(run_dir, body, wave, ts):
 
     emitted = []
     for scope, event_type, payload in _slice_events(body, ts, slice_id):
-        append_event(run_dir, ts, scope, event_type, payload)
+        append_event(run_dir, build_event(ts, scope, event_type, payload))
         emitted.append(event_type)
 
     report_path = os.path.join(run_dir, "slice-%s-report.md" % slice_id)
@@ -1043,7 +1236,8 @@ def _run(args):
     if args.command == "append-event":
         _require_ts(args.ts)
         payload = _payload_arg(args.payload)
-        return append_event(args.run_dir, args.ts, args.scope, args.type, payload), 0
+        event = build_event(args.ts, args.scope, args.type, payload)
+        return append_event(args.run_dir, event), 0
 
     if args.command == "open-escalations":
         return open_escalations(args.run_dir), 0
