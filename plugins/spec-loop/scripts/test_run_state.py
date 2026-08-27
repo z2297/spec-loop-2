@@ -197,8 +197,9 @@ class TestValidateSidecar(unittest.TestCase):
         self.assertMentions(body, "trigger")
 
     def test_escalation_trigger_accepts_internal_error(self):
-        # A machine failure is a first-class trigger: run_state.py:204 is
-        # fail-closed, so an unlisted value would falsely fail the sidecar.
+        # A machine failure is a first-class trigger: validate_escalation's
+        # membership check against ESCALATION_TRIGGERS is fail-closed, so an
+        # unlisted value would falsely fail the sidecar.
         body = sidecar("ESCALATED", escalations=[
             escalation(id="s1:internal-error", trigger="internal-error")])
         self.assertValid(body)

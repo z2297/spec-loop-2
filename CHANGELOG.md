@@ -7,6 +7,23 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+### Fixed
+- **`escalations.md` renders one section per distinct escalation question.** An
+  `escalation-opened` event whose rendered id anchor, `- Context:` line and `- The decision:` line
+  all match a section already on the page now rewrites that section in place
+  (`run_state.place_escalation_section`) instead of appending a second copy; a record differing in
+  either the question or the context is a different question and keeps its own section. Replaying
+  run 20260825's recorded `events.jsonl` renders 9 sections where the committed artifact has 12,
+  and both rounds of the one id that genuinely re-escalated survive as separate sections. Two
+  behaviours are deliberately unchanged: `run_state.open_escalations()` still lists every
+  status-OPEN escalation, so de-duplicating the page never silences the human gate, and a matching
+  re-emit that carries no answer leaves an already-answered section untouched rather than resetting
+  it. `answer_escalation` now writes into the last section for an id that is still marked
+  `(status: OPEN)`, which is a no-op for an id owning a single section and stops the second round's
+  answer landing under the first round's question. Escalation ids still carry no round component,
+  so two rounds of one id remain distinguishable on the page only by their rendered question and
+  context.
+
 ## [2.2.1] - 2026-08-27
 ### Added
 - **`internal-error` escalation trigger** — a seventh `EscalationRecord.trigger` value for machine
