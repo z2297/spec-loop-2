@@ -90,6 +90,9 @@ SPLIT_SUPPRESSION = "return (rec && depth < 2 && verdict !== 'OBJECT') ? rec : n
 OBJECTION_SELECTION = "ob: (safety || objections[0])"
 REPLAN_VETO = "if (safety || !ob.fixable_by_replan || state.replanned)"
 FINDING_CATEGORIES = "category: { enum: ["
+# The trigger enum has five homes: this line, and the ESCALATION_TRIGGERS
+# tuple in run_state.py, run_metrics.py and dashboard_server.py.
+TRIGGER_ENUM_LINE = "trigger: { enum: ["
 COUNCIL_VERDICT_EVENT = "type: 'council-verdict'"
 SCOPE_HELPER = "function scopeRecord("
 DERIVE_INPUTS_FN = "function deriveCouncilInputs(verdicts) {"
@@ -132,10 +135,21 @@ CRASH_OPTION_STOP = "label: 'Stop the run'"
 CRASH_OPTION_CONTROLLER_ACTS = (
     "The CONTROLLER must act on this at the next dispatch")
 CRASH_ERROR_FIRST = "`Error: ${String((e && e.message) || e)}."
-# The only cause the fallback can PROVE: the two structural guards raise their
-# own {escRecord}, handled one line above, so the crash is not from them.
-CRASH_CLASSIFICATION_SENTENCE = "Neither of the loop's two structural guards fired"
+CRASH_ERROR_EXPR = "${String((e && e.message) || e)}"
+# The ONLY thing the escRecord check one line above the fallback proves: that
+# neither structural guard RAISED its own record. It does NOT prove the crash
+# originated outside a guard - `budget.remaining()` is called INSIDE the
+# token-floor guard, so a throw from there starts in a guard and still reaches
+# the fallback with no escRecord. The old phrasing asserted the stronger claim.
+CRASH_CLASSIFICATION_SENTENCE = "neither structural guard raised its escalation record"
+CRASH_GUARD_ORIGIN_OVERCLAIM = "so this crash came from neither"
 CRASH_HOST_LAYER_CAVEAT = "host- or agent-layer resource failure"
+# render_escalation() (run_state.py) collapses the context and hard-truncates it
+# at 400 characters, and escalations.md is the corpus the escalation gate's
+# precedent check reads. Both the exception text and the stage attribution have
+# to fit inside that budget, ahead of the fixed classification prose.
+CRASH_CONTEXT_RENDER_LIMIT = 400
+CRASH_STAGE_CAVEAT = "so a starting point, not a culprit"
 # The mirror-image overclaim this module now forbids: asserting "bug, NOT a
 # budget limit" is as unprovable as the old "budget" assertion it replaced.
 CRASH_CAUSE_OVERCLAIM = "This is a loop or agent-contract bug"
@@ -145,6 +159,15 @@ SLICE_LOST_RECORD = "esc(A.slices[i], 'internal-error', 'slice lost',"
 # Third instance of the same overclaim pattern: a thunk resolved to null
 # proves nothing about the cause, so the lost-slice record must not deny one.
 SLICE_LOST_CAUSE_DENIAL = "Not a resource limit."
+# Fifth instance, and the sibling of CRASH_GUARD_ORIGIN_OVERCLAIM above: a
+# guard "firing" asserts its CHECK never ran, which neither record can know.
+# All either one proves is that no guard RAISED an escalation record - a throw
+# from inside `budget.remaining()` starts in the token-floor guard and still
+# arrives with no escRecord. Forbidden across the WHOLE source, so the phrase
+# cannot come back in either the crash record or the lost-slice one.
+GUARD_FIRED_OVERCLAIM = "structural guard fired"
+SLICE_LOST_GUARD_PROVABLE = "Neither structural guard raised its escalation record"
+SLICE_LOST_CAUSE_UNKNOWN = "the cause is unknown here"
 STAGE_CRITIQUE_START = "async function stageCritique(slice, state, plan) {"
 STAGE_CRITIQUE_END = "// Stage T helpers"
 SPLIT_RETURN = "if (splitRec) return { stop: doneResult(slice, state, 'SPLIT'"

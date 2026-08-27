@@ -465,7 +465,8 @@ class EscalationPairingTests(unittest.TestCase):
         self.assertEqual(triggers, ["internal-error"])
 
     def test_internal_error_is_substring_safe_against_every_other_trigger(self):
-        # run_metrics.py:1692 (_legacy_match_triggers) matches by containment.
+        # _legacy_match_triggers() in run_metrics.py matches by containment
+        # (no line number: it moved once already when internal-error landed).
         others = [t for t in rm.ESCALATION_TRIGGERS if t != "internal-error"]
         for other in others:
             self.assertNotIn(other, "internal-error")

@@ -858,10 +858,13 @@ async function runStages(slice, state) {
 // An unclassified throw is a MACHINE failure, not a judgment call, and the
 // record asserts only the cause the code can PROVE. The two structural guards
 // (agent cap, stage token floor) throw {escRecord} with their own
-// budget-exhausted record and are handled on the first line below, so nothing
-// reaching this fallback came from either of them. It does NOT follow that no
-// resource limit was involved: a rejected agent(...) promise on a hard token or
-// rate limit, or a throw from budget.remaining() itself, lands here too. Run
+// budget-exhausted record and are handled on the first line below, so neither
+// of them RAISED the record that reached here -- which is ALL that check
+// proves, and all the record claims. It does not prove the crash originated
+// outside a guard, let alone outside a resource limit: budget.remaining() is
+// called inside the token-floor guard itself, so a throw from in there starts
+// in a guard and still arrives with no escRecord, and a rejected agent(...)
+// promise on a hard token or rate limit lands here the same way. Run
 // 20260825-scope-ceiling showed the cost of a mislabelled crash is misdirected
 // DIAGNOSIS, and asserting "bug, NOT a budget limit" would be exactly as
 // unprovable as the "budget" label it replaced, just aimed the other way, so
@@ -870,10 +873,14 @@ async function runStages(slice, state) {
 // not a per-throw stage (it is never cleared, and concurrent fan-outs overwrite
 // it), so the record says "after", not "in", and says so explicitly; the title
 // drops "after" entirely when no agent was ever dispatched, which would
-// otherwise read "crashed after before any agent was dispatched". The context
-// leads with the real exception text, ahead of the fixed classification
-// sentences, so render_escalation()'s 400-char truncation (run_state.py) can
-// never eat the variable-length diagnostic payload. Retry is deliberately a
+// otherwise read "crashed after before any agent was dispatched". Context ORDER
+// is load-bearing: render_escalation() (run_state.py) renders the context
+// through _one_line(..., 400), so only the first 400 collapsed characters reach
+// escalations.md -- also the corpus a later run's escalation-gate precedent
+// check reads. Both VARIABLE diagnostics (the exception text, then the stage
+// attribution the title asserts) therefore lead, each with a one-clause caveat,
+// and the fixed classification prose follows them, where truncation costs
+// boilerplate instead of evidence. Retry is deliberately a
 // human/controller decision: internal-error is not in ANSWERABLE_TRIGGERS and
 // the loop implements no automatic retry, skip, or stop, so each option's
 // detail names the CONTROLLER as what applies it.
@@ -883,7 +890,7 @@ function runSliceError(slice, state, e) {
   const stageText = stage || 'none (the crash happened before any agent was dispatched)'
   const title = stage ? `slice crashed after ${stage}` : 'slice crashed before any agent was dispatched'
   return escalated(slice, state, esc(slice, 'internal-error', title,
-    `Error: ${String((e && e.message) || e)}. Neither of the loop's two structural guards fired: the agent cap and the stage token floor each raise budget-exhausted with an escRecord, handled one line earlier, so this crash came from neither. It may be a loop or agent-contract bug, and it may equally be a host- or agent-layer resource failure that never reaches those guards (a rejected agent call on a hard token or rate limit, say) — the exception text above is the evidence, not this classification. ${state.tasksCompleted} task(s) had already completed and any committed work is on the branch. Last stage/role dispatched before the failure: ${stageText}. The loop records the most recent dispatch, not a per-throw stage, so the failure may have happened after that role finished, or in a sibling of a concurrent fan-out — treat it as a starting point, not a culprit.`,
+    `Error: ${String((e && e.message) || e)}. Last stage/role dispatched before the failure: ${stageText} — the most recent dispatch, not a per-throw stage, so a starting point, not a culprit. Cause unknown: neither structural guard raised its escalation record, and that is all the check one line above proves — the stage token floor calls budget.remaining() itself, so a throw from inside a guard reaches here with no record either. It may be a loop or agent-contract bug, and it may equally be a host- or agent-layer resource failure (a rejected agent call on a hard token or rate limit, say) — the exception text above is the evidence, not this classification. state.stage is never cleared and concurrent fan-outs overwrite it, so the failure may also have happened after that role finished, or in a sibling of it. ${state.tasksCompleted} task(s) had already completed and any committed work is on the branch.`,
     'Retry this slice, skip it and continue the run, or stop the run to diagnose the exception?',
     [{ label: 'Retry this slice', detail: 'Recommended default. The CONTROLLER must act on this at the next dispatch: re-dispatch the wave on this slice, keeping the committed work on its branch.', recommended: true },
      { label: 'Skip this slice', detail: 'The CONTROLLER must act on this at the next dispatch: leave the slice ESCALATED and dispatch only the independent slices. Nothing in the loop enforces a skip — the default re-dispatch procedure would retry it.' },
@@ -909,7 +916,7 @@ const out = results.map((r, i) => r || {
   review_tier: A.slices[i].risk_tier, critique: { verdict: 'SKIPPED', concerns: 0 },
   tasks_completed: 0, review: { confirmed: 0, refuted: 0, evidence_failed: 0, fix_rounds: 0, residual: [] },
   tests: null, quality: { status: 'SKIPPED', detail: 'slice never ran' },
-  escalations: [esc(A.slices[i], 'internal-error', 'slice lost', 'The slice function returned no result (terminal failure) — the slice process died with no result at all, outside runSlice\'s try/catch. Neither structural guard fired — each raises budget-exhausted with an escRecord that runSlice would have returned — but a host- or agent-layer resource failure kills a slice the same silent way, so the cause is unknown here.', 'Re-run the wave to retry this slice?', [])],
+  escalations: [esc(A.slices[i], 'internal-error', 'slice lost', 'The slice function returned no result (terminal failure) — it died outside runSlice\'s try/catch. Neither structural guard raised its escalation record — each raises budget-exhausted with an escRecord runSlice would have returned — and that is all a null result proves, not that no guard check ran. A host- or agent-layer resource failure dies the same silent way, so the cause is unknown here.', 'Re-run the wave to retry this slice?', [])],
   agents_used: 0, wave: A.wave_index, events: [],
 })
 log(`wave ${A.wave_index} collected: ${out.map(r => `${r.id}=${r.status}`).join(' ')}`)

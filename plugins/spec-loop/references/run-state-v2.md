@@ -111,10 +111,13 @@ prose about the slice.
 ```
 
 `budget-exhausted` is raised only by the loop's two structural guards (agent cap, stage
-token floor); `internal-error` is the catch-all for every other failure — unhandled
-exceptions, agent-contract failures, host- or agent-layer resource failures (e.g. a
-rejected agent call on a hard token or rate limit), and a slice that returned no result.
-Neither is a judgment trigger.
+token floor); `internal-error` covers the two machine-failure shapes the loop actually
+produces — an unhandled exception that aborted a slice, and a slice that returned no result
+at all — either of which may itself have a host- or agent-layer cause (e.g. a rejected agent
+call on a hard token or rate limit) that the record does not pretend to rule out. It is not
+a catch-all for every other failure: a failure the loop can name keeps the trigger that
+names it, so a spent replan stays `council-objection` and a blocked task — including a task
+dispatch that returned no result — stays `ambiguity`. Neither is a judgment trigger.
 
 ## `events.jsonl` — the machine channel
 

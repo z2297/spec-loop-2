@@ -10,23 +10,30 @@ All notable changes to the spec-loop plugin are documented here. The format is
 ### Added
 - **`internal-error` escalation trigger** — a seventh `EscalationRecord.trigger` value for machine
   failure, one string covering both shapes of it: an unhandled exception that aborted a slice
-  (`workflows/slice-wave.workflow.js` — the catch-all at :885) and a slice that returned no result
-  at all (:912). The enum lives at :40. The record leads with the real exception text and names the
-  last stage/role dispatched before the failure — the most recent dispatch, **not** a per-throw
-  stage: the whole stage sequence sits under one `try`, so the loop cannot know which stage threw,
-  and the record says "after", not "in", and says why. It also refuses to guess the cause: an
-  exception reaching the catch-all fired neither structural guard, so it may be a loop or
-  agent-contract bug and it may equally be a host- or agent-layer resource failure that never
-  reaches those guards (a rejected agent call on a hard token or rate limit, say) — the exception
-  text is the evidence, not the label. The lost-slice record at :912 follows the same rule: it
-  states only what the loop can prove (neither structural guard fired) and no longer denies a
-  resource cause it cannot rule out. It is not a judgment trigger and it is not answerable by
-  re-dispatching an agent: its three options (retry the slice, skip it, stop the run) are
-  controller actions, and each option's detail names the controller as what applies it. Added to
-  `ESCALATION_TRIGGERS` in `run_state.py`, `run_metrics.py` and `dashboard_server.py`, to the
-  record shape in `references/run-state-v2.md`, and to the enumerations in
-  `skills/escalation-gate/SKILL.md` and `agents/slice-worker-fallback.md` — the last of these
-  being the behavioral spec for the inline-mode twin, which must classify identically.
+  (`workflows/slice-wave.workflow.js` — the catch-all at :892) and a slice that returned no result
+  at all (:919). The enum lives at :40. The crash record leads with the real exception text and the
+  last stage/role dispatched before the failure, in that order — a guaranteed ordering, so the
+  400-character limit `render_escalation()` puts on a context cuts the fixed classification prose
+  before either diagnostic. The ordering is not a promise that both diagnostics fit: measured
+  against the longest stage text, an exception message past ~286 characters pushes the stage
+  attribution out of the rendered context entirely (its "starting point, not a culprit" caveat drops
+  at ~200), and only the exception text, which leads, is truncated last. That stage is the most
+  recent dispatch, **not** a per-throw stage: the whole stage sequence sits under one `try`, so the
+  loop cannot know which stage threw, and the record says "after", not "in", and says why. It also
+  refuses to guess the cause: all an exception reaching the catch-all proves is that neither
+  structural guard *raised* its escalation record — not that the crash started outside a guard,
+  since `budget.remaining()` is called inside the token-floor guard itself — so it may be a loop or
+  agent-contract bug and it may equally be a host- or agent-layer resource failure (a rejected agent
+  call on a hard token or rate limit, say) — the exception text is the evidence, not the label. The
+  lost-slice record at :919 follows the same rule in the same words: neither guard *raised* its
+  escalation record, "and that is all a null result proves, not that no guard check ran" — and it no
+  longer denies a resource cause it cannot rule out. It is not a judgment trigger and it is not
+  answerable by re-dispatching an agent: its three options (retry the slice, skip it, stop the run)
+  are controller actions, and each option's detail names the controller as what applies it. Added to
+  `ESCALATION_TRIGGERS` in `run_state.py`, `run_metrics.py` and `dashboard_server.py`, to the record
+  shape in `references/run-state-v2.md`, and to the enumerations in
+  `skills/escalation-gate/SKILL.md` and `agents/slice-worker-fallback.md` — the last of these being
+  the behavioral spec for the inline-mode twin, which must classify identically.
 
 ### Changed
 - **`budget-exhausted` narrowed to a resource signal** — the string stays and its position in the
@@ -34,8 +41,11 @@ All notable changes to the spec-loop plugin are documented here. The format is
   guards, the per-slice agent cap and the per-stage token floor (`slice-wave.workflow.js:425` and
   `:427`), both of which keep their existing wording. It no longer covers an unhandled exception or
   a lost slice: through 2.2.0 the catch-all relabelled every uncaught error as a `budget-exhausted`
-  "wave interrupted" escalation — a resource request for a failure that no resource would have
-  prevented — and the lost-slice record carried the same trigger. Both are now `internal-error`.
+  "wave interrupted" escalation, which in run 20260825-scope-ceiling asked for budget on behalf of
+  an unguarded optional-field read — a `TypeError` that no amount of budget would have prevented —
+  and the lost-slice record carried the same trigger. Both are now `internal-error`. The claim
+  is deliberately about that concrete failure, not about uncaught errors in general — as the
+  Added entry above says, some of those really are resource failures.
   There are still exactly five *judgment* triggers; neither `budget-exhausted` nor `internal-error`
   is one, and `internal-error` is deliberately outside the answerable set, which stays at five.
 - **`schema_version` stays `2`** — adding an enum value is an additive change to the sidecar
