@@ -136,6 +136,26 @@ test("the lost-slice record carries the same three controller-named options", as
   rec.options.forEach((o) => assert.ok(o.detail.includes("CONTROLLER")));
 });
 
+// The two internal-error records now share the trigger, the id shape and the three
+// option labels. What still separates them is the evidence and the ask: the crash
+// record carries exception text plus a stage attribution and asks which of the three
+// to take; the lost-slice record carries neither and asks the binary re-run question.
+// A future edit that collapses them into one indistinguishable record fails here.
+test("the crash and lost-slice records stay distinguishable after the widening", async () => {
+  const crash = only(await runWave(ONE_SLICE(), THROWS));
+  const lost = only(await runWave(ONE_SLICE(), LOST));
+  assert.equal(crash.trigger, lost.trigger);
+  assert.deepEqual(crash.options.map((o) => o.label), RECORD_OPTIONS);
+  assert.deepEqual(lost.options.map((o) => o.label), RECORD_OPTIONS);
+  assert.notEqual(crash.title, lost.title);
+  assert.equal(lost.title, "slice lost");
+  assert.notEqual(crash.context, lost.context);
+  assert.notEqual(crash.question, lost.question);
+  assert.ok(crash.context.startsWith("Error: BOOM."));
+  assert.ok(!lost.context.startsWith("Error:"));
+  assert.ok(!lost.context.includes("Last stage/role dispatched"));
+});
+
 const FOUR_IDS = ["s1", "s2", "s3", "s4"];
 const FOUR = () => waveArgs(FOUR_IDS.map(sliceFixture));
 // The prompt carries the slice id (planPrompt embeds it), so an agent that
