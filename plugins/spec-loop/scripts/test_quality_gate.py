@@ -840,6 +840,73 @@ class TestAnalyzeBuiltinMasksLiterals(unittest.TestCase):
             raw["metrics"]["cognitive_complexity"])
 
 
+class TestCbraceMaskedMetrics(unittest.TestCase):
+    """The three constructs the brace-language mask must get right, measured
+    end to end through analyze_builtin."""
+
+    def measure(self, source, path):
+        findings, _ = qg.analyze_builtin(
+            path, source, [(1, len(source.splitlines()))])
+        return {f["function"]: f for f in findings}
+
+    def measure_unmasked(self, source, path):
+        with mock.patch.object(qg, "_strip_for_scan", unmasked):
+            return self.measure(source, path)
+
+    def test_real_operators_inside_an_interpolation_are_still_counted(self):
+        masked = self.measure(CBRACE_TEMPLATE_SOURCE, "m.js")["probe"]
+        # The real branches: the two operators inside ${...} and the one
+        # branch keyword. Base path plus three.
+        self.assertEqual(masked["metrics"]["cyclomatic_complexity"], 4)
+
+    def test_the_template_and_comment_text_is_not_counted(self):
+        masked = self.measure(CBRACE_TEMPLATE_SOURCE, "m.js")["probe"]
+        raw = self.measure_unmasked(CBRACE_TEMPLATE_SOURCE, "m.js")["probe"]
+        got = masked["metrics"]
+        was = raw["metrics"]
+        self.assertLess(
+            got["cyclomatic_complexity"], was["cyclomatic_complexity"])
+        self.assertLess(
+            got["cognitive_complexity"], was["cognitive_complexity"])
+
+    def test_the_shape_metrics_and_the_span_are_untouched(self):
+        masked = self.measure(CBRACE_TEMPLATE_SOURCE, "m.js")["probe"]
+        raw = self.measure_unmasked(CBRACE_TEMPLATE_SOURCE, "m.js")["probe"]
+        got = masked["metrics"]
+        was = raw["metrics"]
+        self.assertEqual(got["nesting_depth"], was["nesting_depth"])
+        self.assertEqual(got["method_lines"], was["method_lines"])
+        self.assertEqual(got["parameter_count"], was["parameter_count"])
+        self.assertEqual(masked["line_start"], raw["line_start"])
+        self.assertEqual(masked["line_end"], raw["line_end"])
+
+    def test_an_apostrophe_in_a_comment_does_not_blank_the_code(self):
+        # A strings-only scanner opens at the first comment's apostrophe a
+        # literal it can never close, since the quote alternatives exclude
+        # the newline, so the whole file loses its mask and reverts to
+        # today's over-count. Both real branches must survive AND the mask
+        # must succeed -- the assertIsNotNone is what makes this test bite
+        # on a strings-only scanner, because the equalities below hold
+        # either way once the mask falls back to raw text.
+        source = CBRACE_APOSTROPHE_COMMENTS_SOURCE
+        self.assertIsNotNone(qg._mask_cbrace_literals(source))
+        masked = self.measure(source, "m.js")["probe"]
+        raw = self.measure_unmasked(source, "m.js")["probe"]
+        got = masked["metrics"]
+        was = raw["metrics"]
+        self.assertEqual(
+            got["cyclomatic_complexity"], was["cyclomatic_complexity"])
+        self.assertEqual(
+            got["cognitive_complexity"], was["cognitive_complexity"])
+
+    def test_the_mjs_extension_takes_the_same_path(self):
+        masked = self.measure(CBRACE_TEMPLATE_SOURCE, "m.mjs")["probe"]
+        raw = self.measure_unmasked(CBRACE_TEMPLATE_SOURCE, "m.mjs")["probe"]
+        self.assertLess(
+            masked["metrics"]["cyclomatic_complexity"],
+            raw["metrics"]["cyclomatic_complexity"])
+
+
 class TestMatchBraceEnd(unittest.TestCase):
     def test_balances_nested_braces(self):
         lines = ["f() {", "  { }", "}"]
