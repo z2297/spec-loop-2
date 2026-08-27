@@ -96,6 +96,8 @@ ESCALATIONS_HEADER = ("# Escalations\n\n"
 
 ID_ANCHOR = "<!-- escalation-id: %s -->"
 ID_ANCHOR_PREFIX = ID_ANCHOR.split("%s")[0]
+STATUS_OPEN_MARK = "(status: OPEN)"
+STATUS_ANSWERED_MARK = "(status: ANSWERED)"
 SUMMARY_LIMIT = 200
 # Payload keys, in priority order, that may carry a human-readable one-liner.
 # Module-level for the same reason as the messages below: a wrapped literal
@@ -557,22 +559,44 @@ def place_escalation_section(body, scope, record):
     return head + "".join(sections)
 
 
+def _anchor_section_is_open(lines, at):
+    """True given a heading above `lines[at]` still reading status OPEN (PURE)."""
+    heading = next((lines[index] for index in range(at, -1, -1)
+                    if lines[index].startswith("## ")), "")
+    return STATUS_OPEN_MARK in heading
+
+
+def _answer_target(lines, anchor):
+    """The anchor-line index an incoming answer belongs to, or None (PURE).
+
+    One id ordinarily owns one section, and that single occurrence is
+    returned, unchanged from before. An id owning several sections asked
+    several distinct questions (see `place_escalation_section`), and the answer
+    belongs to the last section still marked open, which is the round that is
+    waiting for one. An answer arriving once every section is answered
+    rewrites the first, as it always did.
+    """
+    hits = [index for index, line in enumerate(lines) if line.strip() == anchor]
+    still_open = [index for index in hits if _anchor_section_is_open(lines, index)]
+    return (still_open[-1:] or hits[:1] or [None])[0]
+
+
 def answer_escalation(body, escalation_id, answer, answered_at):
     """Write an answer into the matching escalations.md entry (PURE).
 
     Returns (updated markdown, matched?). The entry is located by its id
-    anchor, so re-titled or reordered entries still resolve.
+    anchor, so re-titled or reordered entries still resolve. Where one id owns
+    several sections, the target is chosen by `_answer_target`.
     """
     anchor = ID_ANCHOR % escalation_id
     lines = body.splitlines(True)
-    try:
-        at = next(i for i, line in enumerate(lines) if line.strip() == anchor)
-    except StopIteration:
+    at = _answer_target(lines, anchor)
+    if at is None:
         return body, False
 
     for index in range(at, -1, -1):
         if lines[index].startswith("## "):
-            lines[index] = lines[index].replace("(status: OPEN)", "(status: ANSWERED)")
+            lines[index] = lines[index].replace(STATUS_OPEN_MARK, STATUS_ANSWERED_MARK)
             break
     for index in range(at + 1, len(lines)):
         if lines[index].startswith("## "):

@@ -472,6 +472,93 @@ class TestAnswerWriteBack(unittest.TestCase):
                                           "do this\nthen that", LATER)
         self.assertIn("- Answer: do this then that", updated)
 
+    ROUND_ID = "s3:budget-exhausted"
+
+    def round_record(self, context):
+        return escalation(id=self.ROUND_ID, trigger="budget-exhausted",
+                          context=context)
+
+    def two_rounds(self):
+        """Two distinct rounds of one id placed back to back, both still open."""
+        first = rs.place_escalation_section(
+            rs.ESCALATIONS_HEADER, "s3",
+            self.round_record("undefined is not an object"))
+        return rs.place_escalation_section(
+            first, "s3", self.round_record("StructuredOutput retry cap"))
+
+    def rounds_answered_in_order(self):
+        """The page the recorded event stream builds: open, answer, open, answer.
+
+        Run 20260825 recorded exactly this order for its one id that
+        re-escalated on a genuinely new incident, so this is the shape the
+        answer targeting has to get right.
+        """
+        body = rs.place_escalation_section(
+            rs.ESCALATIONS_HEADER, "s3",
+            self.round_record("undefined is not an object"))
+        body, first = rs.answer_escalation(body, self.ROUND_ID, "first ruling", TS)
+        body = rs.place_escalation_section(
+            body, "s3", self.round_record("StructuredOutput retry cap"))
+        body, second = rs.answer_escalation(
+            body, self.ROUND_ID, "genuine agent failure this time", LATER)
+        self.assertEqual([first, second], [True, True])
+        return body
+
+    def test_an_answer_lands_on_the_round_still_open(self):
+        head, sections = rs._escalation_sections(self.rounds_answered_in_order())
+        self.assertEqual(len(sections), 2)
+        self.assertIn("undefined is not an object", sections[0])
+        self.assertIn("- Answer: first ruling", sections[0])
+        self.assertIn("StructuredOutput retry cap", sections[1])
+        self.assertIn("- Answer: genuine agent failure this time", sections[1])
+
+    def test_both_rounds_end_answered(self):
+        body = self.rounds_answered_in_order()
+        self.assertEqual(body.count(rs.STATUS_ANSWERED_MARK), 2)
+        self.assertEqual(body.count(rs.STATUS_OPEN_MARK), 0)
+
+    def test_a_re_answer_after_everything_is_answered_rewrites_the_first(self):
+        body, matched = rs.answer_escalation(
+            self.rounds_answered_in_order(), self.ROUND_ID, "c", LATER)
+        self.assertTrue(matched)
+        head, sections = rs._escalation_sections(body)
+        self.assertIn("- Answer: c", sections[0])
+        self.assertIn("- Answer: genuine agent failure this time", sections[1])
+
+    def test_two_rounds_open_at_once_hand_the_answer_to_the_newest(self):
+        # Two rounds of one id sit open at the same time only through a gap in
+        # the event stream. `open_escalations` keeps a single record per id,
+        # replaced by each escalation-opened, so the question the human was
+        # actually shown is the newest one, and the newest still-open section
+        # is the one an arriving answer belongs to. The older section keeps its
+        # own question and stays visibly unanswered rather than borrowing an
+        # answer it did not receive.
+        body, matched = rs.answer_escalation(
+            self.two_rounds(), self.ROUND_ID, "one ruling", LATER)
+        self.assertTrue(matched)
+        head, sections = rs._escalation_sections(body)
+        self.assertIn("- Answer: one ruling", sections[1])
+        self.assertIn(rs.STATUS_ANSWERED_MARK, rs._section_line(sections[1], "## "))
+        self.assertEqual(rs._section_has_answer(sections[0]), False)
+        self.assertIn(rs.STATUS_OPEN_MARK, rs._section_line(sections[0], "## "))
+
+    def test_a_single_section_page_is_unaffected(self):
+        page = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        body, matched = rs.answer_escalation(page, "s1:review-block", "bound them", LATER)
+        self.assertTrue(matched)
+        self.assertIn("- Answer: bound them", body)
+        self.assertIn(rs.STATUS_ANSWERED_MARK, body)
+
+    def test_an_unknown_id_still_does_not_match(self):
+        page = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        body, matched = rs.answer_escalation(page, "s1:ghost", "x", LATER)
+        self.assertFalse(matched)
+        self.assertEqual(body, page)
+
+    def test_the_status_marks_are_the_ones_the_renderer_writes(self):
+        page = rs.render_escalation("s1", escalation())
+        self.assertIn(rs.STATUS_OPEN_MARK, page)
+
 
 class TestDecisionLine(unittest.TestCase):
     def line(self, event_type, payload, scope="s1"):
