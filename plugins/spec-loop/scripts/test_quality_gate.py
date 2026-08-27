@@ -66,6 +66,19 @@ CBRACE_SOURCE_WITH_LITERALS = (
     "}\n"
 )
 
+# A multi-line string literal whose closing row also carries a real ternary
+# after the literal ends. The literal's interior rows are indented to keep
+# them inside the enclosing `if` block for extraction purposes.
+MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE = (
+    "def f(a, b):\n"
+    "    " + "if" + " a:\n"
+    "        s = '''\n"
+    "        text\n"
+    "        ''' " + "if" + " b " + "else" + " 'z'\n"
+    "        return s\n"
+    "    return b\n"
+)
+
 
 def unmasked(text, lang):
     """Identity stand-in for qg._strip_for_scan, so a test can measure the same
@@ -441,6 +454,21 @@ class TestStripForScan(unittest.TestCase):
         masked = qg._strip_for_scan(source, "python")
         self.assertEqual(qg._branch_count(masked), 2)
 
+    def test_a_real_branch_on_a_literals_closing_row_keeps_its_nesting_level(self):
+        # A multi-line string literal's closing row can carry real code after
+        # the literal ends. The masked line's leading whitespace must match
+        # the raw line's leading whitespace exactly, or the nesting level
+        # _cognitive_approx derives from that row silently drops.
+        masked = qg._strip_for_scan(
+            MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE, "python")
+        raw_rows = MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE.split("\n")
+        masked_rows = masked.split("\n")
+        for raw, got in zip(raw_rows, masked_rows):
+            self.assertEqual(
+                len(raw) - len(raw.lstrip(" ")),
+                len(got) - len(got.lstrip(" ")),
+                msg=raw)
+
 
 class TestMaskFailsTowardRaw(unittest.TestCase):
     def test_a_tokenizer_failure_yields_the_raw_text(self):
@@ -460,6 +488,42 @@ class TestMaskFailsTowardRaw(unittest.TestCase):
 
     def test_an_all_blank_file_is_not_treated_as_corruption(self):
         self.assertFalse(qg._mask_lost_too_much(["", "  "], ["", "  "]))
+
+
+class TestScanTokensFallbackPaths(unittest.TestCase):
+    """_scan_tokens's two guards send the whole mask back to raw text, but
+    stdlib tokenize never produces either shape for real source, so each is
+    driven directly through the real callable with a patched tokenizer."""
+
+    def test_an_empty_token_stream_yields_none(self):
+        with mock.patch.object(qg.tokenize, "generate_tokens",
+                               lambda readline: iter([])):
+            self.assertIsNone(qg._scan_tokens("x = 1\n"))
+
+    def test_a_non_endmarker_end_state_yields_none(self):
+        newline_only = [tokenize.TokenInfo(
+            tokenize.NEWLINE, "\n", (1, 0), (1, 1), "\n")]
+        with mock.patch.object(qg.tokenize, "generate_tokens",
+                               lambda readline: iter(newline_only)):
+            self.assertIsNone(qg._scan_tokens("x = 1\n"))
+
+    def test_the_corruption_guard_inside_mask_python_literals_falls_back(self):
+        # _mask_lost_too_much itself is exercised directly above; this drives
+        # the guard AS WRITTEN inside _mask_python_literals, forcing the
+        # signal it reacts to rather than trying to construct real source
+        # that trips it (masking never empties a line: the sentinel is
+        # always non-whitespace).
+        with mock.patch.object(qg, "_mask_lost_too_much", return_value=True):
+            self.assertIsNone(qg._mask_python_literals("x = 1\n"))
+
+
+class TestScanLinesForFallback(unittest.TestCase):
+    def test_a_line_count_mismatch_falls_back_to_the_raw_lines(self):
+        source = "x = 1\ny = 2\n"
+        lines = source.splitlines()
+        with mock.patch.object(qg, "_strip_for_scan",
+                               lambda text, lang: text + "\nextra"):
+            self.assertEqual(qg._scan_lines_for(source, "python", lines), lines)
 
 
 # --------------------------------------------------------------------------
@@ -581,6 +645,20 @@ class TestAnalyzeBuiltinMasksLiterals(unittest.TestCase):
         self.assertGreater(probe["metrics"]["cyclomatic_complexity"], 1)
         raw = self.measure_unmasked(broken, "m.py")["probe"]
         self.assertEqual(probe["metrics"], raw["metrics"])
+
+    def test_a_real_branch_after_a_multiline_literal_closes_is_not_undercounted(self):
+        # The masked and unmasked cognitive_complexity must agree exactly:
+        # the real `if`/`else` on the literal's closing row must keep the
+        # nesting weight its own row's indentation implies, never dropping to
+        # a shallower level because the mask overwrote that row's leading
+        # whitespace with the sentinel.
+        masked = self.measure(
+            MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE, "m.py")["f"]
+        raw = self.measure_unmasked(
+            MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE, "m.py")["f"]
+        self.assertEqual(
+            masked["metrics"]["cognitive_complexity"],
+            raw["metrics"]["cognitive_complexity"])
 
 
 class TestMatchBraceEnd(unittest.TestCase):

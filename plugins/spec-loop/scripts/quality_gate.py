@@ -491,16 +491,20 @@ def _mask_line_range(row, start_col, end_col):
 
 def _token_mask_spans(tok, rows):
     """The (row_index, start_col, end_col) spans one masked token covers, one per
-    physical line it reaches. Row indexes are 0-based into `rows`. A token
-    continuing past its opening line is masked from column 0 to the end of that
-    physical line. (PURE)"""
+    physical line it reaches. Row indexes are 0-based into `rows`. On the
+    opening physical line, masking starts at the token's own start column. On
+    every later physical line, masking starts after that row's own leading
+    spaces rather than at column 0, so the sentinel fill never erases the
+    leading whitespace a downstream nesting-level reader derives from that
+    row: leading whitespace carries no branch words or operator punctuation,
+    so leaving it unmasked is measurement-neutral. (PURE)"""
     (first_row, first_col), (last_row, last_col) = tok.start, tok.end
     spans = []
     for row in range(first_row, last_row + 1):
-        start = 0
-        if row == first_row:
-            start = first_col
-        end = len(rows[row - 1])
+        line = rows[row - 1]
+        start = first_col if row == first_row else (
+            len(line) - len(line.lstrip(" ")))
+        end = len(line)
         if row == last_row:
             end = last_col
         spans.append((row - 1, start, end))
