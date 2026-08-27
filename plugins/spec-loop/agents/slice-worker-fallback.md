@@ -153,10 +153,17 @@ the precise question, options with one marked `recommended`, and `if_unanswered`
 Proceed-and-log stays the default — surface only genuine ambiguity or a material assumption
 touching behavior, public contracts, persisted data, security, or an external integration. A
 slice with any open escalation returns `ESCALATED`. `budget-exhausted` is only for the tier
-agent cap or the per-stage token floor (see Loop bounds), never for a spent loop bound; an
-unhandled exception or a stage that died with no result is `internal-error`, and its context
-must name the last stage/role dispatched before the failure — you cannot know which stage
-threw, so do not claim one — plus the real error text.
+agent cap or the per-stage token floor (see Loop bounds), never for a spent loop bound.
+`internal-error` is narrower still: an unhandled exception that aborted the slice, and
+nothing else. A dispatch that comes back with **no result** is not one — the workflow
+classifies both shapes of that as `ambiguity` (a planner returning nothing, and a task whose
+retry also returned nothing, recorded as a terminal dispatch failure), and you classify them
+identically; `ambiguity` is answerable and `internal-error` deliberately is not, so
+mislabelling one costs the human the ability to answer it. An `internal-error` context
+carries the real error text and names the stage/role you were actually running when it
+aborted: you drive every stage serially, so unlike the workflow you DO know which one it was
+— say it. Hedge only for a failure inside step 4's concurrent review ∥ quality-gate message,
+where either dispatch may be the one that died; there, name both and say which is unclear.
 
 ## Return
 

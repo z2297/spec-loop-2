@@ -14,20 +14,33 @@ Usage:
     python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_slice_wave_contract_crash.py'
 """
 
+import re
 import unittest
 
+import dashboard_server
+import run_metrics
+import run_state
 from slice_wave_contract_base import (
     ANSWERABLE_TRIGGERS, CRASH_BUDGET_DENIAL_OVERCLAIM, CRASH_CAUSE_OVERCLAIM,
     CRASH_CLASSIFICATION_SENTENCE, CRASH_CLASSIFIED_PASSTHROUGH,
-    CRASH_ERROR_FIRST, CRASH_HOST_LAYER_CAVEAT, CRASH_OPTION_CONTROLLER_ACTS,
+    CRASH_CONTEXT_RENDER_LIMIT, CRASH_ERROR_EXPR, CRASH_ERROR_FIRST,
+    CRASH_GUARD_ORIGIN_OVERCLAIM, CRASH_HOST_LAYER_CAVEAT,
+    CRASH_OPTION_CONTROLLER_ACTS,
     CRASH_OPTION_RETRY, CRASH_OPTION_SKIP, CRASH_OPTION_STOP,
-    CRASH_STAGE_CONTEXT, CRASH_STAGE_FALLBACK, CRASH_STAGE_OVERCLAIM,
+    CRASH_STAGE_CAVEAT, CRASH_STAGE_CONTEXT, CRASH_STAGE_FALLBACK,
+    CRASH_STAGE_OVERCLAIM,
     CRASH_STAGE_PRECISION, CRASH_TITLE_BRANCH, CRASH_TITLE_UNGRAMMATICAL,
     CRASH_TRIGGER, DISPATCH_GUARD_CALL, GUARD_BUDGET_TRIGGER,
     SLICE_LOST_CAUSE_DENIAL, SLICE_LOST_RECORD, STAGE_ASSIGNMENT,
-    STATE_STAGE_INIT,
+    STATE_STAGE_INIT, TRIGGER_ENUM_LINE,
     WorkflowSourceTestCase,
 )
+
+# A real crash message from run 20260825-scope-ceiling, and the LONGEST stage
+# text the fallback can interpolate (the no-dispatch phrase, longer than any
+# role name), so the render check below measures the worst realistic case.
+SAMPLE_MESSAGE = "Cannot read properties of undefined (reading 'head')"
+LONGEST_STAGE = "none (the crash happened before any agent was dispatched)"
 
 
 class TestTheCrashRecordNamesTheLastDispatchedStage(WorkflowSourceTestCase):
@@ -98,6 +111,16 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         self.assertIn(CRASH_CLASSIFICATION_SENTENCE, fallback)
         self.assertIn(CRASH_HOST_LAYER_CAVEAT, fallback)
 
+    def test_the_record_claims_only_that_neither_guard_raised_a_record(self):
+        # A fourth instance of the same pattern, one level subtler:
+        # `budget.remaining()` is called INSIDE the token-floor guard, so a
+        # throw from there ORIGINATES in a guard and still arrives with no
+        # escRecord. All the escRecord check proves is that neither guard
+        # RAISED its record - never that the crash came from outside them.
+        fallback = self.crash_fallback()
+        self.assertIn(CRASH_CLASSIFICATION_SENTENCE, fallback)
+        self.assertNotIn(CRASH_GUARD_ORIGIN_OVERCLAIM, fallback)
+
     def test_the_title_is_grammatical_when_no_agent_was_dispatched(self):
         # This title is an escalations.md heading and the dashboard label for
         # the crash shape with the LEAST operator context; interpolating the
@@ -140,9 +163,38 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         self.assertNotIn("internal-error", str(ANSWERABLE_TRIGGERS))
 
     def test_the_real_exception_text_leads_the_context_not_the_boilerplate(self):
-        self.assertLess(
-            self.crash_fallback().index(CRASH_ERROR_FIRST),
-            self.crash_fallback().index(CRASH_CLASSIFICATION_SENTENCE))
+        fallback = self.crash_fallback()
+        error_at = fallback.index(CRASH_ERROR_FIRST)
+        stage_at = fallback.index(CRASH_STAGE_CONTEXT)
+        prose_at = fallback.index(CRASH_CLASSIFICATION_SENTENCE)
+        self.assertLess(error_at, stage_at)
+        self.assertLess(stage_at, prose_at)
+
+    def crash_context(self):
+        """The shipped context template literal, backticks stripped."""
+        fallback = self.crash_fallback()
+        start = fallback.index(CRASH_ERROR_FIRST)
+        return fallback[start + 1:fallback.index("`,", start)]
+
+    def rendered_crash_context(self, message, stage_text):
+        """The context as run_state.render_escalation() would render it."""
+        filled = self.crash_context().replace(CRASH_ERROR_EXPR, message)
+        filled = filled.replace("${stageText}", stage_text)
+        filled = filled.replace("${state.tasksCompleted}", "2")
+        return " ".join(filled.split())[:CRASH_CONTEXT_RENDER_LIMIT - 1]
+
+    def test_the_stage_attribution_survives_the_400_char_context_render(self):
+        # run_state.render_escalation() renders "- Context: %s" through
+        # _one_line(..., 400), so anything past 400 collapsed characters never
+        # reaches escalations.md - which is also the corpus a later run's
+        # escalation-gate precedent check reads. The stage attribution is this
+        # record's headline diagnostic and the title asserts it, so it and its
+        # caveat must sit inside that budget, ahead of the fixed prose.
+        rendered = self.rendered_crash_context(SAMPLE_MESSAGE, LONGEST_STAGE)
+        attribution = CRASH_STAGE_CONTEXT.replace("${stageText}", LONGEST_STAGE)
+        self.assertIn(SAMPLE_MESSAGE, rendered)
+        self.assertIn(attribution, rendered)
+        self.assertIn(CRASH_STAGE_CAVEAT, rendered)
 
     def test_a_lost_slice_is_an_internal_error_too(self):
         # parallel() resolved the thunk to null: the slice died with no result
@@ -164,6 +216,26 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
             "const results = await parallel(", "log(`wave ")
         self.assertNotIn(SLICE_LOST_CAUSE_DENIAL, wave_entry)
         self.assertIn(CRASH_HOST_LAYER_CAVEAT, wave_entry)
+
+
+class TestTheTriggerEnumAgreesAcrossAllFiveHomes(WorkflowSourceTestCase):
+    """The enum has five homes and no test held them against each other.
+    `run_state.persist_slice` validates the whole SliceResult BEFORE it writes
+    anything and raises on an unrecognised trigger, so a value missing from one
+    tuple costs an affected slice its sidecar, its events and its report - not
+    a mislabelled field. A one-home edit would otherwise stay fully green."""
+
+    def triggers(self):
+        return run_state.ESCALATION_TRIGGERS
+
+    def test_the_three_python_tuples_are_identical(self):
+        self.assertEqual(run_metrics.ESCALATION_TRIGGERS, self.triggers())
+        self.assertEqual(dashboard_server.ESCALATION_TRIGGERS, self.triggers())
+
+    def test_the_workflow_enum_carries_exactly_those_values_in_order(self):
+        enum_line = self.line_containing(TRIGGER_ENUM_LINE)
+        self.assertEqual(tuple(re.findall(r"'([^']+)'", enum_line)),
+            self.triggers())
 
 
 if __name__ == "__main__":  # pragma: no cover
