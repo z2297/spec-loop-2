@@ -376,6 +376,11 @@ class TestRenderEscalation(unittest.TestCase):
         self.assertIn("- Answer: bound them", body)
         self.assertIn("- Answered-at: %s" % LATER, body)
 
+    def test_the_identity_fingerprint_is_embedded_for_de_duplication(self):
+        body = rs.render_escalation("s1", escalation())
+        anchor = rs.IDENTITY_ANCHOR % rs.escalation_identity(escalation())
+        self.assertIn(anchor, body)
+
 
 class TestPlaceEscalationSection(unittest.TestCase):
     """place_escalation_section: one section per distinct question."""
@@ -450,6 +455,74 @@ class TestPlaceEscalationSection(unittest.TestCase):
         head, sections = rs._escalation_sections(rs.ESCALATIONS_HEADER)
         self.assertEqual(head, rs.ESCALATIONS_HEADER)
         self.assertEqual(sections, [])
+
+    def test_two_rounds_sharing_a_truncated_render_are_still_two_questions(self):
+        # The renderer caps context at 400 characters, so these two rounds
+        # render one identical Context line. They are distinct questions and
+        # each keeps its own section: identity comes from the raw record.
+        shared = "x" * 450
+        first = escalation(context=shared + " tail one")
+        second = escalation(context=shared + " tail two")
+        line_one = rs._section_line(rs.render_escalation("s1", first), "- Context:")
+        line_two = rs._section_line(rs.render_escalation("s1", second), "- Context:")
+        self.assertEqual(line_one, line_two)
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", first)
+        body = rs.place_escalation_section(body, "s1", second)
+        self.assertEqual(len(self.sections(body)), 2)
+        self.assertIn(rs.IDENTITY_ANCHOR % rs.escalation_identity(first), body)
+        self.assertIn(rs.IDENTITY_ANCHOR % rs.escalation_identity(second), body)
+
+    def test_the_two_sections_are_distinguishable_only_by_the_fingerprint(self):
+        # A documented consequence of raw-field identity: a human reading
+        # the page sees two sections with one id and byte-identical Context
+        # lines, told apart only by the fingerprint comment.
+        shared = "y" * 450
+        first = escalation(context=shared + " tail one")
+        second = escalation(context=shared + " tail two")
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", first)
+        body = rs.place_escalation_section(body, "s1", second)
+        head, sections = rs._escalation_sections(body)
+        self.assertEqual(len(sections), 2)
+        anchors = [rs._section_line(item, rs.ID_ANCHOR_PREFIX) for item in sections]
+        self.assertEqual(anchors[0], anchors[1])
+        contexts = [rs._section_line(item, "- Context:") for item in sections]
+        self.assertEqual(contexts[0], contexts[1])
+        prints = [rs._section_identity(item) for item in sections]
+        self.assertNotEqual(prints[0], prints[1])
+
+    def test_identity_comes_from_the_raw_id_context_and_question(self):
+        text = ("  The reviewer   says retries must be "
+                "bounded; the plan says otherwise.  ")
+        record = escalation()
+        base = rs.escalation_identity(record)
+        self.assertEqual(base, rs.escalation_identity(dict(record)))
+        self.assertNotEqual(base, rs.escalation_identity(escalation(id="s2:x")))
+        other = escalation(question="Something else")
+        self.assertNotEqual(base, rs.escalation_identity(other))
+        self.assertEqual(base, rs.escalation_identity(escalation(context=text)))
+
+    def test_a_section_without_a_fingerprint_is_never_rewritten(self):
+        legacy = (rs.ESCALATIONS_HEADER
+                  + "## [s1] Older render   (status: OPEN)\n"
+                  + (rs.ID_ANCHOR % "s1:review-block") + "\n"
+                  + "- Context: whatever\n- The decision: whatever\n"
+                  + "- Answer:\n- Answered-at:\n\n")
+        body = rs.place_escalation_section(legacy, "s1", escalation())
+        self.assertEqual(len(self.sections(body)), 2)
+        self.assertIn("## [s1] Older render   (status: OPEN)", body)
+
+    def test_the_back_compat_prose_readers_still_split_the_page(self):
+        # Both back-compat prose readers key a block only on a line starting
+        # "## [" and read body fields by a "- " prefix, so the new anchor
+        # line is inert to them, exactly as the id anchor already is.
+        import run_metrics
+        first = escalation()
+        second = escalation(id="s2:ambiguity")
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", first)
+        body = rs.place_escalation_section(body, "s2", second)
+        self.assertIn(rs.IDENTITY_ANCHOR % rs.escalation_identity(first), body)
+        parsed = run_metrics.legacy_parse_escalations(body)
+        self.assertEqual([item["id"] for item in parsed], ["s1", "s2"])
 
 
 class TestAnswerWriteBack(unittest.TestCase):

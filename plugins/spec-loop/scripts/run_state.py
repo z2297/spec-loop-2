@@ -27,7 +27,7 @@ Design decisions:
   without reaching the human surface (or vice versa). Nothing parses the prose
   back — `escalations.md` carries an HTML-comment id anchor purely so an answer
   can be written back to the right entry deterministically. An
-  `escalation-opened` whose rendered question and context already appear on
+  `escalation-opened` whose raw id, context and question already appear on
   the page rewrites that section instead of adding a second copy
   (`place_escalation_section`); the machine channel keeps every event either
   way, and the human gate reads `open_escalations`, not the page.
@@ -59,6 +59,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -96,6 +97,8 @@ ESCALATIONS_HEADER = ("# Escalations\n\n"
 
 ID_ANCHOR = "<!-- escalation-id: %s -->"
 ID_ANCHOR_PREFIX = ID_ANCHOR.split("%s")[0]
+IDENTITY_ANCHOR = "<!-- escalation-identity: %s -->"
+_IDENTITY_RE = re.compile(r"<!-- escalation-identity: (\w+) -->")
 STATUS_OPEN_MARK = "(status: OPEN)"
 STATUS_ANSWERED_MARK = "(status: ANSWERED)"
 SUMMARY_LIMIT = 200
@@ -480,29 +483,54 @@ def _ordered_options(record):
             + [o for o in options if not o.get("recommended")])
 
 
+def escalation_identity(record):
+    """A fingerprint of the fields that identify one EscalationRecord (PURE).
+
+    Computed from the RAW id, context and question, whitespace-collapsed. A
+    context longer than the render cap makes a fingerprint taken from the
+    rendered lines merge distinct questions, so the raw fields are the only
+    sound source. Title, options, status and answer are deliberately
+    excluded: they may legitimately differ between a record and its own
+    re-emit.
+    """
+    keys = ("id", "context", "question")
+    fields = [" ".join(str(record.get(key) or "").split()) for key in keys]
+    joined = "\x1f".join(fields)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]
+
+
 def render_escalation(scope, record):
-    """Render one EscalationRecord as its escalations.md entry (PURE)."""
+    """Render one EscalationRecord as its escalations.md entry (PURE).
+
+    The section carries two HTML-comment anchors: the id anchor an answer is
+    written back through, and the identity fingerprint de-duplication
+    matches on (see `escalation_identity`). Body lines are appended one at a
+    time by this single producer of a section's bytes.
+    """
     status = record.get("status") or "OPEN"
-    lines = ["## [%s] %s   (status: %s)"
-             % (scope, _one_line(record.get("title") or "(untitled)"), status),
-             ID_ANCHOR % (record.get("id") or "?"),
-             "- Trigger: %s" % (record.get("trigger") or "(not recorded)"),
-             "- Opened: %s" % (record.get("opened") or "(not recorded)"),
-             "- Context: %s" % _one_line(record.get("context") or "(not recorded)", 400),
-             "- The decision: %s" % _one_line(record.get("question") or "(not recorded)",
-                                              400),
-             "- Options:"]
+    title = _one_line(record.get("title") or "(untitled)")
+    context = _one_line(record.get("context") or "(not recorded)", 400)
+    question = _one_line(record.get("question") or "(not recorded)", 400)
+    unanswered = _one_line(record.get("if_unanswered") or "(not recorded)", 300)
+    answer = record.get("answer")
+    answered_at = record.get("answered_at")
+    lines = []
+    lines.append("## [%s] %s   (status: %s)" % (scope, title, status))
+    lines.append(ID_ANCHOR % (record.get("id") or "?"))
+    lines.append(IDENTITY_ANCHOR % escalation_identity(record))
+    lines.append("- Trigger: %s" % (record.get("trigger") or "(not recorded)"))
+    lines.append("- Opened: %s" % (record.get("opened") or "(not recorded)"))
+    lines.append("- Context: %s" % context)
+    lines.append("- The decision: %s" % question)
+    lines.append("- Options:")
     for position, option in enumerate(_ordered_options(record)):
         marker = "(RECOMMENDED DEFAULT) " if option.get("recommended") else ""
         detail = _one_line(option.get("detail") or "", 300)
-        lines.append("  %d. %s — %s%s" % (position + 1, option.get("label"),
-                                          marker, detail))
-    lines.append("- If unanswered: %s"
-                 % _one_line(record.get("if_unanswered") or "(not recorded)", 300))
-    answer = record.get("answer")
+        label = option.get("label")
+        lines.append("  %d. %s — %s%s" % (position + 1, label, marker, detail))
+    lines.append("- If unanswered: %s" % unanswered)
     lines.append("- Answer:%s" % (" " + _one_line(answer, 400) if answer else ""))
-    lines.append("- Answered-at:%s"
-                 % (" " + record["answered_at"] if record.get("answered_at") else ""))
+    lines.append("- Answered-at:%s" % (" " + answered_at if answered_at else ""))
     return "\n".join(lines) + "\n\n"
 
 
@@ -526,19 +554,15 @@ def _section_line(section, prefix):
     return next((line for line in section.splitlines() if line.startswith(prefix)), "")
 
 
-def _escalation_identity(section):
-    """The rendered fields that identify one escalation section (PURE).
+def _section_identity(section):
+    """The identity fingerprint carried by a rendered section, or "" (PURE).
 
-    Identity is the id anchor plus the rendered context and decision lines.
-    Two sections share an identity only given the same id, an identically
-    rendered question, and an identically rendered context -- the one
-    situation that means the same question reached the page twice. Title,
-    options and answer are deliberately excluded: they may legitimately
-    differ between a record and its own re-emit.
+    A section rendered before the fingerprint existed carries none and
+    yields the empty string, which equals no record's fingerprint. Such a
+    section is left exactly as it stands and a re-emit is appended beside it.
     """
-    return (_section_line(section, ID_ANCHOR_PREFIX).strip(),
-            _section_line(section, "- Context:").strip(),
-            _section_line(section, "- The decision:").strip())
+    found = _IDENTITY_RE.search(section)
+    return found.group(1) if found else ""
 
 
 def _section_has_answer(section):
@@ -550,24 +574,25 @@ def _section_has_answer(section):
 def place_escalation_section(body, scope, record):
     """The escalations.md body with `record` rendered exactly once (PURE).
 
-    De-duplication is by true identity alone (see `_escalation_identity`). A
-    record matching a section already on the page rewrites that section in
-    place, keeping its position, so a re-emitted escalation-opened stops
-    adding a second copy of the same question. A record differing in either
-    field is a different question and gets its own section appended: no two
-    questions are ever merged, and no recorded answer is ever moved onto a
-    question that did not receive it. One rule protects an existing decision:
-    a matching record carrying no answer of its own leaves an already-answered
-    section untouched, so a bare re-emit cannot blank an answer or reset a
-    status. This function decides rendering only. Whether the human gate still
-    sees the escalation is `open_escalations`, which is deliberately separate
-    and stays fail-safe.
+    De-duplication is by true identity alone: the fingerprint
+    `escalation_identity` takes from the record's raw id, context and
+    question. A record matching a section already on the page rewrites that
+    section in place, keeping its position, so a re-emitted escalation-opened
+    stops adding a second copy of the same question. A record differing in any
+    of those three raw fields is a different question and gets its own section
+    appended: no two questions are ever merged, and no recorded answer is ever
+    moved onto a question that did not receive it. One rule protects an
+    existing decision: a matching record carrying no answer of its own leaves
+    an already-answered section untouched, so a bare re-emit cannot blank an
+    answer or reset a status. This function decides rendering only. Whether the
+    human gate still sees the escalation is `open_escalations`, which is
+    deliberately separate and stays fail-safe.
     """
     section = render_escalation(scope, record)
     head, sections = _escalation_sections(body)
-    identity = _escalation_identity(section)
+    identity = escalation_identity(record)
     at = next((index for index, existing in enumerate(sections)
-               if _escalation_identity(existing) == identity), None)
+               if _section_identity(existing) == identity), None)
     if at is None:
         return body + section
     keep = _section_has_answer(sections[at]) and not _section_has_answer(section)
