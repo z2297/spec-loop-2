@@ -195,8 +195,8 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
                   "title": "slice crashed", "context": filled,
                   "question": "Retry, skip, or stop."}
         section = run_state.render_escalation("s1", record)
-        return next(line for line in section.splitlines()
-                    if line.startswith("- Context: "))
+        lines = section.splitlines()
+        return next(line for line in lines if line.startswith("- Context: "))
 
     def test_the_stage_attribution_survives_the_real_context_render(self):
         # run_state.render_escalation() collapses the context and truncates it
