@@ -97,6 +97,18 @@ _EXT_LANG = {
     ".hpp": "cbrace", ".rs": "cbrace",
 }
 
+# The subset of the brace extensions whose scan mask may be lexed by the hand
+# scanner below. It implements JS/TypeScript quoting rules alone, where a single
+# quote always opens a string. In Rust a single quote usually opens a lifetime,
+# in C++ it also serves as a digit separator, so two of them on one line pair
+# into a phantom string covering the real code between them -- measured, that
+# turns 2 branches into 1 with no signal, the one direction this mask is never
+# allowed to move a count. Rust, C, C++, Go, Java and C# therefore keep their
+# raw text: they stay on today's over-count, which is the safe direction,
+# rather than being lexed by quoting rules that are not theirs.
+_JS_MASK_EXTS = frozenset(
+    {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"})
+
 # Branch keywords whose occurrence adds one to cyclomatic complexity. Matched as
 # whole words (or operators) so an identifier like `ifield` is not counted.
 _BRANCH_WORDS = ("if", "elif", "case", "catch", "for", "while", "when")
@@ -380,6 +392,20 @@ def _lang_for(path):
     return _EXT_LANG.get(os.path.splitext(path)[1].lower())
 
 
+def _scan_lang_for(path):
+    """The language family whose scan mask may be applied to `path`, else None
+    to leave the file on raw text. Distinct from _lang_for on purpose: that one
+    picks the extraction and nesting model, this one picks the mask, and only
+    the JS/TypeScript subset of the brace extensions has a mask that lexes its
+    quoting correctly. (PURE)"""
+    lang = _lang_for(path)
+    if lang != "cbrace":
+        return lang
+    if os.path.splitext(path)[1].lower() in _JS_MASK_EXTS:
+        return "js"
+    return None
+
+
 def _count_params(sig):
     """Count parameters in a parenthesized signature substring. PURE. Splits the
     top-level parameter list on commas ignoring nested brackets, and drops a
@@ -438,8 +464,11 @@ def _count_params(sig):
 # its nesting level from leading whitespace: space-fill would RAISE the measured
 # cognitive complexity of dozens of functions. Every failure path returns the
 # raw text, so the worst case remains today's over-count. Two maskers sit
-# behind this seam: python via stdlib tokenize, brace languages via the hand
-# scanner below.
+# behind this seam: python via stdlib tokenize, the JS/TypeScript family
+# (.js, .jsx, .mjs, .cjs, .ts, .tsx) via the hand scanner below. The remaining
+# brace extensions -- .rs, .c, .h, .cpp, .cc, .hpp, .go, .java, .cs -- are
+# deliberately NOT masked, because the hand scanner lexes JS quoting rules
+# alone. _scan_lang_for holds that routing.
 
 _SCAN_SENTINEL = "x"
 
@@ -753,11 +782,12 @@ def _mask_cbrace_literals(text):
 
 
 def _mask_for_lang(text, lang):
-    """The masked form of `text` in one language family, else None once no
-    mask applies. (PURE)"""
+    """The masked form of `text` in one SCAN language, else None once no mask
+    applies. Keyed by the value _scan_lang_for produces, never by the
+    extraction family. (PURE)"""
     if lang == "python":
         return _mask_python_literals(text)
-    if lang == "cbrace":
+    if lang == "js":
         return _mask_cbrace_literals(text)
     return None
 
@@ -765,9 +795,9 @@ def _mask_for_lang(text, lang):
 def _strip_for_scan(text, lang):
     """`text` with string-literal and comment content masked out, so words and
     punctuation inside literals stop being measured as real branching. Python
-    is masked via stdlib tokenize, brace languages via the hand scanner that
-    keeps ${} interpolation code visible. Any other language family, and
-    every mask failure, returns the raw text. (PURE)"""
+    is masked via stdlib tokenize, the JS/TypeScript family via the hand
+    scanner that keeps ${} interpolation code visible. Every other language
+    family, plus every mask failure, returns the raw text. (PURE)"""
     masked = _mask_for_lang(text, lang)
     if masked is None:
         return text
@@ -936,11 +966,13 @@ def _nesting_depth_for(body_lines, lang, base_indent):
     return _nesting_depth_braces("\n".join(body_lines))
 
 
-def _scan_lines_for(source, lang, lines):
+def _scan_lines_for(source, scan_lang, lines):
     """The masked counterpart of `lines`, for the two branch scans only. Falls
     back to `lines` unless the mask preserved the physical line count exactly,
-    so a masked body always covers the same lines as its raw body. (PURE)"""
-    scan_lines = _strip_for_scan(source, lang).splitlines()
+    so a masked body always covers the same lines as its raw body. The
+    language here is the SCAN language from _scan_lang_for, not the extraction
+    family. (PURE)"""
+    scan_lines = _strip_for_scan(source, scan_lang).splitlines()
     if len(scan_lines) != len(lines):
         return lines
     return scan_lines
@@ -970,8 +1002,9 @@ def analyze_builtin(path, source, changed_ranges):
     measured metric values for functions intersecting `changed_ranges`, tagged
     source="builtin-heuristic". `source` is the file text; changed_ranges is the
     file's list of (start, end) changed spans. The two branch scans read a
-    masked copy of the source (see _strip_for_scan); every other metric reads
-    the raw text.
+    masked copy of the source (see _strip_for_scan); the mask is selected by
+    _scan_lang_for, so a brace language outside the JS family keeps its raw
+    text. Every other metric reads the raw text.
 
     An unsupported/binary file (no known language) yields ([], None); the caller
     records a skip for it."""
@@ -979,7 +1012,7 @@ def analyze_builtin(path, source, changed_ranges):
     if lang is None:
         return [], None
     lines = source.splitlines()
-    scan_lines = _scan_lines_for(source, lang, lines)
+    scan_lines = _scan_lines_for(source, _scan_lang_for(path), lines)
     funcs = _extract_functions_for(lines, lang)
 
     findings = []

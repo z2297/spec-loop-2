@@ -110,6 +110,18 @@ CBRACE_APOSTROPHE_COMMENTS_SOURCE = (
     "}\n"
 )
 
+# Three shapes that a JS-quoting mask corrupts in a NON-JS brace language. In
+# Rust a single quote opens a lifetime, in C++ it also serves as a digit
+# separator, so two of them on one line pair into a phantom string spanning the
+# real code between them. Measured raw-versus-masked branch counts are pinned
+# below. The third fixture is the C++ shape wrapped in an extractable function,
+# used to drive the routing through analyze_builtin end to end.
+RUST_LIFETIME_LINE = (
+    "fn f(a: &'x A, b: &'y B) -> bool { helper(&'x a) && other(&'y b) }\n")
+CPP_DIGIT_SEPARATOR_LINE = "int x = 1'000 + (a ? b : c) + 2'000;\n"
+CPP_DIGIT_SEPARATOR_FUNCTION = (
+    "int f(int a) { int x = 1'000 + (a ? 2 : 3) + 2'000; return x; }\n")
+
 
 def unmasked(text, lang):
     """Identity stand-in for qg._strip_for_scan, so a test can measure the same
@@ -445,7 +457,7 @@ class TestCognitiveApprox(unittest.TestCase):
 
 class TestStripForScan(unittest.TestCase):
     def test_a_brace_language_line_shape_survives_the_mask(self):
-        masked = qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "cbrace")
+        masked = qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "js")
         raw_rows = CBRACE_SOURCE_WITH_LITERALS.split("\n")
         masked_rows = masked.split("\n")
         raw_widths = [len(r) for r in raw_rows]
@@ -583,7 +595,7 @@ class TestCbraceMaskFill(unittest.TestCase):
             self.assertIsNone(qg._mask_cbrace_literals("x = 1;\n"))
 
     def test_an_unterminated_brace_source_still_yields_raw_counts(self):
-        masked = qg._strip_for_scan(CBRACE_UNTERMINATED_SOURCE, "cbrace")
+        masked = qg._strip_for_scan(CBRACE_UNTERMINATED_SOURCE, "js")
         self.assertEqual(masked, CBRACE_UNTERMINATED_SOURCE)
 
     def test_a_star_slash_inside_a_regex_literal_does_not_open_a_phantom_comment(self):
@@ -600,7 +612,7 @@ class TestCbraceMaskFill(unittest.TestCase):
             "function g(b){ ternary(b, 1) ; }\n"
         )
         self.assertIsNone(qg._mask_cbrace_literals(source))
-        self.assertEqual(qg._strip_for_scan(source, "cbrace"), source)
+        self.assertEqual(qg._strip_for_scan(source, "js"), source)
 
     def test_an_ordinary_multiline_block_comment_still_masks(self):
         source = "/* line one\nline two */\nconst a = b;\n"
@@ -609,6 +621,79 @@ class TestCbraceMaskFill(unittest.TestCase):
         self.assertEqual(masked.count("\n"), source.count("\n"))
         self.assertNotIn("line", masked)
         self.assertIn("const a = b;", masked)
+
+
+class TestScanLangForPath(unittest.TestCase):
+    """Which extensions the scan mask is allowed to lex. The hand scanner
+    implements JS/TypeScript quoting rules alone, so every other brace
+    extension has to stay on raw text -- today's over-count, the safe
+    direction."""
+
+    def test_the_js_family_extensions_are_masked(self):
+        self.assertEqual(qg._scan_lang_for("a.js"), "js")
+        self.assertEqual(qg._scan_lang_for("a.mjs"), "js")
+        self.assertEqual(qg._scan_lang_for("a.cjs"), "js")
+        self.assertEqual(qg._scan_lang_for("a.jsx"), "js")
+        self.assertEqual(qg._scan_lang_for("a.ts"), "js")
+        self.assertEqual(qg._scan_lang_for("a.TSX"), "js")
+
+    def test_a_python_path_keeps_the_python_mask(self):
+        self.assertEqual(qg._scan_lang_for("a.py"), "python")
+
+    def test_the_other_brace_extensions_are_left_on_raw_text(self):
+        self.assertIsNone(qg._scan_lang_for("a.rs"))
+        self.assertIsNone(qg._scan_lang_for("a.c"))
+        self.assertIsNone(qg._scan_lang_for("a.h"))
+        self.assertIsNone(qg._scan_lang_for("a.cpp"))
+        self.assertIsNone(qg._scan_lang_for("a.cc"))
+        self.assertIsNone(qg._scan_lang_for("a.hpp"))
+        self.assertIsNone(qg._scan_lang_for("a.go"))
+        self.assertIsNone(qg._scan_lang_for("a.java"))
+        self.assertIsNone(qg._scan_lang_for("a.cs"))
+        self.assertEqual(qg._lang_for("a.rs"), "cbrace")
+
+    def test_an_unknown_extension_is_left_on_raw_text(self):
+        self.assertIsNone(qg._scan_lang_for("a.rb"))
+
+    def test_a_rust_lifetime_pair_keeps_both_branches(self):
+        # The defect this routing prevents, measured on the real callables:
+        # lexed with JS rules the two lifetimes pair into a phantom string
+        # over the boolean operator between them, dropping 2 branches to 1.
+        self.assertEqual(qg._branch_count(RUST_LIFETIME_LINE), 2)
+        self.assertEqual(
+            qg._branch_count(qg._mask_cbrace_literals(RUST_LIFETIME_LINE)), 1)
+        scanned = qg._strip_for_scan(
+            RUST_LIFETIME_LINE, qg._scan_lang_for("lib.rs"))
+        self.assertEqual(scanned, RUST_LIFETIME_LINE)
+        self.assertEqual(qg._branch_count(scanned), 2)
+
+    def test_a_cplusplus_digit_separator_pair_keeps_both_branches(self):
+        self.assertEqual(qg._branch_count(CPP_DIGIT_SEPARATOR_LINE), 2)
+        self.assertEqual(
+            qg._branch_count(
+                qg._mask_cbrace_literals(CPP_DIGIT_SEPARATOR_LINE)), 1)
+        scanned = qg._strip_for_scan(
+            CPP_DIGIT_SEPARATOR_LINE, qg._scan_lang_for("a.cpp"))
+        self.assertEqual(scanned, CPP_DIGIT_SEPARATOR_LINE)
+        self.assertEqual(qg._branch_count(scanned), 2)
+
+    def test_analyze_builtin_keeps_both_branches_in_a_cplusplus_file(self):
+        # The end-to-end pin: this drives the routing through the product
+        # entry point, so a mis-wired analyze_builtin fails here rather than
+        # passing on hand-composed calls. Measured before the routing landed,
+        # this reported 1; the raw line has 2.
+        findings, _ = qg.analyze_builtin(
+            "a.cpp", CPP_DIGIT_SEPARATOR_FUNCTION, [(1, 1)])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(
+            findings[0]["metrics"]["cyclomatic_complexity"], 2)
+
+    def test_the_extraction_family_name_is_no_longer_a_mask_language(self):
+        # "cbrace" still selects the brace extraction model, so it must NOT
+        # double as a mask language: handed to the mask it returns raw text.
+        self.assertEqual(
+            qg._strip_for_scan(CBRACE_SOURCE_WITH_LITERALS, "cbrace"),
+            CBRACE_SOURCE_WITH_LITERALS)
 
 
 class TestScanTokensFallbackPaths(unittest.TestCase):
