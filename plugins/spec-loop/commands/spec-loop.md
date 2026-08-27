@@ -128,7 +128,9 @@ deadlock is itself an escalation):
    `escalation-gate` precedent check (prior runs' answered escalations + runbook decision
    summaries); squarely-resolved → answer it yourself with a `decision` event citing the
    precedent. Everything else: ONE `AskUserQuestion` round for ALL open escalations
-   (recommended defaults first). Write answers back (`escalation-answered` events), then
+   (recommended defaults first). Write answers back (`escalation-answered` events), keying
+   each answer by the escalation's `id` verbatim — a round-suffixed id keeps its suffix in
+   the `answers` map, and the wave reads the newest answered round — then
    **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
    whose sidecars are not DONE/SPLIT (merged work never re-enters a wave; its worktree is
    already gone) — same `ctx`, `answers` filled in, and `resumeFromRunId: <wf_id>` so the

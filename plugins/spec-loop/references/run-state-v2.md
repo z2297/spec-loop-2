@@ -97,7 +97,13 @@ prose about the slice.
 
 ```jsonc
 {
-  "id": "s1:review-block",     // "<slice-id>:<trigger>[:<round>]" — stable across resumes
+  "id": "s1:review-block",     // "<slice-id>:<trigger>", plus ":<round>" from the second
+                                // round of that trigger in that slice onward (escId).
+                                // Stable across resumes: the round counts the answers
+                                // already recorded for the slice+trigger, so the same
+                                // answers map reproduces the same id. Answers are keyed
+                                // by this id verbatim; latestAnswer reads the newest
+                                // answered round back into the resumed prompts.
   "trigger": "ambiguity | material-assumption | review-block | council-objection | quality-gate-block | budget-exhausted | internal-error",
   "title": "<short title>",
   "context": "<what the loop was doing and why it cannot decide>",
