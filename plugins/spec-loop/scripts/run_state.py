@@ -561,8 +561,8 @@ def place_escalation_section(body, scope, record):
 
 def _anchor_section_is_open(lines, at):
     """True given a heading above `lines[at]` still reading status OPEN (PURE)."""
-    heading = next((lines[index] for index in range(at, -1, -1)
-                    if lines[index].startswith("## ")), "")
+    above = reversed(lines[:at + 1])
+    heading = next((line for line in above if line.startswith("## ")), "")
     return STATUS_OPEN_MARK in heading
 
 
@@ -581,6 +581,33 @@ def _answer_target(lines, anchor):
     return (still_open[-1:] or hits[:1] or [None])[0]
 
 
+def _mark_heading_answered(lines, at):
+    """Rewrite the nearest heading at or above index `at` to read ANSWERED.
+
+    Only the status mark changes, so a heading already reading ANSWERED and a
+    heading carrying any other status both survive untouched.
+    """
+    for index in range(at, -1, -1):
+        if lines[index].startswith("## "):
+            lines[index] = lines[index].replace(STATUS_OPEN_MARK, STATUS_ANSWERED_MARK)
+            return
+
+
+def _fill_answer_fields(lines, at, answer, answered_at):
+    """Rewrite the Answer and Answered-at lines of the section holding `at`.
+
+    The walk stops at the next heading, which keeps one answer inside the one
+    section it was written for.
+    """
+    for index in range(at + 1, len(lines)):
+        if lines[index].startswith("## "):
+            return
+        if lines[index].startswith("- Answer:"):
+            lines[index] = "- Answer: %s\n" % _one_line(answer or "", 400)
+        elif lines[index].startswith("- Answered-at:"):
+            lines[index] = "- Answered-at: %s\n" % answered_at
+
+
 def answer_escalation(body, escalation_id, answer, answered_at):
     """Write an answer into the matching escalations.md entry (PURE).
 
@@ -593,18 +620,8 @@ def answer_escalation(body, escalation_id, answer, answered_at):
     at = _answer_target(lines, anchor)
     if at is None:
         return body, False
-
-    for index in range(at, -1, -1):
-        if lines[index].startswith("## "):
-            lines[index] = lines[index].replace(STATUS_OPEN_MARK, STATUS_ANSWERED_MARK)
-            break
-    for index in range(at + 1, len(lines)):
-        if lines[index].startswith("## "):
-            break
-        if lines[index].startswith("- Answer:"):
-            lines[index] = "- Answer: %s\n" % _one_line(answer or "", 400)
-        elif lines[index].startswith("- Answered-at:"):
-            lines[index] = "- Answered-at: %s\n" % answered_at
+    _mark_heading_answered(lines, at)
+    _fill_answer_fields(lines, at, answer, answered_at)
     return "".join(lines), True
 
 

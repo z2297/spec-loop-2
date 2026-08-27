@@ -475,8 +475,7 @@ class TestAnswerWriteBack(unittest.TestCase):
     ROUND_ID = "s3:budget-exhausted"
 
     def round_record(self, context):
-        return escalation(id=self.ROUND_ID, trigger="budget-exhausted",
-                          context=context)
+        return escalation(id=self.ROUND_ID, trigger="budget-exhausted", context=context)
 
     def two_rounds(self):
         """Two distinct rounds of one id placed back to back, both still open."""
