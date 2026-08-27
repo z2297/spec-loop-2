@@ -1232,58 +1232,69 @@ class TestOpenEscalations(RunStateTestCase):
 class TestRecordedCorpusReplay(RunStateTestCase):
     """Replays the escalation events of the two completed runs recorded under
     docs/spec-loop/ into a throwaway run dir. Those run directories are the
-    read-only reproduction corpus: this class opens them for reading and
-    writes only inside self.run_dir.
+    read-only reproduction corpus: this class reads them and writes only
+    inside self.run_dir.
     """
 
     def corpus(self, run_id):
         root = Path(__file__).resolve().parents[3]
         return root / "docs" / "spec-loop" / run_id
 
-    def replay(self, run_id):
+    def escalation_events(self, run_id):
         path = self.corpus(run_id) / "events.jsonl"
         self.assertTrue(path.exists(), path)
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            event = json.loads(stripped)
-            if event.get("type") not in rs.ESCALATION_EVENTS:
-                continue
-            rs.append_event(self.run_dir, event.get("ts"), event.get("scope"),
-                            event["type"], event.get("payload") or {})
+        raw = path.read_text(encoding="utf-8").splitlines()
+        events = [json.loads(line) for line in raw if line.strip()]
+        return [item for item in events if item.get("type") in rs.ESCALATION_EVENTS]
+
+    def replay(self, run_id):
+        for event in self.escalation_events(run_id):
+            payload = event.get("payload") or {}
+            fields = (event.get("ts"), event.get("scope"), event["type"], payload)
+            rs.append_event(self.run_dir, *fields)
         return self.read("escalations.md")
 
     def headings(self, body):
         return [line for line in body.splitlines() if line.startswith("## ")]
 
+    def answered_sections(self, sections):
+        return [item for item in sections if self.is_answered(item)]
+
+    def is_answered(self, section):
+        return rs.STATUS_ANSWERED_MARK in rs._section_line(section, "## ")
+
+    def headings_without_answer_text(self, sections):
+        blank = [item for item in sections if not rs._section_has_answer(item)]
+        return [rs._section_line(item, "## ") for item in blank]
+
     def test_the_recorded_page_has_twelve_sections_and_the_replay_has_nine(self):
         # The recorded artifact is the defect: 11 escalation-opened events over
         # 7 ids rendered 11 sections plus 1 orphan-answer entry. Three of those
         # opens re-asked a question already on the page.
-        recorded = (self.corpus("20260825-scope-ceiling") / "escalations.md"
-                    ).read_text(encoding="utf-8")
+        page = self.corpus("20260825-scope-ceiling") / "escalations.md"
+        recorded = page.read_text(encoding="utf-8")
         self.assertEqual(len(self.headings(recorded)), 12)
-        self.assertEqual(len(self.headings(self.replay("20260825-scope-ceiling"))), 9)
+        replayed = self.replay("20260825-scope-ceiling")
+        self.assertEqual(len(self.headings(replayed)), 9)
 
     def test_a_second_incident_under_one_id_keeps_its_own_section_and_answer(self):
         body = self.replay("20260825-scope-ceiling")
         head, sections = rs._escalation_sections(body)
         anchor = rs.ID_ANCHOR % "s3:budget-exhausted"
-        rounds = [section for section in sections if anchor in section]
+        rounds = [item for item in sections if anchor in item]
         self.assertEqual(len(rounds), 2)
         self.assertIn("undefined is not an object", rounds[0])
         self.assertIn("StructuredOutput retry", rounds[1])
-        self.assertIn("Genuine agent failure this time",
-                      rs._section_line(rounds[1], "- Answer:"))
+        second = rs._section_line(rounds[1], "- Answer:")
+        self.assertIn("Genuine agent failure this time", second)
 
     def test_the_one_answered_section_without_answer_text_is_the_recorded_one(self):
         # Every section the replay renders ends ANSWERED, and exactly one of
         # them carries no answer text. That one is recorded that way in the
         # corpus, not produced by placement: the s2:quality-gate-block
         # escalation-opened payload itself says status ANSWERED with a null
-        # answer, and its answer had already arrived before any section for
-        # that id existed, so it stands in the orphan-answer entry above.
+        # answer, and its answer had already arrived before that id had any
+        # section on the page, so it stands in the orphan-answer entry above.
         # Copying that text down onto this record is carry-answer-forward,
         # which this slice deliberately does not do. The recorded artifact has
         # three such sections; the replay has this one. A second entry in this
@@ -1291,13 +1302,10 @@ class TestRecordedCorpusReplay(RunStateTestCase):
         # received an answer.
         body = self.replay("20260825-scope-ceiling")
         head, sections = rs._escalation_sections(body)
-        answered = [section for section in sections
-                    if rs.STATUS_ANSWERED_MARK in rs._section_line(section, "## ")]
+        answered = self.answered_sections(sections)
         self.assertEqual(len(answered), 9)
-        blank = [section for section in answered
-                 if not rs._section_has_answer(section)]
-        self.assertEqual([rs._section_line(section, "## ") for section in blank],
-                         ["## [s2] verification failed   " + rs.STATUS_ANSWERED_MARK])
+        expected = "## [s2] verification failed   " + rs.STATUS_ANSWERED_MARK
+        self.assertEqual(self.headings_without_answer_text(answered), [expected])
 
     def test_the_second_recorded_run_is_unchanged_at_one_section(self):
         body = self.replay("20260826-crash-classification")
