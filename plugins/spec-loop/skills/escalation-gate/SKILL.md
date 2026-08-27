@@ -71,17 +71,22 @@ over it, it is material → surface it.
 
 The enum lives in `slice-wave.workflow.js` (`ESCALATION.trigger`). Three things that are
 deliberately NOT judgment triggers, and must never be turned into one: `budget-exhausted` (the
-workflow's guard emits it when a structural cap is hit — agent cap, stage token floor; it asks for a
-resource, not a decision), `internal-error` (an unhandled exception aborted a slice, or a slice
-returned no result at all; the exception record carries the real exception text together with the
-last stage/role dispatched before the failure, which is the most recent dispatch rather than a
-per-throw stage — the lost-slice record carries neither, having nothing to carry, and says
-so. This trigger reports a machine failure and asks the controller to retry, skip, or stop
-the run, and no agent prompt can apply such an answer, so the trigger is never answerable by
-re-dispatching an agent), and the council's **over-scope flag** (`critique.over_scope.flag`).
-The flag is a record: it is carried into the `council-verdict` payload and the slice sidecar with
-its reason, and it raises no escalation, changes no verdict, suppresses no split, and blocks
-nothing. There are exactly five JUDGMENT triggers; an over-scope flag is not a sixth.
+workflow's guard emits it when a structural cap is hit — agent cap, stage token floor; it asks for
+a resource, not a decision), `internal-error` (an unhandled exception aborted a slice, or a slice
+returned no result at all — one trigger, two records that carry different evidence. The exception
+record from `runSliceError` carries the real exception text together with the last stage/role
+dispatched before the failure, which is the most recent dispatch rather than a per-throw stage,
+and its context says exactly that about itself. The lost-slice record carries neither, having
+nothing to carry, and its context does not announce the gap: it states only that a null result
+proves nothing about which guard ran. Read that absence as absence, not as a claim about the
+cause. The trigger reports a machine failure and is never answerable by re-dispatching an agent,
+so only a human or the controller resolves it — and only the exception record spells the choice
+out as three options, retry the slice, skip it, or stop the run; the lost-slice record asks one
+question, whether to re-run the wave, and carries a single generic recommended-default option),
+and the council's **over-scope flag** (`critique.over_scope.flag`). The flag is a record: it is
+carried into the `council-verdict` payload and the slice sidecar with its reason, and it raises no
+escalation, changes no verdict, suppresses no split, and blocks nothing. There are exactly five
+JUDGMENT triggers; an over-scope flag is not a sixth.
 
 ### Precedent check (before returning any SURFACE escalation)
 
