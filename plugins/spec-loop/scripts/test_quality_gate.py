@@ -79,6 +79,37 @@ MULTILINE_LITERAL_WITH_TRAILING_TERNARY_SOURCE = (
     "    return b\n"
 )
 
+# A template literal whose interpolation carries REAL operators, plus a
+# comment and a single-quoted string that carry fake ones. Module level, for
+# the reason given above the python fixtures.
+CBRACE_TEMPLATE_SOURCE = (
+    "function probe(e) {\n"
+    "    // a comment that isn't code: " + BRANCH_WORDS_IN_LITERALS + "\n"
+    "    const s = `msg ${String((e && e.message) || e)} "
+    + BRANCH_WORDS_IN_LITERALS + "`;\n"
+    "    /* block " + BRANCH_WORDS_IN_LITERALS + " */\n"
+    "    " + "if" + " (s) { return s; }\n"
+    "    return '" + BRANCH_WORDS_IN_LITERALS + "';\n"
+    "}\n"
+)
+
+CBRACE_UNTERMINATED_SOURCE = (
+    "function probe(a) {\n"
+    "    const s = 'never closed " + BRANCH_WORDS_IN_LITERALS + ";\n"
+    "    return a;\n"
+    "}\n"
+)
+
+CBRACE_APOSTROPHE_COMMENTS_SOURCE = (
+    "function probe(a, b) {\n"
+    "    // it doesn't matter\n"
+    "    " + "if" + " (a) { return b; }\n"
+    "    // and it isn't a literal\n"
+    "    " + "for" + " (const x of b) { a += x; }\n"
+    "    return a;\n"
+    "}\n"
+)
+
 
 def unmasked(text, lang):
     """Identity stand-in for qg._strip_for_scan, so a test can measure the same
@@ -543,6 +574,82 @@ class TestScanLinesForFallback(unittest.TestCase):
         lines = source.splitlines()
         with mock.patch.object(qg, "_strip_for_scan", longer_scan):
             self.assertEqual(qg._scan_lines_for(source, "python", lines), lines)
+
+
+class TestCbraceSpanScanner(unittest.TestCase):
+    """The span scanner is what decides which characters the brace-language
+    mask is allowed to blank. Every case is driven through the real
+    callables."""
+
+    def spans(self, text):
+        return qg._cbrace_spans(text, 0, len(text))
+
+    def covered(self, text):
+        """The concatenated text of every span the scanner reported."""
+        return "".join(text[a:b] for a, b in self.spans(text))
+
+    def test_a_line_comment_is_one_span_to_the_newline(self):
+        text = "a = 1 // note\nb = 2\n"
+        self.assertEqual(self.covered(text), "// note")
+
+    def test_a_block_comment_span_crosses_lines(self):
+        text = "a\n/* one\ntwo */\nb\n"
+        self.assertEqual(self.covered(text), "/* one\ntwo */")
+
+    def test_both_quote_flavours_are_spans_including_delimiters(self):
+        text = "x = 'a' + \"b\"\n"
+        self.assertEqual(self.covered(text), "'a'\"b\"")
+
+    def test_an_escaped_quote_does_not_close_a_string(self):
+        text = "x = 'a\\'b' + 1\n"
+        self.assertEqual(self.covered(text), "'a\\'b'")
+
+    def test_an_apostrophe_inside_a_comment_opens_nothing(self):
+        text = "// it doesn't\nif (a) { b() }\n"
+        self.assertEqual(self.covered(text), "// it doesn't")
+
+    def test_template_interpolation_code_is_not_covered(self):
+        text = "x = `m ${a && b} t`\n"
+        covered = self.covered(text)
+        self.assertIn("m ", covered)
+        self.assertNotIn("&&", covered)
+
+    def test_a_string_inside_an_interpolation_is_covered(self):
+        text = "x = `m ${f('q')} t`\n"
+        covered = self.covered(text)
+        self.assertIn("'q'", covered)
+        self.assertNotIn("f(", covered)
+
+    def test_a_brace_inside_an_interpolated_string_does_not_close_it(self):
+        text = "x = `m ${f('}')} t`\n"
+        covered = self.covered(text)
+        self.assertIn("'}'", covered)
+        self.assertNotIn("f(", covered)
+
+    def test_an_escaped_backtick_does_not_close_a_template(self):
+        # Drives the escape hop inside _cb_template_hop: the whole literal,
+        # escaped delimiter included, comes back as one span.
+        text = "x = `m \\` t` + 1\n"
+        self.assertEqual(self.covered(text), "`m \\` t`")
+
+    def test_a_lone_slash_is_stepped_over_as_division(self):
+        text = "x = a / b\n"
+        self.assertEqual(self.spans(text), [])
+
+    def test_an_unterminated_string_fails_toward_raw(self):
+        self.assertIsNone(self.spans("x = 'open\n"))
+
+    def test_an_unterminated_block_comment_fails_toward_raw(self):
+        self.assertIsNone(self.spans("x = 1 /* open\n"))
+
+    def test_an_unterminated_template_fails_toward_raw(self):
+        self.assertIsNone(self.spans("x = `open\n"))
+
+    def test_an_unterminated_interpolation_fails_toward_raw(self):
+        self.assertIsNone(self.spans("x = `m ${a\n"))
+
+    def test_an_unterminated_string_inside_an_interpolation_fails(self):
+        self.assertIsNone(self.spans("x = `m ${f('open} t`\n"))
 
 
 # --------------------------------------------------------------------------

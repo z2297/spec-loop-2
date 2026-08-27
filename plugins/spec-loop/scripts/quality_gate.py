@@ -538,6 +538,152 @@ def _mask_python_literals(text):
     return "\n".join(masked)
 
 
+# --------------------------------------------------------------------------
+# Brace-language scan mask
+# --------------------------------------------------------------------------
+# Brace languages get no stdlib tokenizer, so this is a hand character
+# scanner over four constructs: the two comment forms and the three string
+# forms. Template literals are handled separately from the flat forms
+# because a ${...} interpolation holds real code -- blanking a whole template
+# deletes genuine operators and UNDER-counts a function, the dangerous
+# direction. The scanner stops short of one construct on purpose: a regex
+# literal. Telling a regex literal from a division operator needs the
+# parser's expectation of the next token, which a character scanner does not
+# have, so a lone slash outside a comment is stepped over and a regex
+# literal's interior stays visible. Two residuals follow from that, and in the
+# worst instance both point the same way, so both are stated plainly. First, a
+# quote character inside a regex literal opens a phantom string. The quote
+# alternatives exclude the newline, so the phantom cannot outlive its own
+# line: on a line carrying an odd number of quote characters it never closes
+# and the whole file falls back to raw text, but on a line carrying an even
+# number it pairs off with a later quote and can cover real operator
+# punctuation lying between the two, which lowers a count silently. Second, a
+# doubled slash inside a regex literal reads as a line comment and masks the
+# rest of that line, which lowers a count silently as well. Measured at the
+# time this landed, the sweep of regex-literal uses in this repo surfaced none
+# containing a quote character, every doubled slash the scanner treated as a
+# line comment was a genuine trailing comment after a properly closed regex
+# literal, and the scanner closes every construct it recognises in every brace
+# source here. The sweeping greps behind those statements are recorded in the
+# slice report.
+
+_CB_FLAT_RE = re.compile(
+    r"//[^\n]*"
+    r"|/\*[\s\S]*?\*/"
+    r"|'(?:\\[\s\S]|[^'\\\n])*'"
+    r'|"(?:\\[\s\S]|[^"\\\n])*"'
+)
+_CB_OPENERS = "/'\""
+_CB_TPL_RE = re.compile(r"\\[\s\S]|\$\{|`")
+_CB_DEPTH = {"{": 1, "}": -1}
+
+
+def _cb_flat_step(text, pos, stop):
+    """One scanner step at a comment or a quote opener: (next_pos, spans)
+    once the flat regex closed the construct, else None to fail toward raw
+    text. A lone slash is division or a regex literal, so it is stepped
+    over. (PURE)"""
+    m = _CB_FLAT_RE.match(text, pos, stop)
+    if m is not None:
+        return m.end(), [(m.start(), m.end())]
+    if text[pos] == "/" and not text.startswith("/*", pos):
+        return pos + 1, []
+    return None
+
+
+def _cb_step(text, pos, stop):
+    """One scanner step from `pos`: (next_pos, mask_spans), else None to fail
+    toward raw text. (PURE)"""
+    ch = text[pos]
+    if ch == "`":
+        return _cb_template_step(text, pos, stop)
+    if ch in _CB_OPENERS:
+        return _cb_flat_step(text, pos, stop)
+    return pos + 1, []
+
+
+def _cbrace_spans(text, start, stop):
+    """The mask spans over text[start:stop] as half-open (begin, end)
+    character ranges covering comment and string content, else None once a
+    construct never closes, which sends the caller back to raw text.
+    (PURE)"""
+    spans = []
+    pos = start
+    while pos < stop:
+        got = _cb_step(text, pos, stop)
+        if got is None:
+            return None
+        pos, found = got
+        spans.extend(found)
+    return spans
+
+
+def _cb_depth_delta(text, pos, got):
+    """The brace-depth change one scanner step makes: nonzero only on a plain
+    code character, so braces inside a literal or a comment are ignored.
+    (PURE)"""
+    plain = (got[0] == pos + 1) and not got[1]
+    if not plain:
+        return 0
+    return _CB_DEPTH.get(text[pos], 0)
+
+
+def _cb_interp_end(text, start, stop):
+    """The index just past the brace closing the ${ that opens at `start`,
+    paired with the mask spans found inside it, else None. Nested literals
+    and comments are stepped over with the same scanner, so a brace inside
+    one does not close the interpolation; their spans are returned here so
+    the caller reuses this single walk rather than repeating it. (PURE)"""
+    depth = 1
+    pos = start + 2
+    spans = []
+    while pos < stop:
+        got = _cb_step(text, pos, stop)
+        if got is None:
+            return None
+        depth += _cb_depth_delta(text, pos, got)
+        if depth == 0:
+            return pos + 1, spans
+        spans.extend(got[1])
+        pos = got[0]
+    return None
+
+
+def _cb_template_hop(text, m, stop, chunk):
+    """The scanner state after one non-closing hit inside a template literal:
+    (next_pos, next_chunk_start, spans). A backslash escape masks straight
+    through. A ${ ends the current masked chunk, scans the interpolation as
+    ordinary code, and restarts the chunk past its closing brace.
+    (None, None, []) once the interpolation never closes. (PURE)"""
+    if m.group(0) != "${":
+        return m.end(), chunk, []
+    got = _cb_interp_end(text, m.start(), stop)
+    if got is None:
+        return None, None, []
+    end, inner = got
+    return end, end, [(chunk, m.start())] + inner
+
+
+def _cb_template_step(text, pos, stop):
+    """The whole template literal opening at the backtick at `pos`:
+    (next_pos, mask_spans). Literal content is masked and every ${...}
+    interpolation is scanned as ordinary code, so real operators inside one
+    stay visible. None once the literal never closes. (PURE)"""
+    spans = []
+    chunk = pos
+    m = _CB_TPL_RE.search(text, pos + 1, stop)
+    while m is not None:
+        if m.group(0) == "`":
+            spans.append((chunk, m.end()))
+            return m.end(), spans
+        nxt, chunk, inner = _cb_template_hop(text, m, stop, chunk)
+        if nxt is None:
+            return None
+        spans.extend(inner)
+        m = _CB_TPL_RE.search(text, nxt, stop)
+    return None
+
+
 def _strip_for_scan(text, lang):
     """`text` with string-literal and comment content masked out, so words and
     punctuation inside literals stop being measured as real branching. Python is
