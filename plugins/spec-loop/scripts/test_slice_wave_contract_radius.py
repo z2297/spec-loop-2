@@ -42,8 +42,11 @@ FLOOR_GUARD = "m.rewritten_lines !== null && limits.min_rewritten_lines !== null
 NOT_CONFIGURED = "state: 'NOT_CONFIGURED'"
 NOT_MEASURED = "state: 'NOT_MEASURED'"
 NO_USABLE_CEILING = "state: 'NO_USABLE_CEILING'"
+WITHIN_PARTIAL = "state: 'WITHIN_PARTIAL'"
 EXCEEDED = "state: 'EXCEEDED'"
 COERCION_OPERATORS = (">=", "<=")
+NAMED_BRANCHES = (NOT_CONFIGURED, NO_USABLE_CEILING, NOT_MEASURED,
+                  WITHIN_PARTIAL, EXCEEDED)
 
 # The shipped defaults, and the declared-radius fixtures each state needs.
 # Module-level because nesting_depth is measured from raw indentation, so a
@@ -59,6 +62,9 @@ NO_CEILINGS = {"enabled": True, "max_rewrite_ratio": None,
 STRING_CEILINGS = {"enabled": True, "max_rewrite_ratio": "0.5",
                    "max_touched_existing_files": "8", "min_rewritten_lines": 150}
 STRINGY = {"rewrite_ratio": "0.9", "touched_existing_files": "12"}
+ONE_CEILING = dict(LIMITS, max_rewrite_ratio=None)
+PARTIAL = {"rewrite_ratio": 0.9, "touched_existing_files": 2, "rewritten_lines": 40}
+FILES_ONLY_DECLARED = {"touched_existing_files": 2, "rewritten_lines": 40}
 
 # Expected verdict fragments, hoisted for the same reason: a hanging
 # literal inside a test body is scored as real block nesting by the
@@ -167,6 +173,44 @@ class TestTheRadiusPredicateDecidesAndNotJustExists(WorkflowSourceTestCase):
             self.assertEqual(g["thresholds"]["max_touched_existing_files"], 8)
             self.assertEqual(g["thresholds"]["min_rewritten_lines"], 150)
 
+    def test_a_declared_number_with_no_usable_ceiling_is_never_within_one(self):
+        # The mirror of NO_USABLE_CEILING: one mistyped ceiling beside one
+        # valid one used to short-circuit on the null side and then report
+        # WITHIN about a ratio no comparison had touched.
+        got = radius_status([[PARTIAL, ONE_CEILING]])
+        self.assertEqual(got[0]["state"], "WITHIN_PARTIAL")
+        self.assertEqual(got[0]["compared"], ["touched_existing_files"])
+        self.assertEqual(got[0]["skipped"], ["rewrite_ratio"])
+
+    def test_the_partial_verdict_names_the_dimension_it_never_compared(self):
+        got = radius_status([[PARTIAL, ONE_CEILING]])
+        self.assertIn("rewrite_ratio", got[0]["reason"])
+        self.assertIn("no usable ceiling", got[0]["reason"])
+
+    def test_a_partial_verdict_fails_open_and_exceeds_nothing(self):
+        got = radius_status([[PARTIAL, ONE_CEILING]])
+        self.assertEqual(got[0]["exceeded"], [])
+        self.assertNotEqual(got[0]["state"], "EXCEEDED")
+
+    def test_a_fully_compared_plan_keeps_todays_within_verdict_exactly(self):
+        got = radius_status([[AT_CEILING, LIMITS], [ZEROED, LIMITS]])
+        self.assertEqual([g["state"] for g in got], ["WITHIN"] * 2)
+        self.assertEqual(got[0]["compared"], BOTH_CEILINGS)
+        self.assertEqual(got[0]["skipped"], [])
+
+    def test_a_breach_beside_an_uncompared_number_still_says_which(self):
+        got = radius_status([[BIG, ONE_CEILING]])
+        self.assertEqual(got[0]["state"], "EXCEEDED")
+        self.assertEqual(got[0]["skipped"], ["rewrite_ratio"])
+        self.assertIn("rewrite_ratio", got[0]["reason"])
+
+    def test_a_number_the_plan_never_declared_is_not_reported_as_skipped(self):
+        # Silence is not a skipped comparison: only a DECLARED number can be
+        # a number that went uncompared.
+        got = radius_status([[FILES_ONLY_DECLARED, LIMITS]])
+        self.assertEqual(got[0]["state"], "WITHIN")
+        self.assertEqual(got[0]["skipped"], [])
+
 
 # ---- the guards, pinned in source ----
 
@@ -191,8 +235,8 @@ class TestNoRadiusComparisonIsReachedByCoercion(WorkflowSourceTestCase):
     def test_a_number_is_type_checked_before_it_is_ever_a_measurement(self):
         self.assertIn(RADIUS_NUM, self.region())
 
-    def test_the_four_no_fire_states_exist_as_their_own_named_branches(self):
-        for marker in (NOT_CONFIGURED, NO_USABLE_CEILING, NOT_MEASURED, EXCEEDED):
+    def test_the_five_no_fire_states_exist_as_their_own_named_branches(self):
+        for marker in NAMED_BRANCHES:
             self.assertIn(marker, self.region())
 
 
@@ -294,6 +338,8 @@ ONE_DOOR = "--print-config"
 EVENT_IN_LIST = "`refactor-radius`"
 PAYLOAD_BULLET = "**`refactor-radius`** payload"
 PROXY_LIMIT = "a proxy declared before implementation, not a measured diff"
+PARTIAL_STATE_DOC = "`WITHIN_PARTIAL`"
+COVERAGE_KEYS_DOC = "compared[], skipped[]"
 
 
 class TestTheThresholdsReachTheWorkflowOnlyThroughCtx(WorkflowSourceTestCase):
@@ -314,6 +360,13 @@ class TestTheThresholdsReachTheWorkflowOnlyThroughCtx(WorkflowSourceTestCase):
 
     def test_the_contract_states_the_pre_execution_proxy_limit_plainly(self):
         self.assertIn(PROXY_LIMIT, RUN_STATE_MD.read_text(encoding="utf-8"))
+
+    def test_the_partial_coverage_state_is_documented_in_its_single_home(self):
+        # A state a reader of the event cannot look up is a state that gets
+        # read as a typo for WITHIN.
+        text = RUN_STATE_MD.read_text(encoding="utf-8")
+        self.assertIn(PARTIAL_STATE_DOC, text)
+        self.assertIn(COVERAGE_KEYS_DOC, text)
 
 
 if __name__ == "__main__":  # pragma: no cover
