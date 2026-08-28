@@ -104,7 +104,7 @@ prose about the slice.
                                 // answers map reproduces the same id. Answers are keyed
                                 // by this id verbatim; latestAnswer reads the newest
                                 // answered round back into the resumed prompts.
-  "trigger": "ambiguity | material-assumption | review-block | council-objection | quality-gate-block | budget-exhausted | internal-error",
+  "trigger": "ambiguity | material-assumption | review-block | council-objection | quality-gate-block | refactor-scope | budget-exhausted | internal-error",
   "title": "<short title>",
   "context": "<what the loop was doing and why it cannot decide>",
   "question": "<the precise question>",
@@ -127,6 +127,13 @@ call on a hard token or rate limit) that the record does not pretend to rule out
 a catch-all for every other failure: a failure the loop can name keeps the trigger that
 names it, so a spent replan stays `council-objection` and a blocked task — including a task
 dispatch that returned no result — stays `ambiguity`. Neither is a judgment trigger.
+
+`refactor-scope` is the one trigger the workflow raises on its own arithmetic rather than on
+an agent's judgment: at plan time, when the plan's declared refactor-to-feature ratio exceeds
+the configured threshold. It IS a judgment trigger — its answer is injected back into the
+plan prompt — because the only useful answer is a human trade-off between shipping the
+refactor with the feature and splitting it out. An absent or unmeasured ratio never raises
+it: not-measured proceeds and is recorded as null.
 
 ## `events.jsonl` — the machine channel
 

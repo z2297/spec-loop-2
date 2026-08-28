@@ -122,6 +122,7 @@ ESCALATION_TRIGGERS = (
     "review-block",
     "council-objection",
     "quality-gate-block",
+    "refactor-scope",
     "budget-exhausted",
     "internal-error",
 )

@@ -111,11 +111,11 @@ FINDING_CATEGORIES = "category: { enum: ["
 # The trigger enum has six homes: this line, the ESCALATION_TRIGGERS tuple in
 # run_state.py, run_metrics.py and dashboard_server.py, and two PROSE
 # enumerations - the fallback agent's escalation section and the run-state
-# contract reference - located by the two locator constants below. Earlier
-# this comment said five and then listed four; the guard that names it now
-# asserts over all six.
+# contract reference - located by the two locator constants below. Earlier this
+# comment said five and then listed four; the guard that names it now asserts
+# over all six homes, and the enum they carry is now eight values wide.
 TRIGGER_ENUM_LINE = "trigger: { enum: ["
-TRIGGER_PROSE_LEAD = "one of the seven triggers ("
+TRIGGER_PROSE_LEAD = "one of the eight triggers ("
 TRIGGER_UNION_PREFIX = '"trigger": "'
 FALLBACK_MD = Path(__file__).resolve().parents[1] / "agents" / "slice-worker-fallback.md"
 RUN_STATE_MD = Path(__file__).resolve().parents[1] / "references" / "run-state-v2.md"
