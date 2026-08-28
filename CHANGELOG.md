@@ -114,6 +114,20 @@ All notable changes to the spec-loop plugin are documented here. The format is
   id it was handed. `run_metrics.merge_escalation_records` needed no logic change — it keys on
   the whole id, so distinct rounds were already distinct records and are now pinned by test —
   and its docstring says so.
+- **Three guards that did not exercise what they claimed to cover.** The crash-context
+  truncation test renders through the real `run_state.render_escalation()` instead of
+  re-implementing its collapse-and-truncate, and the duplicated copy of the render limit is
+  deleted, so the test reads whatever limit the renderer really applies and cannot drift from
+  it. The substring-safety test drives the real legacy matcher over a v1 `escalations.md`
+  body, rather than comparing two Python literals to each other, so a change to the matcher's
+  containment semantics turns it red. And the trigger-enum guard now covers the enum's true
+  number of homes — six: the three Python tuples in `run_state.py`, `run_metrics.py` and
+  `dashboard_server.py`, the workflow's own enum line, and two PROSE homes —
+  `agents/slice-worker-fallback.md`, the enumeration a worker reads before it names a
+  trigger, and `references/run-state-v2.md`, the `EscalationRecord`'s authoritative shape
+  doc. It previously held four surfaces against each other and named five. The prose pins
+  collapse whitespace on both sides, so a whitespace re-flow of either document leaves them
+  intact.
 
 ## [2.2.1] - 2026-08-27
 ### Added
