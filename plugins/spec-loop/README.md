@@ -96,13 +96,16 @@ desktop alert so a finished run is never silently parked overnight.
 
 ## Escalations
 
-The loop surfaces a question only on the escalation-gate's five triggers:
+The loop surfaces a question only on the escalation-gate's six triggers:
 genuine ambiguity, a material assumption, an unfixable review block, a
-council objection, or an unfixable quality-gate block — after checking prior
-runs for a precedent that already answers it. Everything else proceeds and is
-logged as a decision event with rationale and reversibility. All open
-escalations arrive as ONE question round per wave boundary, recommended
-default first.
+council objection, an unfixable quality-gate block, or a plan-time
+refactor-scope breach — after checking prior runs for a precedent that
+already answers it. The last is the only one the wave raises from its own
+arithmetic: the slice planner declares how much existing code its plan
+rewrites, and the workflow compares those numbers to the configured ceiling
+before a single line is implemented. Everything else proceeds and is logged
+as a decision event with rationale and reversibility. All open escalations
+arrive as ONE question round per wave boundary, recommended default first.
 
 ## Quality gate
 
