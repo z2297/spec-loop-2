@@ -263,6 +263,18 @@ function radiusNumbers(radius) {
   }
 }
 
+// The planner's one-sentence account of how it counted, or null. DISPLAY-ONLY
+// and deliberately kept OUT of `measured`: no comparison, threshold or state
+// reads it, and `measured` is the object two test layers deep-equal against
+// three numeric nulls. A non-string is dropped rather than stringified,
+// because "17" as a basis sentence is worse than an honest absence — the
+// whole point of the field is that a human weighing the trade-off can see HOW
+// the number was reached. (PURE)
+const radiusBasis = (radius) => {
+  if (!radius || typeof radius !== 'object' || Array.isArray(radius)) return null
+  return (typeof radius.basis === 'string' && radius.basis) ? radius.basis : null
+}
+
 // Which measured metrics sit ABOVE their ceiling. Both sides are checked for
 // null before the one comparison, so no comparison is ever reached by
 // coercion. Strictly greater-than: both settings are MAXIMA, so a plan
@@ -285,17 +297,36 @@ function radiusBelowFloor(m, limits) {
   return known && m.rewritten_lines < limits.min_rewritten_lines
 }
 
-// Six states, none collapsed into another, and only EXCEEDED halts anything.
+// Whether an enabled block carries NO comparable ceiling at all. Only the two
+// MAXIMA count: min_rewritten_lines can only suppress a fire, never cause one,
+// so its absence never makes a configuration unusable. An explicit === null on
+// each side rather than a falsy test, because a ceiling of 0 is a real, if
+// severe, ceiling. Its own named predicate rather than an inline condition,
+// like radiusBreaches and radiusBelowFloor beside it: inlined, the branch took
+// refactorRadiusStatus over its cognitive-complexity threshold. (PURE)
+function radiusNoCeiling(limits) {
+  return limits.max_rewrite_ratio === null && limits.max_touched_existing_files === null
+}
+
+// Seven states, none collapsed into another, and only EXCEEDED halts anything.
 // The two halves of this check have opposite answers on purpose: a
-// measurement that is missing, unconfigured or disabled FAILS OPEN (proceed,
-// and the caller records it loudly), while a measurement that succeeded and
-// is over its ceiling FAILS CLOSED (halt and ask). Collapsing them would
-// either halt every run with an old controller or halt none of them. (PURE)
+// measurement that is missing, unconfigured, unusable or disabled FAILS OPEN
+// (proceed, and the caller records it loudly), while a measurement that
+// succeeded and is over its ceiling FAILS CLOSED (halt and ask). Collapsing
+// them would either halt every run with an old controller or halt none of
+// them. NO_USABLE_CEILING is checked BEFORE NOT_MEASURED deliberately: a
+// mistyped ceiling is an operator-config defect, and blaming the planner for
+// it would leave the real defect invisible. It is its own state rather than a
+// WITHIN, because "every declared number is at or under its ceiling" is a
+// claim no comparison supported when there is no ceiling to compare against —
+// a mistyped threshold used to report success while silently never firing.
+// (PURE)
 function refactorRadiusStatus(radius, limits) {
   const measured = radiusNumbers(radius)
-  const base = { measured, thresholds: limits, exceeded: [] }
+  const base = { measured, basis: radiusBasis(radius), thresholds: limits, exceeded: [] }
   if (!limits) return { ...base, thresholds: null, state: 'NOT_CONFIGURED', reason: 'ctx.refactor_radius is absent or is not an object, so no ceiling was compared' }
   if (!limits.enabled) return { ...base, state: 'DISABLED', reason: 'refactor_radius.enabled is false in the effective gate config' }
+  if (radiusNoCeiling(limits)) return { ...base, state: 'NO_USABLE_CEILING', reason: 'refactor_radius is configured and enabled but neither ceiling is a usable number, so nothing was compared' }
   if (measured.rewrite_ratio === null && measured.touched_existing_files === null) return { ...base, state: 'NOT_MEASURED', reason: 'the plan declared no usable refactor-radius number' }
   const exceeded = radiusBreaches(measured, limits)
   if (!exceeded.length) return { ...base, state: 'WITHIN', reason: 'every declared number is at or under its ceiling' }
@@ -671,7 +702,7 @@ function doneResult(slice, state, status, extra) {
 // human answering this needs the measurements AND the ceilings they were
 // judged against in the record itself, not a pointer to a config file they
 // would have to resolve by hand. (PURE)
-const radiusPhrase = (v) => `declared rewrite ratio ${v.measured.rewrite_ratio}, touched existing files ${v.measured.touched_existing_files}, rewritten lines ${v.measured.rewritten_lines}; ceilings ${v.thresholds.max_rewrite_ratio} ratio / ${v.thresholds.max_touched_existing_files} files, noise floor ${v.thresholds.min_rewritten_lines} lines`
+const radiusPhrase = (v) => `declared rewrite ratio ${v.measured.rewrite_ratio}, touched existing files ${v.measured.touched_existing_files}, rewritten lines ${v.measured.rewritten_lines}; ceilings ${v.thresholds.max_rewrite_ratio} ratio / ${v.thresholds.max_touched_existing_files} files, noise floor ${v.thresholds.min_rewritten_lines} lines; the planner counted this as: ${v.basis === null ? 'not stated' : v.basis}`
 
 // The trade-off ask. Three options because a yes/no would leave a human who
 // wants neither with nothing to pick, and because each of the three costs
@@ -702,13 +733,23 @@ function refactorAsk(slice, verdict) {
 // decisions-log renderer reads the first text-ish field of a payload
 // (SUMMARY_TEXT_KEYS), so the line is prose rather than a JSON blob. (PURE)
 function radiusEvent(slice, verdict, answered) {
+  // A suppression is a fire that did NOT happen. The flag used to be set from
+  // `answered` alone, so an ordinary post-answer success — the human says
+  // narrow it, the planner narrows, the verdict comes back WITHIN — emitted an
+  // event claiming a suppression that never occurred, and anyone auditing
+  // which halts a human had waived would have counted it. Only EXCEEDED can be
+  // suppressed, because only EXCEEDED halts. The key stays ABSENT rather than
+  // false when nothing was suppressed: `false` would be an explicit claim
+  // about a state in which suppression is not even possible.
+  const suppressed = answered && verdict.state === 'EXCEEDED'
   return {
     scope: slice.id, type: 'refactor-radius',
     payload: {
       summary: `refactor radius ${verdict.state}: ${verdict.reason}`,
       state: verdict.state, exceeded: verdict.exceeded,
       measured: verdict.measured, thresholds: verdict.thresholds,
-      ...(answered ? { suppressed_by_answer: true } : {}),
+      basis: verdict.basis,
+      ...(suppressed ? { suppressed_by_answer: true } : {}),
     },
   }
 }
@@ -720,7 +761,13 @@ function radiusEvent(slice, verdict, answered) {
 // declarations, so a blowup discovered mid-implementation is invisible here.
 function refactorRadiusGate(slice, state, plan) {
   const verdict = refactorRadiusStatus(plan.refactor_radius, refactorLimits(CTX))
-  const answered = answerKeysFor(slice.id, 'refactor-scope').length > 0
+  // A truthy ANSWER, not the presence of an answer KEY. The same map reaches
+  // the planner through answerFor()/latestAnswer(), which both require a
+  // truthy value, so an empty or null entry used to disarm this halt
+  // permanently for the slice while injecting nothing into the prompt the
+  // halt exists to change — the question disappeared and the answer never
+  // arrived. This is the shape resolveCouncilObjection already uses.
+  const answered = !!latestAnswer(slice.id, 'refactor-scope')
   state.events.push(radiusEvent(slice, verdict, answered))
   // Answered means the human already ruled on this slice's radius. Raising
   // the same question again would deadlock the slice at the same stage
@@ -915,18 +962,41 @@ async function recritiqueRevisedPlan(slice, state, plan) {
   return v || failClosedCritique()
 }
 
+// The five judgements a re-check produces, computed once in one place: was a
+// safety flag raised, is there a readable reason for it, does the revision
+// proceed, and which reason does the human get. Split out of
+// acceptRevisedPlan, which carried all of it plus two escalation shapes at
+// cyclomatic 12 / cognitive 22 against thresholds of 10 and 15 — a function a
+// reviewer had to hold entirely in their head to check any one of its
+// branches. `rc` travels back out in the result so the caller never has to
+// pass both the outcome and the critique to the next helper. (PURE)
+function recheckOutcome(rc, ob) {
+  const flagged = !!(rc.safety && rc.safety.flag === true)
+  const safetyReason = flagged && typeof rc.safety.reason === 'string' ? rc.safety.reason : null
+  const accepted = rc.verdict !== 'OBJECT' && !flagged
+  const reason = accepted ? null : (safetyReason || objectionSource(rc, ob).objection.reason)
+  return { rc, flagged, safetyReason, accepted, reason }
+}
+
+// Which of the two escalation shapes a rejected revision gets. The re-check's
+// OWN safety reason wins whenever it exists, because falling back to the
+// original council objection would describe the wrong risk to the human: the
+// concern the revision was written to fix, not the one the re-check just
+// raised. `o` and `ctx` travel as objects because parameter_count's threshold
+// is 4 and this decision genuinely needs five values.
+function recheckStop(slice, state, o, ctx) {
+  if (o.safetyReason) return safetyRecheckEscalation(slice, state, o.safetyReason)
+  return councilObjectionEscalation(slice, state, objectionSource(o.rc, ctx.ob), o.flagged || ctx.safety)
+}
+
 async function acceptRevisedPlan(slice, state, ctx) {
   const { revised, ob, safety } = ctx
   if (!isRevisedPlan(revised)) return { stop: councilObjectionEscalation(slice, state, ob, safety) }
   const rc = await recritiqueRevisedPlan(slice, state, revised)
-  const flagged = !!(rc.safety && rc.safety.flag === true)
-  const safetyReason = flagged && rc.safety && typeof rc.safety.reason === 'string' ? rc.safety.reason : null
-  const accepted = rc.verdict !== 'OBJECT' && !flagged
-  const reason = accepted ? null : (safetyReason || objectionSource(rc, ob).objection.reason)
-  state.events.push({ scope: slice.id, type: 'replan-recheck', payload: { verdict: rc.verdict, safety: flagged, accepted, reason, safety_reason: safetyReason } })
-  if (accepted) return { plan: revised }
-  if (safetyReason) return { stop: safetyRecheckEscalation(slice, state, safetyReason) }
-  return { stop: councilObjectionEscalation(slice, state, objectionSource(rc, ob), flagged || safety) }
+  const o = recheckOutcome(rc, ob)
+  state.events.push({ scope: slice.id, type: 'replan-recheck', payload: { verdict: rc.verdict, safety: o.flagged, accepted: o.accepted, reason: o.reason, safety_reason: o.safetyReason } })
+  if (o.accepted) return { plan: revised }
+  return { stop: recheckStop(slice, state, o, ctx) }
 }
 
 // The council OBJECT branch: an unanswered fixable objection gets one replan

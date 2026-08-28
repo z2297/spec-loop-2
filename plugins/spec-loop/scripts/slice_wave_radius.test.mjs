@@ -168,3 +168,172 @@ test("the human answer reaches the planner prompt that raised the question", asy
   assert.ok(seen[0].includes("NARROW-IT-DOWN"));
   assert.ok(seen[0].includes('HUMAN ANSWER to your earlier "refactor-scope" escalation'));
 });
+
+// ── the planner's basis, display-only ─────────────────────────────────────
+// `basis` is the planner's one-sentence account of HOW it counted. The human
+// weighing "approve / narrow / carve out" cannot weigh a number whose
+// derivation is invisible, so it must reach both the event and the record.
+// It is DISPLAY-ONLY: no verdict may move on it, which is why the two tests
+// below pin the same state with and without it.
+const BASIS_TEXT = "counted with git diff --stat against main";
+const WITH_BASIS = { ...BIG, basis: BASIS_TEXT };
+const NO_BASIS = { rewrite_ratio: 0.9, touched_existing_files: 12, rewritten_lines: 900 };
+
+test("the radius event carries the planner's basis sentence verbatim", async () => {
+  const ev = await only(WITH_BASIS, RADIUS_DEFAULTS);
+  assert.equal(ev.payload.basis, BASIS_TEXT);
+});
+
+test("an omitted basis is recorded as null and never as an empty string", async () => {
+  const ev = await only(NO_BASIS, RADIUS_DEFAULTS);
+  assert.equal(ev.payload.basis, null);
+  assert.equal(ev.payload.state, "EXCEEDED");
+});
+
+test("a non-string basis is dropped rather than interpolated into the record", async () => {
+  const ev = await only({ ...BIG, basis: 17 }, RADIUS_DEFAULTS);
+  assert.equal(ev.payload.basis, null);
+});
+
+test("the escalation context tells the human how the planner counted", async () => {
+  const rec = record(await evaluate(WITH_BASIS, RADIUS_DEFAULTS));
+  assert.ok(rec.context.includes(BASIS_TEXT));
+});
+
+test("an unstated basis says so in the record instead of printing null", async () => {
+  const rec = record(await evaluate(NO_BASIS, RADIUS_DEFAULTS));
+  assert.ok(rec.context.includes("not stated"));
+  assert.equal(rec.context.includes("undefined"), false);
+});
+
+test("the basis never moves a verdict: the same numbers reach the same state", async () => {
+  const withB = await only(WITH_BASIS, RADIUS_DEFAULTS);
+  const withoutB = await only(NO_BASIS, RADIUS_DEFAULTS);
+  assert.equal(withB.payload.state, withoutB.payload.state);
+  assert.deepEqual(withB.payload.exceeded, withoutB.payload.exceeded);
+  assert.deepEqual(withB.payload.measured, withoutB.payload.measured);
+});
+
+// ── an answer only counts when it says something ──────────────────────────
+// The same answers map reaches the planner through answerFor/latestAnswer,
+// which both require a TRUTHY value. Gating the halt on KEY presence let an
+// empty or null entry disarm the halt permanently for that slice while
+// injecting nothing into the planner's prompt: the question vanished and the
+// answer never arrived. resolveCouncilObjection's `if (latestAnswer(...))`
+// is the precedent this now matches.
+const EMPTY_ANSWERS = [
+  { "s1:refactor-scope": "" },
+  { "s1:refactor-scope": null },
+];
+
+test("an empty answer value does not disarm the halt", async () => {
+  const result = await evaluate(BIG, RADIUS_DEFAULTS, EMPTY_ANSWERS[0]);
+  assert.equal(result.status, "ESCALATED");
+  assert.equal(record(result).trigger, "refactor-scope");
+});
+
+test("a null answer value does not disarm the halt", async () => {
+  const result = await evaluate(BIG, RADIUS_DEFAULTS, EMPTY_ANSWERS[1]);
+  assert.equal(result.status, "ESCALATED");
+  assert.equal(record(result).trigger, "refactor-scope");
+});
+
+test("an empty answer leaves no suppression claim on the event either", async () => {
+  const result = await evaluate(BIG, RADIUS_DEFAULTS, EMPTY_ANSWERS[0]);
+  assert.equal(radiusEvents(result)[0].payload.suppressed_by_answer, undefined);
+});
+
+test("an empty round-1 answer still lets a real round-2 answer disarm the halt", async () => {
+  // The empty key still counts a ROUND (escRound reads keys, not values), so
+  // the re-raised record is round 2 and its answer is keyed with the suffix.
+  const answers = { "s1:refactor-scope": "", "s1:refactor-scope:2": "approved" };
+  const result = await evaluate(BIG, RADIUS_DEFAULTS, answers);
+  assert.equal(record(result), undefined);
+});
+
+// ── a configured ceiling that cannot be compared ──────────────────────────
+// A mistyped ceiling ("0.5" as a string, or a key spelled wrong) survives
+// refactorLimits as null. WITHIN then claimed "every declared number is at or
+// under its ceiling" — a claim no comparison supported — so the gate reported
+// success while silently never firing again. That is exactly the invisible
+// permanent narrowing this repo's knowledge graph already names.
+const NO_CEILINGS = {
+  enabled: true, max_rewrite_ratio: null,
+  max_touched_existing_files: null, min_rewritten_lines: 150,
+};
+const STRING_CEILINGS = {
+  enabled: true, max_rewrite_ratio: "0.5",
+  max_touched_existing_files: "8", min_rewritten_lines: 150,
+};
+
+test("a configured block with no usable ceiling never claims a plan is within one", async () => {
+  const ev = await only(BIG, NO_CEILINGS);
+  assert.equal(ev.payload.state, "NO_USABLE_CEILING");
+  assert.equal(ev.payload.state === "WITHIN", false);
+});
+
+test("string ceilings are not ceilings and are reported as unusable", async () => {
+  const ev = await only(BIG, STRING_CEILINGS);
+  assert.equal(ev.payload.state, "NO_USABLE_CEILING");
+  assert.equal(ev.payload.thresholds.max_rewrite_ratio, null);
+});
+
+test("the unusable-ceiling summary says plainly that nothing was compared", async () => {
+  const ev = await only(BIG, NO_CEILINGS);
+  assert.ok(ev.payload.summary.startsWith("refactor radius NO_USABLE_CEILING"));
+  assert.ok(ev.payload.summary.includes("nothing was compared"));
+});
+
+test("an unusable ceiling fails open: the slice proceeds and raises nothing", async () => {
+  const result = await evaluate(BIG, NO_CEILINGS);
+  assert.equal(record(result), undefined);
+  assert.deepEqual(radiusEvents(result)[0].payload.exceeded, []);
+});
+
+test("one usable ceiling out of two is still a usable configuration", async () => {
+  const half = { ...RADIUS_DEFAULTS, max_rewrite_ratio: null };
+  const ev = await only(BIG, half);
+  assert.equal(ev.payload.state, "EXCEEDED");
+  assert.deepEqual(ev.payload.exceeded, ["touched_existing_files"]);
+});
+
+test("a missing noise floor alone never makes a ceiling unusable", async () => {
+  const ev = await only(BIG, { ...RADIUS_DEFAULTS, min_rewritten_lines: null });
+  assert.equal(ev.payload.state, "EXCEEDED");
+});
+
+// ── suppression is a fire that did not happen ─────────────────────────────
+// The flag was set from `answered` alone, so an ordinary post-answer success —
+// human says narrow it, planner narrows, verdict WITHIN — emitted an event
+// claiming a suppression that never occurred, and a reader auditing which
+// halts a human had waived would have counted it.
+const APPROVED = { "s1:refactor-scope": "approved, go ahead" };
+
+test("a within-ceiling replan after an answer claims no suppression", async () => {
+  const ev = await only(SMALL, RADIUS_DEFAULTS, APPROVED);
+  assert.equal(ev.payload.state, "WITHIN");
+  assert.equal(ev.payload.suppressed_by_answer, undefined);
+});
+
+test("a below-floor breach after an answer claims no suppression either", async () => {
+  const ev = await only(TINY, RADIUS_DEFAULTS, APPROVED);
+  assert.equal(ev.payload.state, "BELOW_FLOOR");
+  assert.equal(ev.payload.suppressed_by_answer, undefined);
+});
+
+test("an unconfigured evaluation after an answer claims no suppression", async () => {
+  const ev = await only(BIG, undefined, APPROVED);
+  assert.equal(ev.payload.state, "NOT_CONFIGURED");
+  assert.equal(ev.payload.suppressed_by_answer, undefined);
+});
+
+test("only a real breach an answer waived is marked suppressed", async () => {
+  const ev = await only(BIG, RADIUS_DEFAULTS, APPROVED);
+  assert.equal(ev.payload.state, "EXCEEDED");
+  assert.equal(ev.payload.suppressed_by_answer, true);
+});
+
+test("the suppression key is absent rather than false when nothing was suppressed", async () => {
+  const ev = await only(SMALL, RADIUS_DEFAULTS, APPROVED);
+  assert.equal(Object.keys(ev.payload).includes("suppressed_by_answer"), false);
+});
