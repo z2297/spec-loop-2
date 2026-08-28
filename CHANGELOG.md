@@ -34,6 +34,21 @@ All notable changes to the spec-loop plugin are documented here. The format is
   value that fails that coercion, plus a value that coerces cleanly and lands at or below the
   tier default. Documented in `commands/spec-loop.md`
   step 7 and `references/run-state-v2.md`.
+- **The quality gate counts branch keywords in code, not in prose.** `quality_gate.py` now
+  masks the content of string literals and comments before it scans a source, so a branch word
+  or an operator character inside a docstring, a comment or a message string no longer inflates
+  that file's complexity. Python is masked through the stdlib `tokenize`; four JavaScript and
+  TypeScript extensions — `.js`, `.mjs`, `.cjs`, `.ts`, deliberately not `.jsx` or `.tsx`, whose
+  text nodes the scanner has no model of — through a hand scanner that PRESERVES `${}`
+  interpolation code, since an interpolation holds real executable code that must stay counted.
+  Every other brace language, and every mask failure, falls back to the raw text — the
+  over-counting direction, which is the safe one to fail in. Fills are a non-whitespace
+  sentinel on purpose: a whitespace fill would turn masked prose into indentation and RAISE a
+  whitespace-derived metric. The honest limits. The mask moves `cyclomatic` and `cognitive` in
+  one direction only, down, and it leaves `nesting_depth`, `method_lines` and function spans
+  exactly equal — no file passes a threshold it was failing on those. And it does not rescue
+  `globToRe`, whose cognitive complexity measured 25 before the mask and measures 17 after,
+  against a threshold of 15: still over.
 
 ### Changed
 - **The lost-slice escalation asks the three-way question its options already offered.** The
