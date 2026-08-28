@@ -11,31 +11,30 @@ test_slice_wave_contract.py, because a substring assertion proves a guard is
 present and nothing at all about what it decides.
 
 A fourth `test_slice_wave_contract*.py` module rather than a class in an
-existing one: `slice_wave_contract_base.py` sits at 299 non-blank lines and
+existing one: `slice_wave_contract_base.py` sits at 298 non-blank lines and
 the quality gate's `class_lines` threshold is 300 whole-file non-blank lines,
 so every constant below is module-local by necessity as well as by the
-snippet-as-named-constant rule.
+snippet-as-named-constant rule. The `basis`-field checks live in a fifth
+module, test_slice_wave_contract_radius_basis.py, for the same reason: this
+file crossed 300 non-blank lines once that class was added here, and the
+shared node driver moved to slice_wave_contract_radius_driver.py so both
+files can execute refactorRadiusStatus() without one importing a TestCase
+out of the other.
 
 Usage:
     python3 -m unittest discover -s plugins/spec-loop/scripts \\
         -p 'test_slice_wave_contract_radius.py'
 """
 
-import json
-import os
-import shutil
-import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from slice_wave_contract_base import COMMAND_MD, RUN_STATE_MD, WorkflowSourceTestCase  # noqa: E402
+from slice_wave_contract_radius_driver import RADIUS_START, RADIUS_END, radius_status  # noqa: E402
 
-RADIUS_START = "const RADIUS_NULL ="
-RADIUS_END = "function scopeRecord("
 RADIUS_NUM = ("const radiusNum = (v) => "
               "(typeof v === 'number' && Number.isFinite(v)) ? v : null")
 RATIO_GUARD = "const over = (v, max) => v !== null && max !== null && v > max"
@@ -45,15 +44,6 @@ NOT_MEASURED = "state: 'NOT_MEASURED'"
 NO_USABLE_CEILING = "state: 'NO_USABLE_CEILING'"
 EXCEEDED = "state: 'EXCEEDED'"
 COERCION_OPERATORS = (">=", "<=")
-
-# The extracted radius block plus a driver that judges each [plan, ctx] pair.
-# %s is the function source, then the JSON case list - the same two-slot shape
-# SCOPE_DRIVER uses in slice_wave_contract_base.py.
-RADIUS_DRIVER = """%s
-const cases = %s
-const run = (c) => refactorRadiusStatus(c[0], refactorLimits({ refactor_radius: c[1] }))
-console.log(JSON.stringify(cases.map(run)))
-"""
 
 # The shipped defaults, and the declared-radius fixtures each state needs.
 # Module-level because nesting_depth is measured from raw indentation, so a
@@ -69,12 +59,6 @@ NO_CEILINGS = {"enabled": True, "max_rewrite_ratio": None,
 STRING_CEILINGS = {"enabled": True, "max_rewrite_ratio": "0.5",
                    "max_touched_existing_files": "8", "min_rewritten_lines": 150}
 STRINGY = {"rewrite_ratio": "0.9", "touched_existing_files": "12"}
-RADIUS_BASIS_GUARD = "(typeof radius.basis === 'string' && radius.basis) ? radius.basis : null"
-BASIS_IN_BASE = "basis: radiusBasis(radius)"
-BASIS_IN_EVENT = "basis: verdict.basis,"
-BASIS_TEXT = "counted with git diff --stat against main"
-WITH_BASIS = dict(BIG, basis=BASIS_TEXT)
-BAD_BASIS = dict(BIG, basis=17)
 
 # Expected verdict fragments, hoisted for the same reason: a hanging
 # literal inside a test body is scored as real block nesting by the
@@ -94,70 +78,52 @@ class TestTheRadiusPredicateDecidesAndNotJustExists(WorkflowSourceTestCase):
     reads the verdicts back: absence, disablement, an unusable ceiling, an
     unmeasured plan, a plan at its ceiling, a breach, and a noise-floor one."""
 
-    def radius_status(self, cases):
-        """refactorRadiusStatus() applied to each [plan, ctx] pair by node."""
-        node = shutil.which("node")
-        if not node:
-            self.skipTest("node is not available on this machine")
-        source = self.between(RADIUS_START, RADIUS_END)
-        fd, path = tempfile.mkstemp(suffix=".mjs")
-        try:
-            with os.fdopen(fd, "w") as fh:
-                fh.write(RADIUS_DRIVER % (source, json.dumps(cases)))
-            proc = subprocess.run(
-                [node, path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            out = proc.stdout.decode()
-            self.assertEqual(proc.returncode, 0, "node failed:\n%s" % (out,))
-            return json.loads(out)
-        finally:
-            os.unlink(path)
-
     def test_an_absent_ctx_block_is_not_configured_and_compares_nothing(self):
         # In order: no block at all, a string where an object belongs, and an
         # array. None of the three is a ceiling, and guessing the shipped
         # defaults here would give the repo two sources of truth for a number
         # the operator is invited to tune.
-        got = self.radius_status([[BIG, None], [BIG, "0.5"], [BIG, [0.5]]])
+        got = radius_status([[BIG, None], [BIG, "0.5"], [BIG, [0.5]]])
         self.assertEqual([g["state"] for g in got], ["NOT_CONFIGURED"] * 3)
         self.assertEqual([g["thresholds"] for g in got], [None, None, None])
         self.assertEqual([g["exceeded"] for g in got], [[], [], []])
 
     def test_a_disabled_block_never_fires_however_large_the_numbers(self):
-        got = self.radius_status([[BIG, dict(LIMITS, enabled=False)]])
+        got = radius_status([[BIG, dict(LIMITS, enabled=False)]])
         self.assertEqual(got[0]["state"], "DISABLED")
 
     def test_an_absent_plan_block_is_not_measured_with_three_explicit_nulls(self):
         # PLAN_RESULT.required is ['status'] only, so all three reads are
         # optional-field reads: absent, empty and array-shaped all land on the
         # same fail-open state rather than throwing or inventing a zero.
-        got = self.radius_status([[None, LIMITS], [{}, LIMITS], [[1], LIMITS]])
+        got = radius_status([[None, LIMITS], [{}, LIMITS], [[1], LIMITS]])
         self.assertEqual([g["state"] for g in got], ["NOT_MEASURED"] * 3)
         self.assertEqual(got[0]["measured"], THREE_NULLS)
 
     def test_declared_zeros_are_a_measurement_and_never_read_as_absence(self):
-        got = self.radius_status([[ZEROED, LIMITS]])
+        got = radius_status([[ZEROED, LIMITS]])
         self.assertEqual(got[0]["state"], "WITHIN")
         self.assertEqual(got[0]["measured"]["rewrite_ratio"], 0)
 
     def test_string_numbers_are_not_measurements_and_are_never_coerced(self):
-        got = self.radius_status([[STRINGY, LIMITS]])
+        got = radius_status([[STRINGY, LIMITS]])
         self.assertEqual(got[0]["state"], "NOT_MEASURED")
         self.assertIsNone(got[0]["measured"]["rewrite_ratio"])
 
     def test_a_plan_exactly_at_both_ceilings_is_within_and_does_not_halt(self):
-        got = self.radius_status([[AT_CEILING, LIMITS]])
+        got = radius_status([[AT_CEILING, LIMITS]])
         self.assertEqual(got[0]["state"], "WITHIN")
 
     def test_each_ceiling_is_breached_on_its_own_and_is_named_in_exceeded(self):
         ratio = {"rewrite_ratio": 0.9, "rewritten_lines": 900}
         files = {"touched_existing_files": 12, "rewritten_lines": 900}
-        got = self.radius_status([[ratio, LIMITS], [files, LIMITS]])
+        got = radius_status([[ratio, LIMITS], [files, LIMITS]])
         self.assertEqual([g["state"] for g in got], ["EXCEEDED", "EXCEEDED"])
         self.assertEqual(got[0]["exceeded"], ["rewrite_ratio"])
         self.assertEqual(got[1]["exceeded"], ["touched_existing_files"])
 
     def test_the_noise_floor_suppresses_a_breach_but_keeps_the_numbers(self):
-        got = self.radius_status([[TINY, LIMITS]])
+        got = radius_status([[TINY, LIMITS]])
         self.assertEqual(got[0]["state"], "BELOW_FLOOR")
         self.assertEqual(got[0]["exceeded"], BOTH_CEILINGS)
         self.assertEqual(got[0]["measured"]["rewritten_lines"], 20)
@@ -165,20 +131,20 @@ class TestTheRadiusPredicateDecidesAndNotJustExists(WorkflowSourceTestCase):
     def test_an_unmeasured_line_count_does_not_suppress_a_measured_breach(self):
         # The floor can only silence a fire it can prove is noise. A missing
         # rewritten_lines proves nothing, so the measured ratio breach stands.
-        got = self.radius_status([[{"rewrite_ratio": 0.9}, LIMITS]])
+        got = radius_status([[{"rewrite_ratio": 0.9}, LIMITS]])
         self.assertEqual(got[0]["state"], "EXCEEDED")
 
     def test_a_configured_block_with_no_usable_ceiling_is_its_own_state(self):
         # WITHIN used to claim "every declared number is at or under its
         # ceiling", which no comparison supported: a silent no-op that passed.
-        got = self.radius_status([[BIG, NO_CEILINGS], [BIG, STRING_CEILINGS]])
+        got = radius_status([[BIG, NO_CEILINGS], [BIG, STRING_CEILINGS]])
         self.assertEqual([g["state"] for g in got], ["NO_USABLE_CEILING"] * 2)
         self.assertEqual([g["exceeded"] for g in got], [[], []])
 
     def test_an_unusable_ceiling_is_reported_before_an_unmeasured_plan(self):
         # A mistyped ceiling is an operator-config defect, and blaming the
         # planner for it would leave the real defect invisible.
-        got = self.radius_status([[None, NO_CEILINGS]])
+        got = radius_status([[None, NO_CEILINGS]])
         self.assertEqual(got[0]["state"], "NO_USABLE_CEILING")
 
     def test_one_usable_ceiling_of_the_two_still_judges_the_plan(self):
@@ -186,7 +152,7 @@ class TestTheRadiusPredicateDecidesAndNotJustExists(WorkflowSourceTestCase):
         # ceiling: a falsy usability test would read it as no ceiling at all.
         one = dict(NO_CEILINGS, max_touched_existing_files=8)
         zero = dict(NO_CEILINGS, max_rewrite_ratio=0)
-        got = self.radius_status([[BIG, one], [BIG, zero]])
+        got = radius_status([[BIG, one], [BIG, zero]])
         self.assertEqual([g["state"] for g in got], ["EXCEEDED"] * 2)
         self.assertEqual(got[0]["exceeded"], ["touched_existing_files"])
         self.assertEqual(got[1]["exceeded"], ["rewrite_ratio"])
@@ -195,7 +161,7 @@ class TestTheRadiusPredicateDecidesAndNotJustExists(WorkflowSourceTestCase):
         # A threshold that silently declines to fire is a permanent invisible
         # narrowing, so the no-fire and not-measured verdicts carry the
         # ceilings too - a reader never has to re-derive why nothing happened.
-        got = self.radius_status([[BIG, LIMITS], [ZEROED, LIMITS], [None, LIMITS]])
+        got = radius_status([[BIG, LIMITS], [ZEROED, LIMITS], [None, LIMITS]])
         for g in got:
             self.assertEqual(g["thresholds"]["max_rewrite_ratio"], 0.5)
             self.assertEqual(g["thresholds"]["max_touched_existing_files"], 8)
@@ -228,36 +194,6 @@ class TestNoRadiusComparisonIsReachedByCoercion(WorkflowSourceTestCase):
     def test_the_four_no_fire_states_exist_as_their_own_named_branches(self):
         for marker in (NOT_CONFIGURED, NO_USABLE_CEILING, NOT_MEASURED, EXCEEDED):
             self.assertIn(marker, self.region())
-
-
-# ---- the planner's basis reaches the human ----
-
-class TestTheBasisReachesTheHumanAndDecidesNothing(WorkflowSourceTestCase):
-    """The planner declares HOW it counted; a human weighing approve /
-    narrow / carve-out cannot weigh a number whose derivation is invisible.
-    The field is display-only, so these tests pin that it travels AND that
-    the verdict is identical with and without it."""
-
-    def test_the_basis_is_carried_on_the_verdict_and_out_to_the_event(self):
-        self.assertIn(BASIS_IN_BASE, self.between(RADIUS_START, RADIUS_END))
-        self.assertIn(BASIS_IN_EVENT, self.src)
-
-    def test_only_a_non_empty_string_is_accepted_as_a_basis(self):
-        self.assertIn(RADIUS_BASIS_GUARD, self.between(RADIUS_START, RADIUS_END))
-
-    def test_the_basis_travels_beside_measured_and_never_inside_it(self):
-        got = TestTheRadiusPredicateDecidesAndNotJustExists.radius_status(
-            self, [[WITH_BASIS, LIMITS], [BIG, LIMITS], [BAD_BASIS, LIMITS]])
-        self.assertEqual(got[0]["basis"], BASIS_TEXT)
-        self.assertIsNone(got[1]["basis"])
-        self.assertIsNone(got[2]["basis"])
-        self.assertNotIn("basis", got[0]["measured"])
-
-    def test_the_basis_changes_no_state_and_no_exceeded_list(self):
-        got = TestTheRadiusPredicateDecidesAndNotJustExists.radius_status(
-            self, [[WITH_BASIS, LIMITS], [BIG, LIMITS]])
-        self.assertEqual(got[0]["state"], got[1]["state"])
-        self.assertEqual(got[0]["exceeded"], got[1]["exceeded"])
 
 
 # ---- the declared block on PLAN_RESULT, and the planner instruction ----
