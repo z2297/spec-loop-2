@@ -99,3 +99,68 @@ test("a SPLIT plan is discarded before the gate and emits no evaluation", async 
   assert.equal(out.results[0].status, "SPLIT");
   assert.equal(radiusEvents(out.results[0]).length, 0);
 });
+
+// ── the halt itself ───────────────────────────────────────────────────────
+const OPTION_LABELS = [
+  "Narrow the plan to the smallest change that meets the goal",
+  "Approve the rewrite as planned",
+  "Carve the rewrite out into its own slice",
+];
+const record = (r) => r.escalations.find((e) => e.trigger === "refactor-scope");
+
+test("a measured breach halts the slice at plan time with the new trigger", async () => {
+  const result = await evaluate(BIG, RADIUS_DEFAULTS);
+  assert.equal(result.status, "ESCALATED");
+  assert.equal(result.tasks_completed, 0);
+  assert.equal(record(result).id, "s1:refactor-scope");
+  assert.equal(record(result).status, "OPEN");
+  assert.equal(radiusEvents(result)[0].payload.state, "EXCEEDED");
+});
+
+test("the halt happens before any implementation dispatch is spent", async () => {
+  // planThenStop throws on every non-plan dispatch: reaching the critique
+  // stage would surface as an internal-error record instead of this one.
+  const result = await evaluate(BIG, RADIUS_DEFAULTS);
+  assert.equal(result.escalations.length, 1);
+  assert.equal(result.agents_used, 1);
+});
+
+test("the record offers the three trade-offs, narrowing recommended", async () => {
+  const rec = record(await evaluate(BIG, RADIUS_DEFAULTS));
+  assert.deepEqual(rec.options.map((o) => o.label), OPTION_LABELS);
+  assert.equal(rec.options[0].recommended, true);
+  assert.equal(rec.options[1].recommended, undefined);
+  assert.equal(rec.options[2].recommended, undefined);
+  rec.options.forEach((o) => assert.ok(o.detail.includes("CONTROLLER")));
+});
+
+test("the context states the numbers, the ceilings and the proxy limit", async () => {
+  const rec = record(await evaluate(BIG, RADIUS_DEFAULTS));
+  assert.ok(rec.context.includes("0.9"));
+  assert.ok(rec.context.includes("0.5"));
+  assert.ok(rec.context.includes("12"));
+  assert.ok(rec.context.includes("not a measured diff"));
+  assert.ok(rec.title.includes("rewrite_ratio"));
+});
+
+test("an answered slice proceeds instead of re-raising the same question", async () => {
+  const answers = { "s1:refactor-scope": "approved, go ahead" };
+  const result = await evaluate(BIG, RADIUS_DEFAULTS, answers);
+  assert.equal(record(result), undefined);
+  assert.equal(radiusEvents(result)[0].payload.state, "EXCEEDED");
+  assert.equal(radiusEvents(result)[0].payload.suppressed_by_answer, true);
+});
+
+test("a no-fire evaluation is never marked as suppressed by an answer", async () => {
+  const ev = await only(SMALL, RADIUS_DEFAULTS);
+  assert.equal(ev.payload.suppressed_by_answer, undefined);
+});
+
+test("the human answer reaches the planner prompt that raised the question", async () => {
+  const seen = [];
+  const agent = async (prompt) => { seen.push(prompt); throw new Error("STOP"); };
+  await runWave(radiusArgs(S1(), RADIUS_DEFAULTS,
+    { "s1:refactor-scope": "NARROW-IT-DOWN" }), { agent });
+  assert.ok(seen[0].includes("NARROW-IT-DOWN"));
+  assert.ok(seen[0].includes('HUMAN ANSWER to your earlier "refactor-scope" escalation'));
+});

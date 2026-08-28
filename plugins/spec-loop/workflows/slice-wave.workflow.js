@@ -653,6 +653,32 @@ function doneResult(slice, state, status, extra) {
   }
 }
 
+// One line of copy naming every number on both sides of the comparison. A
+// human answering this needs the measurements AND the ceilings they were
+// judged against in the record itself, not a pointer to a config file they
+// would have to resolve by hand. (PURE)
+const radiusPhrase = (v) => `declared rewrite ratio ${v.measured.rewrite_ratio}, touched existing files ${v.measured.touched_existing_files}, rewritten lines ${v.measured.rewritten_lines}; ceilings ${v.thresholds.max_rewrite_ratio} ratio / ${v.thresholds.max_touched_existing_files} files, noise floor ${v.thresholds.min_rewritten_lines} lines`
+
+// The trade-off ask. Three options because a yes/no would leave a human who
+// wants neither with nothing to pick, and because each of the three costs
+// something different: narrowing leaves existing structure uncleaned,
+// approving buys a large diff for one reviewer with no second measurement
+// after implementation, and carving out defers the work to a slice a human
+// must schedule. Each detail names the CONTROLLER as what applies it — the
+// loop narrows, approves and splits nothing by itself. (PURE)
+function refactorAsk(slice, verdict) {
+  return {
+    title: `plan for ${slice.id} declares a heavy rewrite of existing code (${verdict.exceeded.join(', ')})`,
+    context: `The plan is written and NOT implemented — this fires before implementation effort is spent. ${radiusPhrase(verdict)}. These are numbers the PLANNER DECLARED: a pre-execution proxy, not a measured diff, so they can be wrong in either direction and cannot catch a blowup discovered mid-implementation. Goal: ${slice.goal}`,
+    question: 'Approve the rewrite as planned, narrow the plan to the smallest change that meets the goal, or carve the rewrite out into its own slice?',
+    options: [
+      { label: 'Narrow the plan to the smallest change that meets the goal', detail: 'Recommended default. The CONTROLLER must act on this at the next dispatch: put the instruction in args.answers under this record id and re-dispatch the wave — the planner reads it back in its own prompt and replans against it. Trade-off: existing structure this rewrite would have cleaned up stays as it is.', recommended: true },
+      { label: 'Approve the rewrite as planned', detail: 'The CONTROLLER must act on this at the next dispatch: answer this record with the approval and re-dispatch. The same plan proceeds and this check does not raise again for this slice. Trade-off: one reviewer judges a large diff in one slice, and no second measurement runs after implementation.' },
+      { label: 'Carve the rewrite out into its own slice', detail: 'The CONTROLLER must act on this at the next dispatch: re-plan the run so the rewrite is a slice of its own, then re-dispatch. The loop splits nothing by itself — it never turns a refactor into its own slice without this answer.' },
+    ],
+  }
+}
+
 // Every evaluation is recorded, including the ones that decline to fire. A
 // threshold that silently declines is a permanent invisible narrowing — the
 // exact silent-exclusion defect this repo's knowledge graph already names —
@@ -682,7 +708,12 @@ function refactorRadiusGate(slice, state, plan) {
   const verdict = refactorRadiusStatus(plan.refactor_radius, refactorLimits(CTX))
   const answered = answerKeysFor(slice.id, 'refactor-scope').length > 0
   state.events.push(radiusEvent(slice, verdict, answered))
-  return null
+  // Answered means the human already ruled on this slice's radius. Raising
+  // the same question again would deadlock the slice at the same stage
+  // forever, so the verdict stays EXCEEDED in the event (with
+  // suppressed_by_answer) and the slice proceeds.
+  if (verdict.state !== 'EXCEEDED' || answered) return null
+  return esc(slice, 'refactor-scope', refactorAsk(slice, verdict))
 }
 
 // Stage P — plan (+ right-size gate inside the planner)

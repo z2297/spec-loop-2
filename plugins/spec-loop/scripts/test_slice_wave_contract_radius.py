@@ -234,5 +234,38 @@ class TestThePlannerDeclaresNumbersAndTheWorkflowJudgesThem(WorkflowSourceTestCa
         self.assertIn(CTX_FIELD, self.line_containing("const CTX = A.ctx"))
 
 
+# ---- the halt: only a measured breach, only at plan time ----
+
+GATE_CALL = "const radius = refactorRadiusGate(slice, state, plan)"
+GATE_STOP = "if (radius) return { stop: escalated(slice, state, radius) }"
+GATE_TRIGGER = "return esc(slice, 'refactor-scope', refactorAsk(slice, verdict))"
+GATE_SUPPRESSION = "if (verdict.state !== 'EXCEEDED' || answered) return null"
+GATE_ALWAYS_EMITS = "state.events.push(radiusEvent(slice, verdict, answered))"
+STAGE_PLAN_START = "async function stagePlan(slice, state) {"
+STAGE_PLAN_END = "// Stage C helpers"
+GATE_FN_START = "function refactorRadiusGate(slice, state, plan) {"
+GATE_FN_END = "\n}\n"
+
+
+class TestOnlyAMeasuredBreachHaltsAndOnlyAtPlanTime(WorkflowSourceTestCase):
+    """The event push precedes the halt decision in source order, so no
+    return path can skip it; and the halt is raised from stagePlan and
+    nowhere else, before a single implementation dispatch is spent."""
+
+    def test_the_event_is_pushed_before_any_halt_decision_is_taken(self):
+        body = self.between(GATE_FN_START, GATE_FN_END)
+        self.assertLess(body.index(GATE_ALWAYS_EMITS), body.index(GATE_SUPPRESSION))
+
+    def test_only_the_exceeded_state_and_only_an_unanswered_slice_halts(self):
+        self.assertIn(GATE_SUPPRESSION, self.src)
+
+    def test_the_record_is_minted_with_the_refactor_scope_trigger(self):
+        self.assertIn(GATE_TRIGGER, self.src)
+
+    def test_the_gate_is_called_from_the_plan_stage_and_from_nowhere_else(self):
+        self.assertIn(GATE_CALL, self.between(STAGE_PLAN_START, STAGE_PLAN_END))
+        self.assertIn(GATE_STOP, self.between(STAGE_PLAN_START, STAGE_PLAN_END))
+        self.assertEqual(self.src.count("refactorRadiusGate("), 2)
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
