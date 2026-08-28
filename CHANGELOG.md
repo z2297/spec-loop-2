@@ -34,8 +34,11 @@ All notable changes to the spec-loop plugin are documented here. The format is
   auditable in `events.jsonl` rather than inferable from a larger `agents_used`. The record
   itself now offers three controller-named options and its recommended option names the args
   field to write. `budget-exhausted` remains NOT a judgment trigger — its answer is injected
-  into no agent prompt, pinned by source text and by execution across all eight prompts one
-  slice builds running plan, critique, task, review, gate, fix, re-review and verify — and the
+  into no agent prompt, pinned by source text and by execution across the eight pipeline
+  roles the one-task fixture drives — plan, critique, task, review, gate, fix, re-review
+  and verify. A real slice run builds more prompts than these eight: the tier-3 council
+  dispatches several critics, and the fix loop repeats fix and re-review across rounds —
+  and the
   per-stage token floor is untouched, having no args-level lever at all: its resource is the
   wave budget the host supplies. The controller still translates the human's free-text answer
   into the integer it writes; nothing in the loop parses that text. An override the channel
@@ -103,9 +106,11 @@ All notable changes to the spec-loop plugin are documented here. The format is
   it. Answer lookup moved with the scheme: `latestAnswer` matches the whole key family and
   returns the newest answered round, so an answer keyed without a round still matches and no
   judgment trigger becomes unanswerable. The planner-`ESCALATE` branch no longer overwrites the
-  id it was handed. `run_metrics.merge_escalation_records` needed no logic change — it keys on
-  the whole id, so distinct rounds were already distinct records and are now pinned by test —
-  and its docstring says so.
+  id it was handed. `run_metrics.merge_escalation_records` needed no change to its merge
+  semantics — it keys on the whole id, so distinct rounds were already distinct records and are
+  now pinned by test — and its docstring says so. The function itself was edited this cycle:
+  its loop body moved into the `_fold_escalation_record_into` helper, leaving the keying
+  behaviour identical.
 - **Two prose surfaces now describe the escalation records the wave really raises.** One
   `internal-error` trigger raises two records that carry different evidence, and
   `skills/escalation-gate/SKILL.md` gave a single account of both in two places: it said the
