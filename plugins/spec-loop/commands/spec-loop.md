@@ -146,9 +146,11 @@ deadlock is itself an escalation):
    {"<slice-id>": <integer>}` alongside the usual `answers` map. `agentCap` in the wave
    reads it, the structural guard enforces the raised number, and an `agent-cap-override`
    event records the authorisation. An override the wave cannot use — at or below the tier
-   default, non-integer, or keyed to a slice this wave never dispatched — raises nothing and
-   says so: it emits a `decision` event naming the discarded value, so a mistyped key surfaces
-   at the dispatch that carried it. Two rules bind you. The override is single-dispatch:
+   default, not reading as a whole number, or keyed to a slice this wave never dispatched —
+   raises nothing and says so: it emits a `decision` event naming the discarded value, so a
+   mistyped key surfaces at the dispatch that carried it. The value is coerced with `Number()`,
+   so a JSON string reading as a whole number — `"14"` — is accepted and raises the cap. Two
+   rules bind you. The override is single-dispatch:
    it belongs to the one re-dispatch the human authorised, so drop it from every later
    dispatch of the run rather than carrying it forward like `answers`. And it only ever
    raises — a value at or below the tier default is discarded by the wave, so it is no
