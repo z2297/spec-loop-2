@@ -195,6 +195,39 @@ const PIPELINE = {
   "verify:1": VERIFY_PASS,
 };
 
+// ── Refactor-radius fixtures ──────────────────────────────────────────────
+// The radius thresholds reach the workflow ONLY through ctx, and `extra`
+// above merges TOP-LEVEL wave args, so a ctx-level knob needs its own
+// builder. It reuses waveArgs rather than hand-building a second args shape,
+// so the two cannot drift.
+export const RADIUS_DEFAULTS = {
+  enabled: true, max_rewrite_ratio: 0.5,
+  max_touched_existing_files: 8, min_rewritten_lines: 150,
+};
+
+export function radiusArgs(slices, radius, answers) {
+  const base = waveArgs(slices, answers);
+  return { ...base, ctx: { ...base.ctx, refactor_radius: radius } };
+}
+
+// `undefined` means the planner returned no block at all — a DIFFERENT input
+// from a block of zeros, and the two must stay tellable apart end to end.
+export const planWithRadius = (radius) => ({
+  status: "PLANNED", plan_path: "/tmp/plan.md",
+  tasks: [{ id: "t1", title: "task t1", lane: "standard", files: ["a.py"] }],
+  ...(radius === undefined ? {} : { refactor_radius: radius }),
+});
+
+// Runs the plan stage for real, then makes the NEXT dispatch throw so the
+// slice terminates right after the gate under test. state.events survives on
+// the crash record's result, which is what the radius tests read.
+export const planThenStop = (plan) => ({
+  agent: async (prompt, opts) => {
+    if (String(opts.label).endsWith(":plan")) return plan;
+    throw new Error("STOP");
+  },
+});
+
 export const PIPELINE_LABELS = Object.keys(PIPELINE).map((role) => "s1:" + role);
 
 // Records the label and the prompt of every dispatch and answers each one with
