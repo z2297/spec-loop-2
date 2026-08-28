@@ -23,26 +23,42 @@ import run_state
 from slice_wave_contract_base import (
     ANSWERABLE_TRIGGERS, CRASH_BUDGET_DENIAL_OVERCLAIM, CRASH_CAUSE_OVERCLAIM,
     CRASH_CLASSIFICATION_SENTENCE, CRASH_CLASSIFIED_PASSTHROUGH,
-    CRASH_CONTEXT_RENDER_LIMIT, CRASH_ERROR_EXPR, CRASH_ERROR_FIRST,
+    CRASH_ERROR_EXPR, CRASH_ERROR_FIRST,
     CRASH_GUARD_ORIGIN_OVERCLAIM, CRASH_HOST_LAYER_CAVEAT,
     CRASH_OPTION_CONTROLLER_ACTS,
     CRASH_OPTION_RETRY, CRASH_OPTION_SKIP, CRASH_OPTION_STOP,
     CRASH_STAGE_CAVEAT, CRASH_STAGE_CONTEXT, CRASH_STAGE_FALLBACK,
     CRASH_STAGE_OVERCLAIM,
     CRASH_STAGE_PRECISION, CRASH_TITLE_BRANCH, CRASH_TITLE_UNGRAMMATICAL,
-    CRASH_TRIGGER, DISPATCH_GUARD_CALL, GUARD_BUDGET_TRIGGER,
-    GUARD_FIRED_OVERCLAIM, SLICE_LOST_CAUSE_DENIAL,
+    CRASH_TRIGGER, DISPATCH_GUARD_CALL, FALLBACK_MD, GUARD_BUDGET_TRIGGER,
+    GUARD_FIRED_OVERCLAIM, RUN_STATE_MD, SLICE_LOST_CAUSE_DENIAL,
     SLICE_LOST_CAUSE_UNKNOWN, SLICE_LOST_GUARD_PROVABLE,
     SLICE_LOST_RECORD, STAGE_ASSIGNMENT,
-    STATE_STAGE_INIT, TRIGGER_ENUM_LINE,
+    STATE_STAGE_INIT, TRIGGER_ENUM_LINE, TRIGGER_PROSE_LEAD,
+    TRIGGER_UNION_PREFIX,
     WorkflowSourceTestCase,
 )
+
+def collapsed(text):
+    """Runs of whitespace become a single space.
+
+    A hard-wrap of markdown prose splits a pinned literal across a
+    newline and drops its match count to zero. Both sides of every
+    prose match below pass through here, so line breaks stay invisible
+    to the pin and the prose stays free to rewrap.
+    """
+    return re.sub(r"\s+", " ", text)
+
 
 # A real crash message from run 20260825-scope-ceiling, and the LONGEST stage
 # text the fallback can interpolate (the no-dispatch phrase, longer than any
 # role name), so the render check below measures the worst realistic case.
 SAMPLE_MESSAGE = "Cannot read properties of undefined (reading 'head')"
 LONGEST_STAGE = "none (the crash happened before any agent was dispatched)"
+# The template's LAST sentence. It is evicted by the renderer's truncation at
+# this worst-case length, which is what makes the ordering assertion below a
+# real constraint rather than a tautology.
+CONTEXT_TAIL = "task(s) had already completed"
 
 
 class TestTheCrashRecordNamesTheLastDispatchedStage(WorkflowSourceTestCase):
@@ -173,40 +189,59 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         self.assertLess(stage_at, prose_at)
 
     def crash_context(self):
-        """The shipped context template literal, backticks stripped."""
+        r"""The shipped context template literal, backticks stripped. The
+        literal is its own statement (`const context = \`...\``), so its
+        closing backtick is followed by a newline, not the trailing comma an
+        inline call argument would carry."""
         fallback = self.crash_fallback()
         start = fallback.index(CRASH_ERROR_FIRST)
-        return fallback[start + 1:fallback.index("`,", start)]
+        return fallback[start + 1:fallback.index("`\n", start)]
 
     def rendered_crash_context(self, message, stage_text):
-        """The context as run_state.render_escalation() would render it."""
+        """The `- Context:` line escalations.md actually receives, produced by
+        the REAL run_state.render_escalation(). Re-implementing its collapse
+        and truncate here protected nothing: the copy sliced unconditionally
+        and appended no ellipsis, so it disagreed with _one_line() on two of
+        its three behaviours and could not have caught a change to either."""
         filled = self.crash_context().replace(CRASH_ERROR_EXPR, message)
         filled = filled.replace("${stageText}", stage_text)
         filled = filled.replace("${state.tasksCompleted}", "2")
-        return " ".join(filled.split())[:CRASH_CONTEXT_RENDER_LIMIT - 1]
+        record = {"id": "s1:internal-error", "trigger": "internal-error",
+                  "title": "slice crashed", "context": filled,
+                  "question": "Retry, skip, or stop."}
+        section = run_state.render_escalation("s1", record)
+        lines = section.splitlines()
+        return next(line for line in lines if line.startswith("- Context: "))
 
-    def test_the_stage_attribution_survives_the_400_char_context_render(self):
-        # run_state.render_escalation() renders "- Context: %s" through
-        # _one_line(..., 400), so anything past 400 collapsed characters never
-        # reaches escalations.md - which is also the corpus a later run's
+    def test_the_stage_attribution_survives_the_real_context_render(self):
+        # run_state.render_escalation() collapses the context and truncates it
+        # through _one_line(), so anything past that budget never reaches
+        # escalations.md - which is also the corpus a later run's
         # escalation-gate precedent check reads. The stage attribution is this
         # record's headline diagnostic and the title asserts it, so it and its
-        # caveat must sit inside that budget, ahead of the fixed prose.
+        # caveat must sit inside the budget, ahead of the fixed prose. The
+        # budget is not named here: the assertion runs the real renderer, so
+        # the test cannot drift from whatever limit render_escalation applies.
         rendered = self.rendered_crash_context(SAMPLE_MESSAGE, LONGEST_STAGE)
         attribution = CRASH_STAGE_CONTEXT.replace("${stageText}", LONGEST_STAGE)
         self.assertIn(SAMPLE_MESSAGE, rendered)
         self.assertIn(attribution, rendered)
         self.assertIn(CRASH_STAGE_CAVEAT, rendered)
+        self.assertNotIn(CONTEXT_TAIL, rendered)
 
     def test_a_lost_slice_is_an_internal_error_too(self):
         # parallel() resolved the thunk to null: the slice died with no result
         # at all, outside runSlice's try/catch. Same one classification, per
         # the run's human-decided single-value constraint; the honest 'slice
-        # lost' title and its own question are kept.
+        # lost' title and its own question are kept. The record's ask is
+        # three-way, matching the three controller-named options it already
+        # carries, so a human answer binds to one of them.
         wave_entry = self.between(
             "const results = await parallel(", "log(`wave ")
         self.assertIn(SLICE_LOST_RECORD, wave_entry)
-        self.assertIn("Re-run the wave to retry this slice?", wave_entry)
+        self.assertIn(
+            "Retry this slice, skip it and continue the run, or stop the run "
+            "to investigate the silent failure?", wave_entry)
         self.assertNotIn("'budget-exhausted'", wave_entry)
 
     def test_the_lost_slice_record_denies_no_cause_it_cannot_prove(self):
@@ -233,12 +268,15 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         self.assertNotIn(GUARD_FIRED_OVERCLAIM, self.src)
 
 
-class TestTheTriggerEnumAgreesAcrossAllFiveHomes(WorkflowSourceTestCase):
-    """The enum has five homes and no test held them against each other.
+class TestTheTriggerEnumAgreesAcrossAllSixHomes(WorkflowSourceTestCase):
+    """The enum has six homes and no test held them against each other.
     `run_state.persist_slice` validates the whole SliceResult BEFORE it writes
     anything and raises on an unrecognised trigger, so a value missing from one
     tuple costs an affected slice its sidecar, its events and its report - not
-    a mislabelled field. A one-home edit would otherwise stay fully green."""
+    a mislabelled field. A one-home edit would otherwise stay fully green. The
+    two prose homes are pinned here too: a doc that lists a stale set of
+    triggers is what a worker agent reads before it builds a record, so a
+    drifted enumeration produces exactly that rejected write."""
 
     def triggers(self):
         return run_state.ESCALATION_TRIGGERS
@@ -250,6 +288,45 @@ class TestTheTriggerEnumAgreesAcrossAllFiveHomes(WorkflowSourceTestCase):
     def test_the_workflow_enum_carries_exactly_those_values_in_order(self):
         enum_line = self.line_containing(TRIGGER_ENUM_LINE)
         self.assertEqual(tuple(re.findall(r"'([^']+)'", enum_line)),
+            self.triggers())
+
+    def test_the_fallback_agent_prose_lists_exactly_those_triggers(self):
+        # The escalation section of the slice-worker fallback agent is the
+        # enumeration a worker reads before it names a trigger. Located by
+        # TRIGGER_PROSE_LEAD, whose own count word is pinned by the
+        # literal. Both sides are whitespace-collapsed, so a rewrap of the
+        # sentence leaves the pin intact.
+        text = collapsed(FALLBACK_MD.read_text(encoding="utf-8"))
+        lead = collapsed(TRIGGER_PROSE_LEAD)
+        self.assertEqual(text.count(lead), 1)
+        listed = text.split(lead, 1)[1].split(")", 1)[0]
+        self.assertEqual(tuple(re.findall(r"`([^`]+)`", listed)),
+            self.triggers())
+
+    def test_the_contract_reference_union_lists_exactly_those_triggers(self):
+        # references/run-state-v2.md is the authoritative shape doc for the
+        # EscalationRecord; its trigger field is a pipe-separated union.
+        # Whitespace-collapsed on both sides, same as the pin above.
+        text = collapsed(RUN_STATE_MD.read_text(encoding="utf-8"))
+        prefix = collapsed(TRIGGER_UNION_PREFIX)
+        self.assertEqual(text.count(prefix), 1)
+        union = text.split(prefix, 1)[1].split('"', 1)[0]
+        self.assertEqual(tuple(part.strip() for part in union.split("|")),
+            self.triggers())
+
+    def test_the_prose_pin_survives_a_hard_wrap_of_the_fallback_sentence(self):
+        # Every space becomes a line break: the harshest rewrap there is.
+        rewrapped = FALLBACK_MD.read_text(encoding="utf-8").replace(" ", "\n")
+        self.assertEqual(
+            collapsed(rewrapped).count(collapsed(TRIGGER_PROSE_LEAD)), 1)
+
+    def test_the_union_pin_survives_a_hard_wrap_of_the_contract_line(self):
+        rewrapped = RUN_STATE_MD.read_text(encoding="utf-8").replace(" ", "\n")
+        text = collapsed(rewrapped)
+        prefix = collapsed(TRIGGER_UNION_PREFIX)
+        self.assertEqual(text.count(prefix), 1)
+        union = text.split(prefix, 1)[1].split('"', 1)[0]
+        self.assertEqual(tuple(p.strip() for p in union.split("|")),
             self.triggers())
 
 

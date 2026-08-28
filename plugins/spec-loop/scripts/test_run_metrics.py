@@ -272,6 +272,20 @@ LEGACY_ESCALATIONS = """\
 - Answer: **Option 1 — apply the council's proven remedy, then execute.**
 """
 
+# A v1 escalations.md whose Trigger lines carry the crash trigger, in the same
+# prose shape as LEGACY_ESCALATIONS. Kept separate from that fixture because
+# LegacyComputeTests pins exact per-trigger counts derived from it.
+LEGACY_ESCALATIONS_CRASH = """\
+# Escalations — legacy
+
+## [s4] Slice worker crashed mid-dispatch   (status: ANSWERED)
+- Trigger: internal-error (the dispatch raised and was caught by the wave harness)
+- Answer: **Proceed with the recommended default.**
+
+## [s5] Retry exhausted against a resource limit   (status: OPEN)
+- Trigger: budget-exhausted + internal-error (a resource signal, then a caught throw)
+"""
+
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -325,6 +339,17 @@ def _events_without(*payload_keys):
         dict(obj, payload={k: v for k, v in obj["payload"].items()
                            if k not in dropped}))
         for obj in V2_EVENT_OBJECTS)
+
+
+def _escalation_record(**overrides):
+    """One escalation record as `merge_escalation_records` consumes it, with
+    the fields a round-2 `s1:internal-error` record shares held as defaults so
+    a test states only what makes it distinct."""
+    record = {"id": "s1:internal-error", "scope": "s1", "trigger": "internal-error",
+              "title": None, "status": "OPEN", "opened": "2026-07-30T10:00:00Z",
+              "answered_at": None}
+    record.update(overrides)
+    return record
 
 
 # ---------------------------------------------------------------------------
@@ -464,13 +489,16 @@ class EscalationPairingTests(unittest.TestCase):
         triggers = [r["trigger"] for r in result["records"]]
         self.assertEqual(triggers, ["internal-error"])
 
-    def test_internal_error_is_substring_safe_against_every_other_trigger(self):
-        # _legacy_match_triggers() in run_metrics.py matches by containment
-        # (no line number: it moved once already when internal-error landed).
-        others = [t for t in rm.ESCALATION_TRIGGERS if t != "internal-error"]
-        for other in others:
-            self.assertNotIn(other, "internal-error")
-            self.assertNotIn("internal-error", other)
+    def test_the_trigger_names_are_pairwise_non_substrings(self):
+        # A name-level property only: no canonical trigger contains another,
+        # which is what makes _legacy_match_triggers' containment matching
+        # unambiguous. The matcher itself is exercised in
+        # LegacyProseParserTests against real v1 prose; this method reads the
+        # constant and never reaches the parser.
+        for probe in rm.ESCALATION_TRIGGERS:
+            rest = [t for t in rm.ESCALATION_TRIGGERS if t != probe]
+            for other in rest:
+                self.assertNotIn(other, probe)
 
     def test_union_counts_a_duplicated_record_once(self):
         metrics = compute_for(v2_files(), run_id="20260730-v2")
@@ -479,18 +507,50 @@ class EscalationPairingTests(unittest.TestCase):
                          rm.BASIS_BOTH)
 
     def test_sidecar_answer_survives_an_events_channel_that_only_opened(self):
-        from_events = [{"id": "s1:x", "scope": "s1", "trigger": "ambiguity",
-                        "title": None, "status": "OPEN",
-                        "opened": "2026-07-30T10:00:00Z", "answered_at": None}]
-        from_sidecars = [{"id": "s1:x", "scope": "s1", "trigger": None,
-                          "title": "t", "status": "ANSWERED", "opened": None,
-                          "answered_at": "2026-07-30T10:05:00Z"}]
+        from_events = [_escalation_record(id="s1:x", trigger="ambiguity", title=None)]
+        from_sidecars = [_escalation_record(
+            id="s1:x", trigger=None, title="t", status="ANSWERED", opened=None,
+            answered_at="2026-07-30T10:05:00Z")]
         merged = rm.merge_escalation_records(from_events, from_sidecars)
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["status"], "ANSWERED")
         self.assertEqual(merged[0]["answered_at"], "2026-07-30T10:05:00Z")
         self.assertEqual(merged[0]["opened"], "2026-07-30T10:00:00Z")
         self.assertEqual(merged[0]["trigger"], "ambiguity")
+
+    def test_two_rounds_of_one_trigger_stay_two_records(self):
+        first_id, second_id = "s1:internal-error", "s1:internal-error:2"
+        first = _escalation_record(
+            id=first_id, title="round one", status="ANSWERED",
+            answered_at="2026-07-30T10:05:00Z")
+        second = _escalation_record(
+            id=second_id, title="round two", status="OPEN", answered_at=None)
+        merged = rm.merge_escalation_records([], [first, second])
+        ids = [r["id"] for r in merged]
+        titles = [r["title"] for r in merged]
+        statuses = [r["status"] for r in merged]
+        self.assertEqual(ids, [first_id, second_id])
+        self.assertEqual(titles, ["round one", "round two"])
+        self.assertEqual(statuses, ["ANSWERED", "OPEN"])
+
+    def test_one_round_seen_in_both_channels_stays_one_record(self):
+        round_id = "s1:internal-error:2"
+        events = [_escalation_record(id=round_id, title=None, status="OPEN")]
+        sidecars = [_escalation_record(
+            id=round_id, trigger=None, title="round two", status="ANSWERED",
+            opened=None, answered_at="2026-07-30T10:05:00Z")]
+        merged = rm.merge_escalation_records(events, sidecars)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["status"], "ANSWERED")
+        self.assertEqual(merged[0]["title"], "round two")
+
+    def test_scope_survives_a_round_suffixed_id(self):
+        parsed = rm._parse_embedded_escalations(
+            [{"id": "s1:internal-error:2", "trigger": "internal-error",
+              "title": "round two", "status": "OPEN"}])
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["scope"], "s1")
+        self.assertEqual(parsed[0]["id"], "s1:internal-error:2")
 
 
 # ---------------------------------------------------------------------------
@@ -1337,6 +1397,26 @@ class LegacyProseParserTests(unittest.TestCase):
             "## [s1] Pick a port   (status: OPEN)\n"
             "- Trigger: material-assumption\n- Answer:\n")
         self.assertEqual(open_escs[0]["status"], "OPEN")
+
+    def test_a_crash_trigger_line_matches_internal_error_through_the_real_parser(self):
+        # Drives rm.legacy_parse_escalations -> _legacy_body_fields ->
+        # _legacy_match_triggers on real v1 prose, so a change to the matcher's
+        # containment semantics turns this red. ESCALATION_TRIGGERS is imported,
+        # never re-listed here.
+        escs = rm.legacy_parse_escalations(LEGACY_ESCALATIONS_CRASH)
+        crash = escs[0]
+        self.assertEqual(crash["triggers"], ["internal-error"])
+        self.assertEqual(crash["trigger"], "internal-error")
+        spurious = set(rm.ESCALATION_TRIGGERS) - {"internal-error"}
+        self.assertEqual(set(crash["triggers"]) & spurious, set())
+
+    def test_a_crash_trigger_line_alongside_budget_exhausted_collects_both(self):
+        # _legacy_match_triggers collects every containment match, in
+        # ESCALATION_TRIGGERS declaration order.
+        escs = rm.legacy_parse_escalations(LEGACY_ESCALATIONS_CRASH)
+        both_in_declaration_order = ["budget-exhausted", "internal-error"]
+        self.assertEqual(escs[1]["triggers"], both_in_declaration_order)
+        self.assertEqual(escs[1]["status"], "OPEN")
 
 
 class LegacyComputeTests(unittest.TestCase):

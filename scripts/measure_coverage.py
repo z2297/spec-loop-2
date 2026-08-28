@@ -29,10 +29,12 @@ same freshly-traced module objects (single module identity — the ordering is
 load-bearing; discovering before the re-import splits identity and breaks the
 patches). A module's percentage therefore reflects lines the suite actually
 reaches, and a fully-exercised module reads at ~100%. The only lines that remain
-uncounted are ones that genuinely never run under a unit test — the
-``if __name__ == "__main__"`` process-entry shims and the blocking
-``serve_forever()`` daemon tail — which the audited OMIT manifest removes from both
-numerator and denominator (it may not zero out a file; see ``validate_omit``).
+uncounted are ones that genuinely never run under a unit test: each module's
+process-entry shim, which the audited OMIT manifest removes from both numerator
+and denominator. The manifest names that shim symbolically rather than by line
+number, and ``resolve_main_shim`` locates it in the module's own source at
+measure time, so a file that grows can never repoint the omission at ordinary
+executed code. An omission may not zero out a file; see ``validate_omit``.
 
 Anti-false-green guards: the gate refuses to report coverage unless the suite
 actually ran a plausible number of tests (``MIN_TESTS``), and the OMIT manifest
@@ -46,6 +48,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import sys
 import trace
 import unittest
@@ -80,6 +83,19 @@ MIN_TESTS = 150
 # Anti-false-green: OMIT may not remove more than this fraction of any one
 # file's executable lines — a runaway range can't collapse a file to 0/0=100%.
 MAX_OMIT_FRACTION = 0.25
+
+# The one symbolic OMIT token. A manifest entry written as ``path:__main__`` is
+# resolved against the target's own source at measure time by ``resolve_main_shim``,
+# so a file that grows can never repoint the omission at ordinary executed code —
+# the failure mode that a pinned line range has and that this token removes.
+MAIN_SHIM_TOKEN = "__main__"
+
+# Anti-false-green: a resolved entry shim is a header plus a one-line body. Refusing
+# anything longer keeps the token from quietly omitting a large block that someone
+# indented beneath the header.
+MAX_SHIM_LINES = 5
+
+_MAIN_SHIM_RE = re.compile(r"^if\s+__name__\s*==\s*['\"]__main__['\"]\s*:")
 
 # Product modules that count toward coverage (basename -> relpath key).
 TARGET_FILES = (
@@ -198,6 +214,72 @@ def normalize_key(path: str) -> str | None:
     return None
 
 
+def _sole_shim_header(lines: list[str], relpath: str) -> int:
+    """The 1-based line number of the module's single ``__main__`` guard header.
+
+    Raises ``ValueError`` unless the source carries exactly one such header.
+    """
+    headers = [n for n, text in enumerate(lines, 1) if _MAIN_SHIM_RE.match(text)]
+    if len(headers) != 1:
+        raise ValueError(
+            f"{relpath}: expected exactly one __main__ entry shim, "
+            f"found {len(headers)} — resolve the OMIT entry by hand."
+        )
+    return headers[0]
+
+
+def _guarded_block(lines: list[str], start: int) -> set[int]:
+    """The 1-based numbers of the header at ``start`` plus its indented block.
+
+    The block ends at the next line that returns to column zero; trailing blank
+    lines are dropped from the result.
+    """
+    resolved = {start}
+    for offset in range(start, len(lines)):
+        text = lines[offset]
+        if text.strip() and not text[:1].isspace():
+            break
+        resolved.add(offset + 1)
+    while resolved and not lines[max(resolved) - 1].strip():
+        resolved.discard(max(resolved))
+    return resolved
+
+
+def resolve_main_shim(source: str, relpath: str) -> set[int]:
+    """The 1-based line numbers of a module's ``__main__`` entry shim (PURE).
+
+    Locates the module's single entry-guard header via ``_sole_shim_header`` and
+    takes it together with the indented block beneath it via ``_guarded_block``.
+    Matching on the block rather than on a fixed body text keeps the resolver
+    correct across both spellings of the entry body — ``sys.exit(main())`` and
+    ``raise SystemExit(main())`` — and keeps it correct after the file grows.
+
+    Raises ``ValueError`` unless the source carries exactly one such header, and
+    unless the resolved block stays within ``MAX_SHIM_LINES``.
+    """
+    lines = source.splitlines()
+    resolved = _guarded_block(lines, _sole_shim_header(lines, relpath))
+    if len(resolved) > MAX_SHIM_LINES:
+        raise ValueError(
+            f"{relpath}: __main__ entry shim resolved to {len(resolved)} lines "
+            f"(max {MAX_SHIM_LINES}) — refusing to omit a block that large."
+        )
+    return resolved
+
+
+@dataclass
+class OmitSpec:
+    """One target's manifest omission: literal line numbers plus symbolic tokens.
+
+    A literal range stays a literal range. ``main_shim`` records that the manifest
+    asked for the module's entry shim by name, to be turned into line numbers by
+    ``resolve_omit`` against the file's own source at measure time.
+    """
+
+    lines: set[int] = field(default_factory=set)
+    main_shim: bool = False
+
+
 def _parse_line_range(line_range: str, raw: str) -> tuple[int, int]:
     """Parse ``START`` or ``START-END`` into an inclusive (start, end) pair."""
     try:
@@ -213,8 +295,8 @@ def _parse_line_range(line_range: str, raw: str) -> tuple[int, int]:
     return start, end
 
 
-def _parse_omit_line(raw: str) -> tuple[str, range] | None:
-    """Parse one manifest line into ``(relpath, line_range)``, or None to skip.
+def _parse_omit_line(raw: str) -> tuple[str, OmitSpec] | None:
+    """Parse one manifest line into ``(relpath, OmitSpec)``, or None to skip.
 
     Raises ``ValueError`` on a malformed entry or one missing a rationale.
     """
@@ -230,26 +312,46 @@ def _parse_omit_line(raw: str) -> tuple[str, range] | None:
     if ":" not in spec:
         raise ValueError(f"malformed OMIT entry (expected path:range): {raw!r}")
     relpath, line_range = spec.rsplit(":", 1)
+    line_range = line_range.strip()
+    if line_range == MAIN_SHIM_TOKEN:
+        return relpath.strip(), OmitSpec(main_shim=True)
     start, end = _parse_line_range(line_range, raw)
-    return relpath.strip(), range(start, end + 1)
+    return relpath.strip(), OmitSpec(lines=set(range(start, end + 1)))
 
 
-def parse_omit(text: str) -> dict[str, set[int]]:
-    """Parse the OMIT manifest into ``{relpath: {lineno, ...}}``.
+def parse_omit(text: str) -> dict[str, OmitSpec]:
+    """Parse the OMIT manifest into ``{relpath: OmitSpec}``.
 
-    Each data line must be ``scripts/<file>.py:START[-END]  # rationale``.
-    Blank lines and full-line ``#`` comments are ignored. A malformed entry, or
-    one missing a rationale, raises ``ValueError`` — the manifest must stay
-    auditable and cannot silently grow into a place to hide untested code.
+    Each data line is either ``scripts/<file>.py:START[-END]  # rationale`` (a
+    literal line range) or ``scripts/<file>.py:__main__  # rationale`` (the
+    symbolic entry-shim token, resolved later by ``resolve_omit``). Blank lines
+    and full-line ``#`` comments are ignored. A malformed entry, one missing a
+    rationale, or an unrecognised symbolic token falls through to the numeric
+    parser and raises ``ValueError`` — the manifest must stay auditable and
+    cannot silently grow into a place to hide untested code.
     """
-    result: dict[str, set[int]] = {}
+    result: dict[str, OmitSpec] = {}
     for raw in text.splitlines():
         parsed = _parse_omit_line(raw)
         if parsed is None:
             continue
-        relpath, lines = parsed
-        result.setdefault(relpath, set()).update(lines)
+        relpath, spec = parsed
+        merged = result.setdefault(relpath, OmitSpec())
+        merged.lines |= spec.lines
+        merged.main_shim = merged.main_shim or spec.main_shim
     return result
+
+
+def resolve_omit(spec: OmitSpec, source: str, relpath: str) -> set[int]:
+    """The concrete omitted line numbers for one target file (PURE).
+
+    Literal ranges pass through untouched. A ``main_shim`` spec is resolved against
+    the source given, so the omission tracks the shim wherever it now sits.
+    """
+    resolved = set(spec.lines)
+    if spec.main_shim:
+        resolved |= resolve_main_shim(source, relpath)
+    return resolved
 
 
 def apply_omit(
@@ -433,7 +535,7 @@ def _build_stats(counts: dict) -> dict[str, FileStat]:
         source = _target_source_path(relpath).read_text()
         executable = executable_lines(source, relpath)
         run = executed[relpath] & executable
-        file_omit = omit.get(relpath, set())
+        file_omit = resolve_omit(omit.get(relpath, OmitSpec()), source, relpath)
         validate_omit(
             FileLines(relpath, executable, source.count("\n") + 1), file_omit
         )

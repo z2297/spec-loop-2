@@ -85,6 +85,20 @@ def sidecar(status="DONE", **over):
     return body
 
 
+def refuse_reads(blocked_path):
+    """A builtins.open replacement that raises OSError on a read of one path."""
+    real_open = open
+    blocked = os.path.abspath(str(blocked_path))
+
+    def guard(target, mode="r", *args, **kwargs):
+        hit = os.path.abspath(str(target)) == blocked
+        if hit and "r" in mode:
+            raise OSError(5, "simulated I/O error")
+        return real_open(target, mode, *args, **kwargs)
+
+    return guard
+
+
 # --------------------------------------------------------------------------
 # validate_sidecar — pure, fail-closed
 # --------------------------------------------------------------------------
@@ -197,8 +211,9 @@ class TestValidateSidecar(unittest.TestCase):
         self.assertMentions(body, "trigger")
 
     def test_escalation_trigger_accepts_internal_error(self):
-        # A machine failure is a first-class trigger: run_state.py:204 is
-        # fail-closed, so an unlisted value would falsely fail the sidecar.
+        # A machine failure is a first-class trigger: validate_escalation's
+        # membership check against ESCALATION_TRIGGERS is fail-closed, so an
+        # unlisted value would falsely fail the sidecar.
         body = sidecar("ESCALATED", escalations=[
             escalation(id="s1:internal-error", trigger="internal-error")])
         self.assertValid(body)
@@ -361,6 +376,191 @@ class TestRenderEscalation(unittest.TestCase):
         self.assertIn("- Answer: bound them", body)
         self.assertIn("- Answered-at: %s" % LATER, body)
 
+    def test_the_identity_fingerprint_is_embedded_for_de_duplication(self):
+        body = rs.render_escalation("s1", escalation())
+        anchor = rs.IDENTITY_ANCHOR % rs.escalation_identity(escalation())
+        self.assertIn(anchor, body)
+
+
+class TestPlaceEscalationSection(unittest.TestCase):
+    """place_escalation_section: one section per distinct question."""
+
+    def sections(self, body):
+        return [line for line in body.splitlines() if line.startswith("## ")]
+
+    def test_an_empty_page_gains_the_section(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        self.assertEqual(len(self.sections(body)), 1)
+        self.assertTrue(body.startswith(rs.ESCALATIONS_HEADER))
+
+    def test_an_identical_re_emit_replaces_rather_than_appends(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        again = rs.place_escalation_section(body, "s1", escalation())
+        self.assertEqual(len(self.sections(again)), 1)
+        self.assertEqual(again, body)
+
+    def test_a_different_context_under_the_same_id_gets_its_own_section(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        second = escalation(context="A different incident with its own decision.")
+        again = rs.place_escalation_section(body, "s1", second)
+        self.assertEqual(len(self.sections(again)), 2)
+        self.assertIn("A different incident", again)
+
+    def test_a_different_question_under_the_same_id_gets_its_own_section(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        second = escalation(question="Something else entirely?")
+        again = rs.place_escalation_section(body, "s1", second)
+        self.assertEqual(len(self.sections(again)), 2)
+
+    def test_a_different_id_gets_its_own_section(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        again = rs.place_escalation_section(body, "s1", escalation(id="s1:ambiguity"))
+        self.assertEqual(len(self.sections(again)), 2)
+
+    def test_a_re_emit_without_an_answer_leaves_a_recorded_answer_standing(self):
+        answered = escalation(status="ANSWERED", answer="bound them", answered_at=LATER)
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", answered)
+        again = rs.place_escalation_section(body, "s1", escalation())
+        self.assertEqual(again, body)
+        self.assertIn("- Answer: bound them", again)
+        self.assertIn("(status: ANSWERED)", again)
+
+    def test_a_re_emit_carrying_an_answer_updates_the_section_in_place(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        answered = escalation(status="ANSWERED", answer="bound them", answered_at=LATER)
+        again = rs.place_escalation_section(body, "s1", answered)
+        self.assertEqual(len(self.sections(again)), 1)
+        self.assertIn("- Answer: bound them", again)
+
+    def test_replacement_keeps_the_original_position(self):
+        first = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        both = rs.place_escalation_section(first, "s2", escalation(id="s2:ambiguity"))
+        answered = escalation(status="ANSWERED", answer="bound them", answered_at=LATER)
+        final = rs.place_escalation_section(both, "s1", answered)
+        self.assertEqual(len(self.sections(final)), 2)
+        self.assertIn("[s1]", self.sections(final)[0])
+        self.assertIn("[s2]", self.sections(final)[1])
+
+    def test_the_anchor_prefix_comes_from_the_anchor_template(self):
+        self.assertEqual(rs.ID_ANCHOR_PREFIX, rs.ID_ANCHOR.split("%s")[0])
+
+    def test_splitting_a_page_is_lossless(self):
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        body = rs.place_escalation_section(body, "s2", escalation(id="s2:ambiguity"))
+        head, sections = rs._escalation_sections(body)
+        self.assertEqual(head + "".join(sections), body)
+        self.assertEqual(len(sections), 2)
+
+    def test_a_page_with_no_sections_splits_to_no_sections(self):
+        head, sections = rs._escalation_sections(rs.ESCALATIONS_HEADER)
+        self.assertEqual(head, rs.ESCALATIONS_HEADER)
+        self.assertEqual(sections, [])
+
+    def test_two_rounds_sharing_a_truncated_render_are_still_two_questions(self):
+        # The renderer caps context at 400 characters, so these two rounds
+        # render one identical Context line. They are distinct questions and
+        # each keeps its own section: identity comes from the raw record.
+        shared = "x" * 450
+        first = escalation(context=shared + " tail one")
+        second = escalation(context=shared + " tail two")
+        line_one = rs._section_line(rs.render_escalation("s1", first), "- Context:")
+        line_two = rs._section_line(rs.render_escalation("s1", second), "- Context:")
+        self.assertEqual(line_one, line_two)
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", first)
+        body = rs.place_escalation_section(body, "s1", second)
+        self.assertEqual(len(self.sections(body)), 2)
+        self.assertIn(rs.IDENTITY_ANCHOR % rs.escalation_identity(first), body)
+        self.assertIn(rs.IDENTITY_ANCHOR % rs.escalation_identity(second), body)
+
+    def test_the_two_sections_are_distinguishable_only_by_the_fingerprint(self):
+        # A documented consequence of raw-field identity: a human reading
+        # the page sees two sections with one id and byte-identical Context
+        # lines, told apart only by the fingerprint comment.
+        shared = "y" * 450
+        first = escalation(context=shared + " tail one")
+        second = escalation(context=shared + " tail two")
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", first)
+        body = rs.place_escalation_section(body, "s1", second)
+        head, sections = rs._escalation_sections(body)
+        self.assertEqual(len(sections), 2)
+        anchors = [rs._section_line(item, rs.ID_ANCHOR_PREFIX) for item in sections]
+        self.assertEqual(anchors[0], anchors[1])
+        contexts = [rs._section_line(item, "- Context:") for item in sections]
+        self.assertEqual(contexts[0], contexts[1])
+        prints = [rs._section_identity(item) for item in sections]
+        self.assertNotEqual(prints[0], prints[1])
+
+    def test_identity_comes_from_the_raw_id_context_and_question(self):
+        text = ("  The reviewer   says retries must be "
+                "bounded; the plan says otherwise.  ")
+        record = escalation()
+        base = rs.escalation_identity(record)
+        self.assertEqual(base, rs.escalation_identity(dict(record)))
+        self.assertNotEqual(base, rs.escalation_identity(escalation(id="s2:x")))
+        other = escalation(question="Something else")
+        self.assertNotEqual(base, rs.escalation_identity(other))
+        self.assertEqual(base, rs.escalation_identity(escalation(context=text)))
+
+    def test_a_section_without_a_fingerprint_is_never_rewritten(self):
+        legacy = (rs.ESCALATIONS_HEADER
+                  + "## [s1] Older render   (status: OPEN)\n"
+                  + (rs.ID_ANCHOR % "s1:review-block") + "\n"
+                  + "- Context: whatever\n- The decision: whatever\n"
+                  + "- Answer:\n- Answered-at:\n\n")
+        body = rs.place_escalation_section(legacy, "s1", escalation())
+        self.assertEqual(len(self.sections(body)), 2)
+        self.assertIn("## [s1] Older render   (status: OPEN)", body)
+
+    def test_the_back_compat_prose_readers_still_split_the_page(self):
+        # Both back-compat prose readers key a block only on a line starting
+        # "## [" and read body fields by a "- " prefix, so the new anchor
+        # line is inert to them, exactly as the id anchor already is.
+        import run_metrics
+        first = escalation()
+        second = escalation(id="s2:ambiguity")
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", first)
+        body = rs.place_escalation_section(body, "s2", second)
+        self.assertIn(rs.IDENTITY_ANCHOR % rs.escalation_identity(first), body)
+        parsed = run_metrics.legacy_parse_escalations(body)
+        self.assertEqual([item["id"] for item in parsed], ["s1", "s2"])
+
+    def test_a_legacy_section_quoting_an_anchor_is_left_standing(self):
+        # The reproduction. A section rendered before the fingerprint existed
+        # carries no anchor line of its own, so an unanchored match over the
+        # whole section reached into its prose and handed the record's own
+        # fingerprint back. place_escalation_section then rewrote that
+        # unrelated section in place and the older render was lost.
+        record = escalation()
+        stolen = rs.IDENTITY_ANCHOR % rs.escalation_identity(record)
+        legacy = (rs.ESCALATIONS_HEADER
+                  + "## [s9] Older render   (status: OPEN)\n"
+                  + (rs.ID_ANCHOR % "s9:ambiguity") + "\n"
+                  + "- Context: an unrelated note quoting " + stolen + " inline\n"
+                  + "- Answer:\n- Answered-at:\n\n")
+        body = rs.place_escalation_section(legacy, "s1", record)
+        self.assertEqual(len(self.sections(body)), 2)
+        self.assertIn("## [s9] Older render   (status: OPEN)", body)
+        self.assertIn(rs.IDENTITY_ANCHOR % rs.escalation_identity(record), body)
+
+    def test_an_anchor_embedded_in_prose_does_not_claim_another_section(self):
+        first = escalation()
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", first)
+        stolen = rs.IDENTITY_ANCHOR % rs.escalation_identity(first)
+        quoting = "unrelated question mentioning " + stolen
+        intruder = escalation(id="s2:ambiguity", context=quoting)
+        body = rs.place_escalation_section(body, "s2", intruder)
+        self.assertEqual(len(self.sections(body)), 2)
+        self.assertIn("## [s2]", body)
+        self.assertIn(rs.IDENTITY_ANCHOR % rs.escalation_identity(first), body)
+
+    def test_a_section_carrying_only_an_embedded_anchor_has_no_identity(self):
+        first = escalation()
+        stolen = rs.IDENTITY_ANCHOR % rs.escalation_identity(first)
+        section = ("## [s9] Legacy render   (status: OPEN)\n"
+                   + (rs.ID_ANCHOR % "s9:ambiguity") + "\n"
+                   + "- Context: prose containing " + stolen + " inline\n")
+        self.assertEqual(rs._section_identity(section), "")
+
 
 class TestAnswerWriteBack(unittest.TestCase):
     def setUp(self):
@@ -396,6 +596,92 @@ class TestAnswerWriteBack(unittest.TestCase):
         updated, _ = rs.answer_escalation(self.body, "s1:review-block",
                                           "do this\nthen that", LATER)
         self.assertIn("- Answer: do this then that", updated)
+
+    ROUND_ID = "s3:budget-exhausted"
+
+    def round_record(self, context):
+        return escalation(id=self.ROUND_ID, trigger="budget-exhausted", context=context)
+
+    def two_rounds(self):
+        """Two distinct rounds of one id placed back to back, both still open."""
+        first = rs.place_escalation_section(
+            rs.ESCALATIONS_HEADER, "s3",
+            self.round_record("undefined is not an object"))
+        return rs.place_escalation_section(
+            first, "s3", self.round_record("StructuredOutput retry cap"))
+
+    def rounds_answered_in_order(self):
+        """The page the recorded event stream builds: open, answer, open, answer.
+
+        Run 20260825 recorded exactly this order for its one id that
+        re-escalated on a genuinely new incident, so this is the shape the
+        answer targeting has to get right.
+        """
+        body = rs.place_escalation_section(
+            rs.ESCALATIONS_HEADER, "s3",
+            self.round_record("undefined is not an object"))
+        body, first = rs.answer_escalation(body, self.ROUND_ID, "first ruling", TS)
+        body = rs.place_escalation_section(
+            body, "s3", self.round_record("StructuredOutput retry cap"))
+        body, second = rs.answer_escalation(
+            body, self.ROUND_ID, "genuine agent failure this time", LATER)
+        self.assertEqual([first, second], [True, True])
+        return body
+
+    def test_an_answer_lands_on_the_round_still_open(self):
+        head, sections = rs._escalation_sections(self.rounds_answered_in_order())
+        self.assertEqual(len(sections), 2)
+        self.assertIn("undefined is not an object", sections[0])
+        self.assertIn("- Answer: first ruling", sections[0])
+        self.assertIn("StructuredOutput retry cap", sections[1])
+        self.assertIn("- Answer: genuine agent failure this time", sections[1])
+
+    def test_both_rounds_end_answered(self):
+        body = self.rounds_answered_in_order()
+        self.assertEqual(body.count(rs.STATUS_ANSWERED_MARK), 2)
+        self.assertEqual(body.count(rs.STATUS_OPEN_MARK), 0)
+
+    def test_a_re_answer_after_everything_is_answered_rewrites_the_first(self):
+        body, matched = rs.answer_escalation(
+            self.rounds_answered_in_order(), self.ROUND_ID, "c", LATER)
+        self.assertTrue(matched)
+        head, sections = rs._escalation_sections(body)
+        self.assertIn("- Answer: c", sections[0])
+        self.assertIn("- Answer: genuine agent failure this time", sections[1])
+
+    def test_two_rounds_open_at_once_hand_the_answer_to_the_newest(self):
+        # Two rounds of one id sit open at the same time only through a gap in
+        # the event stream. `open_escalations` keeps a single record per id,
+        # replaced by each escalation-opened, so the question the human was
+        # actually shown is the newest one, and the newest still-open section
+        # is the one an arriving answer belongs to. The older section keeps its
+        # own question and stays visibly unanswered rather than borrowing an
+        # answer it did not receive.
+        body, matched = rs.answer_escalation(
+            self.two_rounds(), self.ROUND_ID, "one ruling", LATER)
+        self.assertTrue(matched)
+        head, sections = rs._escalation_sections(body)
+        self.assertIn("- Answer: one ruling", sections[1])
+        self.assertIn(rs.STATUS_ANSWERED_MARK, rs._section_line(sections[1], "## "))
+        self.assertEqual(rs._section_has_answer(sections[0]), False)
+        self.assertIn(rs.STATUS_OPEN_MARK, rs._section_line(sections[0], "## "))
+
+    def test_a_single_section_page_is_unaffected(self):
+        page = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        body, matched = rs.answer_escalation(page, "s1:review-block", "bound them", LATER)
+        self.assertTrue(matched)
+        self.assertIn("- Answer: bound them", body)
+        self.assertIn(rs.STATUS_ANSWERED_MARK, body)
+
+    def test_an_unknown_id_still_does_not_match(self):
+        page = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", escalation())
+        body, matched = rs.answer_escalation(page, "s1:ghost", "x", LATER)
+        self.assertFalse(matched)
+        self.assertEqual(body, page)
+
+    def test_the_status_marks_are_the_ones_the_renderer_writes(self):
+        page = rs.render_escalation("s1", escalation())
+        self.assertIn(rs.STATUS_OPEN_MARK, page)
 
 
 class TestDecisionLine(unittest.TestCase):
@@ -687,8 +973,15 @@ class TestRunDirGuard(RunStateTestCase):
 
 
 class TestAppendEvent(RunStateTestCase):
+    def test_build_event_defaults_a_null_payload(self):
+        event = rs.build_event(TS, "run", "run-created", None)
+        expected = {"ts": TS, "scope": "run", "type": "run-created", "payload": {}}
+        self.assertEqual(event, expected)
+        self.assertEqual(list(event), ["ts", "scope", "type", "payload"])
+
     def test_creates_events_jsonl(self):
-        rs.append_event(self.run_dir, TS, "run", "run-created", {"run_id": "x"})
+        event = rs.build_event(TS, "run", "run-created", {"run_id": "x"})
+        rs.append_event(self.run_dir, event)
         lines = self.read("events.jsonl").splitlines()
         self.assertEqual(len(lines), 1)
         self.assertEqual(json.loads(lines[0]), {
@@ -696,45 +989,52 @@ class TestAppendEvent(RunStateTestCase):
             "payload": {"run_id": "x"}})
 
     def test_appends_in_order(self):
-        rs.append_event(self.run_dir, TS, "run", "run-created", {})
-        rs.append_event(self.run_dir, LATER, "wave1", "wave-dispatched", {"index": 1})
-        self.assertEqual([e["type"] for e in self.events()],
-                         ["run-created", "wave-dispatched"])
+        rs.append_event(self.run_dir, rs.build_event(TS, "run", "run-created", {}))
+        event = rs.build_event(LATER, "wave1", "wave-dispatched", {"index": 1})
+        rs.append_event(self.run_dir, event)
+        types = [e["type"] for e in self.events()]
+        self.assertEqual(types, ["run-created", "wave-dispatched"])
 
     def test_unrendered_event_writes_no_prose(self):
-        rs.append_event(self.run_dir, TS, "wave1", "wave-dispatched", {"index": 1})
+        event = rs.build_event(TS, "wave1", "wave-dispatched", {"index": 1})
+        rs.append_event(self.run_dir, event)
         self.assertIsNone(self.read("decisions-log.md"))
         self.assertIsNone(self.read("escalations.md"))
 
     def test_decision_event_renders_a_log_line(self):
-        rs.append_event(self.run_dir, TS, "s1", "decision",
-                        {"summary": "reuse the CSV writer"})
+        event = rs.build_event(TS, "s1", "decision", {"summary": "reuse the CSV writer"})
+        rs.append_event(self.run_dir, event)
         body = self.read("decisions-log.md")
         self.assertIn("# Decisions log", body)
         self.assertIn("[s1] DECISION: reuse the CSV writer — AT: %s" % TS, body)
 
     def test_decision_log_is_append_only(self):
-        rs.append_event(self.run_dir, TS, "s1", "decision", {"summary": "one"})
-        rs.append_event(self.run_dir, LATER, "s2", "deferred", {"summary": "two"})
+        event = rs.build_event(TS, "s1", "decision", {"summary": "one"})
+        rs.append_event(self.run_dir, event)
+        event = rs.build_event(LATER, "s2", "deferred", {"summary": "two"})
+        rs.append_event(self.run_dir, event)
         body = self.read("decisions-log.md")
         self.assertIn("one", body)
         self.assertIn("two", body)
         self.assertEqual(body.count("# Decisions log"), 1)
 
     def test_every_gate_event_type_is_logged(self):
-        for index, event_type in enumerate(
-                ("decision", "deferred", "council-verdict", "quality-gate",
-                 "integration-check", "phase5-gate")):
-            rs.append_event(self.run_dir, TS, "s%d" % index, event_type,
-                            {"summary": "s", "verdict": "ENDORSE", "status": "PASS",
-                             "result": "PASS"})
+        payload = {"summary": "s", "verdict": "ENDORSE", "status": "PASS",
+                   "result": "PASS"}
+        emitted = ("decision", "deferred", "council-verdict", "quality-gate",
+                   "integration-check", "phase5-gate")
+        for index, event_type in enumerate(emitted):
+            event = rs.build_event(TS, "s%d" % index, event_type, payload)
+            rs.append_event(self.run_dir, event)
         body = self.read("decisions-log.md")
-        for event_type in ("DECISION", "DEFERRED", "COUNCIL-VERDICT",
-                           "QUALITY-GATE", "INTEGRATION-CHECK", "PHASE5-GATE"):
-            self.assertIn(event_type, body)
+        logged = ("DECISION", "DEFERRED", "COUNCIL-VERDICT", "QUALITY-GATE",
+                  "INTEGRATION-CHECK", "PHASE5-GATE")
+        for marker in logged:
+            self.assertIn(marker, body)
 
     def test_escalation_opened_writes_a_full_entry(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
         body = self.read("escalations.md")
         self.assertIn("# Escalations", body)
         self.assertIn("(status: OPEN)", body)
@@ -742,44 +1042,104 @@ class TestAppendEvent(RunStateTestCase):
         self.assertIsNone(self.read("decisions-log.md"))
 
     def test_escalation_answered_fills_in_the_entry(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered",
-                        {"id": "s1:review-block", "answer": "bound them"})
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        payload = {"id": "s1:review-block", "answer": "bound them"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
         body = self.read("escalations.md")
         self.assertIn("- Answer: bound them", body)
         self.assertIn("- Answered-at: %s" % LATER, body)
         self.assertIn("(status: ANSWERED)", body)
 
     def test_escalation_answered_honours_an_explicit_answered_at(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered",
-                        {"id": "s1:review-block", "answer": "x",
-                         "answered_at": "2026-08-01T00:00:00Z"})
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        payload = {"id": "s1:review-block", "answer": "x",
+                   "answered_at": "2026-08-01T00:00:00Z"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
         self.assertIn("- Answered-at: 2026-08-01T00:00:00Z", self.read("escalations.md"))
 
     def test_orphan_answer_is_still_surfaced(self):
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered",
-                        {"id": "s1:ghost", "answer": "whatever"})
+        payload = {"id": "s1:ghost", "answer": "whatever"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
         body = self.read("escalations.md")
         self.assertIn("s1:ghost", body)
         self.assertIn("whatever", body)
 
+    def sections(self, body):
+        return [line for line in body.splitlines() if line.startswith("## ")]
+
+    def test_an_identical_re_open_does_not_add_a_second_section(self):
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        event = rs.build_event(LATER, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        body = self.read("escalations.md")
+        self.assertEqual(len(self.sections(body)), 1)
+        self.assertEqual(body.count(rs.ID_ANCHOR % "s1:review-block"), 1)
+
+    def test_both_re_opens_stay_in_the_event_log(self):
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        event = rs.build_event(LATER, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        types = [event["type"] for event in self.events()]
+        self.assertEqual(types.count("escalation-opened"), 2)
+
+    def test_a_new_incident_under_one_id_gets_its_own_section(self):
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        second = escalation(context="Genuine agent failure this time.")
+        event = rs.build_event(LATER, "s1", "escalation-opened", second)
+        rs.append_event(self.run_dir, event)
+        body = self.read("escalations.md")
+        self.assertEqual(len(self.sections(body)), 2)
+        self.assertIn("Genuine agent failure this time", body)
+
+    def test_a_bare_re_open_never_blanks_a_recorded_answer(self):
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        answer_payload = {"id": "s1:review-block", "answer": "bound them"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", answer_payload)
+        rs.append_event(self.run_dir, event)
+        event = rs.build_event(LATER, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        body = self.read("escalations.md")
+        self.assertEqual(len(self.sections(body)), 1)
+        self.assertIn("- Answer: bound them", body)
+        self.assertIn("(status: ANSWERED)", body)
+
+    def test_the_header_is_written_once(self):
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        second = escalation(id="s2:ambiguity")
+        event = rs.build_event(LATER, "s2", "escalation-opened", second)
+        rs.append_event(self.run_dir, event)
+        self.assertEqual(self.read("escalations.md").count("# Escalations"), 1)
+
     def test_events_survive_a_prose_render(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
         self.assertEqual([e["type"] for e in self.events()], ["escalation-opened"])
 
     def test_malformed_lines_are_skipped_by_the_reader(self):
-        rs.append_event(self.run_dir, TS, "s1", "decision", {"summary": "ok"})
+        event = rs.build_event(TS, "s1", "decision", {"summary": "ok"})
+        rs.append_event(self.run_dir, event)
         with open(os.path.join(self.run_dir, "events.jsonl"), "a", encoding="utf-8") as fh:
             fh.write("{half written\n")
-        rs.append_event(self.run_dir, LATER, "s1", "decision", {"summary": "also ok"})
+        event = rs.build_event(LATER, "s1", "decision", {"summary": "also ok"})
+        rs.append_event(self.run_dir, event)
         self.assertEqual(len(self.events()), 2)
 
     def test_reader_tolerates_a_missing_file(self):
         self.assertEqual(rs.read_events(self.run_dir), [])
 
     def test_reader_skips_blank_lines(self):
-        rs.append_event(self.run_dir, TS, "s1", "decision", {"summary": "ok"})
+        event = rs.build_event(TS, "s1", "decision", {"summary": "ok"})
+        rs.append_event(self.run_dir, event)
         with open(os.path.join(self.run_dir, "events.jsonl"), "a", encoding="utf-8") as fh:
             fh.write("\n\n")
         self.assertEqual(len(self.events()), 1)
@@ -789,12 +1149,63 @@ class TestAppendEvent(RunStateTestCase):
         with open(blocked, "w", encoding="utf-8") as fh:
             fh.write("x")
         with self.assertRaises(rs.RunStateError):
-            rs.append_event(blocked, TS, "run", "run-created", {})
+            rs.append_event(blocked, rs.build_event(TS, "run", "run-created", {}))
 
     def test_sidecar_write_failure_is_a_run_state_error(self):
         with mock.patch.object(rs.os, "replace", side_effect=OSError("read-only")):
             with self.assertRaises(rs.RunStateError):
                 rs.persist_slice(self.run_dir, sidecar(), wave=1, ts=TS)
+
+
+class TestEscalationPageReadFailure(RunStateTestCase):
+    """A page on disk that cannot be read must never be rewritten.
+
+    Regression: placement read the page through a reader that reported an
+    OSError as empty text, so a page holding three sections was replaced by
+    a fresh header plus one section and nothing was raised.
+    """
+
+    def sections(self, body):
+        return [line for line in body.splitlines() if line.startswith("## ")]
+
+    def open_three(self):
+        for index in (1, 2, 3):
+            record = escalation(
+                id="s%d:review-block" % index,
+                context="Round %d context." % index)
+            event = rs.build_event(TS, "s%d" % index, "escalation-opened", record)
+            rs.append_event(self.run_dir, event)
+
+    def page_path(self):
+        return os.path.join(self.run_dir, rs.ESCALATIONS_MD)
+
+    def test_a_page_that_cannot_be_read_is_not_replaced(self):
+        self.open_three()
+        before = self.read("escalations.md")
+        self.assertEqual(len(self.sections(before)), 3)
+        record = escalation(id="s4:ambiguity")
+        event = rs.build_event(LATER, "s4", "escalation-opened", record)
+        guard = refuse_reads(self.page_path())
+        with mock.patch("builtins.open", guard), self.assertRaises(rs.RunStateError):
+            rs.append_event(self.run_dir, event)
+        self.assertEqual(self.read("escalations.md"), before)
+
+    def test_an_unreadable_page_does_not_swallow_an_answer_either(self):
+        self.open_three()
+        before = self.read("escalations.md")
+        payload = {"id": "s1:review-block", "answer": "bound them"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", payload)
+        guard = refuse_reads(self.page_path())
+        with mock.patch("builtins.open", guard), self.assertRaises(rs.RunStateError):
+            rs.append_event(self.run_dir, event)
+        self.assertEqual(self.read("escalations.md"), before)
+
+    def test_an_absent_page_is_still_created_from_the_header(self):
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        body = self.read("escalations.md")
+        self.assertTrue(body.startswith(rs.ESCALATIONS_HEADER))
+        self.assertEqual(len(self.sections(body)), 1)
 
 
 class TestPersistSlice(RunStateTestCase):
@@ -950,13 +1361,16 @@ class TestPersistSlice(RunStateTestCase):
 
 class TestOpenEscalations(RunStateTestCase):
     def open_one(self, escalation_id, ts=TS, **over):
-        rs.append_event(self.run_dir, ts, escalation_id.split(":")[0],
-                        "escalation-opened", escalation(id=escalation_id, **over))
+        scope = escalation_id.split(":")[0]
+        record = escalation(id=escalation_id, **over)
+        event = rs.build_event(ts, scope, "escalation-opened", record)
+        rs.append_event(self.run_dir, event)
 
     def answer(self, escalation_id, ts=LATER):
-        rs.append_event(self.run_dir, ts, escalation_id.split(":")[0],
-                        "escalation-answered",
-                        {"id": escalation_id, "answer": "done"})
+        scope = escalation_id.split(":")[0]
+        payload = {"id": escalation_id, "answer": "done"}
+        event = rs.build_event(ts, scope, "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
 
     def test_no_events_no_escalations(self):
         self.assertEqual(rs.open_escalations(self.run_dir), [])
@@ -996,8 +1410,9 @@ class TestOpenEscalations(RunStateTestCase):
                          ["s1:review-block"])
 
     def test_record_already_marked_answered_is_not_open(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened",
-                        escalation(status="ANSWERED", answer="x", answered_at=TS))
+        record = escalation(status="ANSWERED", answer="x", answered_at=TS)
+        event = rs.build_event(TS, "s1", "escalation-opened", record)
+        rs.append_event(self.run_dir, event)
         self.assertEqual(rs.open_escalations(self.run_dir), [])
 
     def test_non_object_payloads_are_ignored(self):
@@ -1008,8 +1423,122 @@ class TestOpenEscalations(RunStateTestCase):
         self.assertEqual(rs.open_escalations(self.run_dir), [])
 
     def test_payloads_without_an_id_are_ignored(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", {"title": "no id"})
+        event = rs.build_event(TS, "s1", "escalation-opened", {"title": "no id"})
+        rs.append_event(self.run_dir, event)
         self.assertEqual(rs.open_escalations(self.run_dir), [])
+
+    def test_a_deduplicated_re_open_still_reaches_the_human_gate(self):
+        # The renderer collapses an identical re-emit onto one section; the
+        # gate is a separate, fail-safe reader and must still list the id.
+        record = escalation(id="s1:budget-exhausted", trigger="budget-exhausted")
+        rs.append_event(self.run_dir, rs.build_event(TS, "s1", "escalation-opened", record))
+        event = rs.build_event(LATER, "s1", "escalation-opened", record)
+        rs.append_event(self.run_dir, event)
+        ids = [item["id"] for item in rs.open_escalations(self.run_dir)]
+        self.assertEqual(ids, ["s1:budget-exhausted"])
+        body = self.read("escalations.md")
+        sections = [line for line in body.splitlines() if line.startswith("## ")]
+        self.assertEqual(len(sections), 1)
+
+
+# --------------------------------------------------------------------------
+# replay of the recorded runs under docs/spec-loop/ — the real corpus
+# --------------------------------------------------------------------------
+
+class TestRecordedCorpusReplay(RunStateTestCase):
+    """Replays the escalation events of the two completed runs recorded under
+    docs/spec-loop/ into a throwaway run dir. Those run directories are the
+    read-only reproduction corpus: this class reads them and writes only
+    inside self.run_dir.
+    """
+
+    def corpus(self, run_id):
+        root = Path(__file__).resolve().parents[3]
+        return root / "docs" / "spec-loop" / run_id
+
+    def escalation_events(self, run_id):
+        path = self.corpus(run_id) / "events.jsonl"
+        self.assertTrue(path.exists(), path)
+        raw = path.read_text(encoding="utf-8").splitlines()
+        events = [json.loads(line) for line in raw if line.strip()]
+        return [item for item in events if item.get("type") in rs.ESCALATION_EVENTS]
+
+    def replay(self, run_id):
+        for event in self.escalation_events(run_id):
+            payload = event.get("payload") or {}
+            fields = (event.get("ts"), event.get("scope"), event["type"], payload)
+            rs.append_event(self.run_dir, rs.build_event(*fields))
+        return self.read("escalations.md")
+
+    def headings(self, body):
+        return [line for line in body.splitlines() if line.startswith("## ")]
+
+    def answered_sections(self, sections):
+        return [item for item in sections if self.is_answered(item)]
+
+    def is_answered(self, section):
+        return rs.STATUS_ANSWERED_MARK in rs._section_line(section, "## ")
+
+    def headings_without_answer_text(self, sections):
+        blank = [item for item in sections if not rs._section_has_answer(item)]
+        return [rs._section_line(item, "## ") for item in blank]
+
+    def test_the_replayed_events_keep_their_recorded_type_and_scope(self):
+        recorded = self.escalation_events("20260825-scope-ceiling")
+        expected = [(item["type"], item.get("scope")) for item in recorded]
+        self.replay("20260825-scope-ceiling")
+        actual = [(item["type"], item.get("scope")) for item in self.events()]
+        self.assertEqual(actual, expected)
+
+    def test_the_recorded_page_has_twelve_sections_and_the_replay_has_nine(self):
+        # The recorded artifact is the defect: 11 escalation-opened events over
+        # 7 ids rendered 11 sections plus 1 orphan-answer entry. Three of those
+        # opens re-asked a question already on the page.
+        page = self.corpus("20260825-scope-ceiling") / "escalations.md"
+        recorded = page.read_text(encoding="utf-8")
+        self.assertEqual(len(self.headings(recorded)), 12)
+        replayed = self.replay("20260825-scope-ceiling")
+        self.assertEqual(len(self.headings(replayed)), 9)
+
+    def test_a_second_incident_under_one_id_keeps_its_own_section_and_answer(self):
+        body = self.replay("20260825-scope-ceiling")
+        head, sections = rs._escalation_sections(body)
+        anchor = rs.ID_ANCHOR % "s3:budget-exhausted"
+        rounds = [item for item in sections if anchor in item]
+        self.assertEqual(len(rounds), 2)
+        self.assertIn("undefined is not an object", rounds[0])
+        self.assertIn("StructuredOutput retry", rounds[1])
+        second = rs._section_line(rounds[1], "- Answer:")
+        self.assertIn("Genuine agent failure this time", second)
+
+    def test_the_one_answered_section_without_answer_text_is_the_recorded_one(self):
+        # Every section the replay renders ends ANSWERED, and exactly one of
+        # them carries no answer text. That one is recorded that way in the
+        # corpus, not produced by placement: the s2:quality-gate-block
+        # escalation-opened payload itself says status ANSWERED with a null
+        # answer, and its answer had already arrived before that id had any
+        # section on the page, so it stands in the orphan-answer entry above.
+        # Copying that text down onto this record is carry-answer-forward,
+        # which this slice deliberately does not do. The recorded artifact has
+        # three such sections; the replay has this one. A second entry in this
+        # list means a de-duplicated round was marked answered without having
+        # received an answer.
+        body = self.replay("20260825-scope-ceiling")
+        head, sections = rs._escalation_sections(body)
+        answered = self.answered_sections(sections)
+        self.assertEqual(len(answered), 9)
+        expected = "## [s2] verification failed   " + rs.STATUS_ANSWERED_MARK
+        self.assertEqual(self.headings_without_answer_text(answered), [expected])
+
+    def test_the_second_recorded_run_is_unchanged_at_one_section(self):
+        body = self.replay("20260826-crash-classification")
+        self.assertEqual(len(self.headings(body)), 1)
+
+    def test_the_replay_writes_nothing_into_the_corpus(self):
+        path = self.corpus("20260825-scope-ceiling") / "escalations.md"
+        before = path.read_bytes()
+        self.replay("20260825-scope-ceiling")
+        self.assertEqual(path.read_bytes(), before)
 
 
 # --------------------------------------------------------------------------
@@ -1198,20 +1727,22 @@ class TestPinnedPayloadFacts(RunStateTestCase):
     def test_answers_pair_by_id_not_by_scope(self):
         # One slice can open several escalations; answering one must not close
         # its siblings.
-        first, second = escalation(), escalation(id="s1:ambiguity",
-                                                 trigger="ambiguity")
-        rs.persist_slice(self.run_dir,
-                         sidecar("ESCALATED", escalations=[first, second]),
-                         wave=1, ts=TS)
-        rs.append_event(self.run_dir, LATER, "s1", "escalation-answered",
-                        {"id": "s1:ambiguity", "answer": "ISO-8601"})
-        self.assertEqual([r["id"] for r in rs.open_escalations(self.run_dir)],
-                         ["s1:review-block"])
+        first = escalation()
+        second = escalation(id="s1:ambiguity", trigger="ambiguity")
+        body = sidecar("ESCALATED", escalations=[first, second])
+        rs.persist_slice(self.run_dir, body, wave=1, ts=TS)
+        payload = {"id": "s1:ambiguity", "answer": "ISO-8601"}
+        event = rs.build_event(LATER, "s1", "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
+        still_open = [r["id"] for r in rs.open_escalations(self.run_dir)]
+        self.assertEqual(still_open, ["s1:review-block"])
 
     def test_an_answer_from_another_scope_still_pairs_by_id(self):
-        rs.append_event(self.run_dir, TS, "s1", "escalation-opened", escalation())
-        rs.append_event(self.run_dir, LATER, "run", "escalation-answered",
-                        {"id": "s1:review-block", "answer": "bound them"})
+        event = rs.build_event(TS, "s1", "escalation-opened", escalation())
+        rs.append_event(self.run_dir, event)
+        payload = {"id": "s1:review-block", "answer": "bound them"}
+        event = rs.build_event(LATER, "run", "escalation-answered", payload)
+        rs.append_event(self.run_dir, event)
         self.assertEqual(rs.open_escalations(self.run_dir), [])
 
     def test_council_verdict_passes_safety_through(self):
@@ -1227,8 +1758,9 @@ class TestPinnedPayloadFacts(RunStateTestCase):
         self.assertIs(verdict["payload"]["safety"], False)
 
     def test_safety_is_named_in_the_decisions_log(self):
-        rs.append_event(self.run_dir, TS, "s1", "council-verdict",
-                        {"verdict": "OBJECT", "concerns": 1, "safety": True})
+        payload = {"verdict": "OBJECT", "concerns": 1, "safety": True}
+        event = rs.build_event(TS, "s1", "council-verdict", payload)
+        rs.append_event(self.run_dir, event)
         self.assertIn("SAFETY OBJECT", self.read("decisions-log.md"))
 
     def test_council_verdict_carries_the_whole_over_scope_record_not_just_a_bool(self):
@@ -1286,7 +1818,7 @@ class TestPinnedPayloadFacts(RunStateTestCase):
 
     def test_a_deferred_event_marks_deferred_scope_with_over_scope_true(self):
         payload = {"title": "dashboard charts", "over_scope": True}
-        rs.append_event(self.run_dir, TS, "s1", "deferred", payload)
+        rs.append_event(self.run_dir, rs.build_event(TS, "s1", "deferred", payload))
         stored = self.events()[0]["payload"]
         decisions_log = self.read("decisions-log.md")
         self.assertEqual(stored, payload)
@@ -1306,16 +1838,17 @@ class TestPinnedPayloadFacts(RunStateTestCase):
                    "agent_type": "sdd-implementer",
                    "dispatched_at": TS, "returned_at": LATER,
                    "tokens_in": 1200, "tokens_out": 340}
-        rs.append_event(self.run_dir, TS, "s1", "agent-dispatch", payload)
+        rs.append_event(self.run_dir, rs.build_event(TS, "s1", "agent-dispatch", payload))
         stored = self.events()[0]
         self.assertEqual(stored["payload"], payload)
         self.assertIsNone(self.read("decisions-log.md"))
 
     def test_agent_dispatch_absent_timings_stay_absent(self):
-        rs.append_event(self.run_dir, TS, "s1", "agent-dispatch",
-                        {"role": "reviewer", "model": None})
-        self.assertEqual(self.events()[0]["payload"], {"role": "reviewer",
-                                                      "model": None})
+        payload = {"role": "reviewer", "model": None}
+        event = rs.build_event(TS, "s1", "agent-dispatch", payload)
+        rs.append_event(self.run_dir, event)
+        stored = self.events()[0]["payload"]
+        self.assertEqual(stored, {"role": "reviewer", "model": None})
 
     def test_no_emitted_payload_derives_a_duration(self):
         # ts is a batch collection stamp: nothing here may turn it into elapsed

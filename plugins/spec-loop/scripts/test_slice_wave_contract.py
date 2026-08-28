@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Contract checks: guarded task-result reads, quality-gate-block answer
-injection, and the record-only `over_scope` critique field.
+injection, the record-only `over_scope` critique field, and the
+escalation-gate skill's account of the lost-slice ask.
 
 See `slice_wave_contract_base.py` for the module-wide rationale (why this
 is source-text assertion, why snippets are named constants, and the two
@@ -18,14 +19,16 @@ Usage:
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 from slice_wave_contract_base import (
     ANSWER_CONTEXT_END, ANSWER_CONTEXT_START, ANSWERABLE_TRIGGERS, CLEAN,
-    COUNCIL_VERDICT_EVENT, CRITIQUE_REQUIRED, CRITIQUE_ROLLUP,
+    COMMAND_MD, COUNCIL_VERDICT_EVENT, CRITIQUE_REQUIRED, CRITIQUE_ROLLUP,
     FAIL_CLOSED_DEFAULT, FINDING_CATEGORIES, FLAGGED, GATE_ANSWER,
     GATE_ANSWER_CONTEXT, GUARDED_BASE, GUARDED_CONCERNS,
     GUARDED_DEVIATIONS, GUARDED_HEAD, GUARDED_LOCAL, GUARDED_TOUCHED,
@@ -254,6 +257,72 @@ class TestScopeRecordBehavesAndNotJustExists(WorkflowSourceTestCase):
         # would reach run_state.py as an absent key instead of an explicit null.
         got = self.scope_record([[{"over_scope": {"flag": True}}]])
         self.assertEqual(got, [{"flag": True, "reason": None}])
+
+
+# The round component of an escalation id is derived from the keys of the
+# `answers` map alone, so the map handed to a re-dispatch has to stay
+# cumulative over the whole run. Both controller paragraphs that build that
+# map are pinned below, on collapsed whitespace so a rewrap of the prose
+# leaves the pin intact. The helper is module-local rather than shared,
+# because `slice_wave_contract_base` sits at its non-blank-line ceiling.
+def collapsed(text):
+    """Runs of whitespace become a single space."""
+    return re.sub(r"\s+", " ", text)
+
+
+ANSWERS_INVARIANT = (
+    "must hand the wave an `answers` map carrying EVERY answered escalation "
+    "of the run, all rounds included")
+RESUME_DRAIN = (
+    "drain EVERY answered escalation of the run into the `answers` map")
+NARROW_DRAIN = "ANSWERED-but-undispatched"
+
+
+class TestTheAnswersMapStaysCumulativeAcrossAResume(WorkflowSourceTestCase):
+    """`escRound` counts the answered rounds present in `args.answers`, so a
+    truncated map re-issues an id that has already been answered - the
+    collision the round suffix exists to remove. The controller command is
+    the only place that builds the map, and its two build sites (the
+    escalation step and the resume drain) have to agree on that."""
+
+    def command(self):
+        return collapsed(COMMAND_MD.read_text(encoding="utf-8"))
+
+    def test_the_escalation_step_states_the_cumulative_map_invariant(self):
+        self.assertIn(collapsed(ANSWERS_INVARIANT), self.command())
+
+    def test_the_resume_drain_covers_every_answered_escalation(self):
+        self.assertIn(collapsed(RESUME_DRAIN), self.command())
+
+    def test_no_build_site_narrows_the_drain_to_undispatched_answers(self):
+        # The narrow drain kept only answers not yet handed to a slice, which
+        # is precisely the set that leaves the round counter short after a
+        # fresh resume.
+        self.assertNotIn(NARROW_DRAIN, self.command())
+
+    def test_the_round_number_is_still_derived_from_the_answer_keys(self):
+        # The pins above are prose. This one holds them to the code they
+        # describe: the derivation they exist to protect is the real one.
+        source = wrapped_source()
+        self.assertIn("return answerKeysFor(sliceId, trigger).length + 1", source)
+
+
+SKILL_MD = (Path(__file__).resolve().parents[1]
+            / "skills" / "escalation-gate" / "SKILL.md")
+LOST_ASK_TAIL = "or stop the run to investigate the silent failure"
+LOST_ASK_STALE = "asks only whether to re-run the wave"
+
+
+class TestTheSkillDescribesTheLostSliceAsk(WorkflowSourceTestCase):
+    """The skill doc is a live plugin surface, and this sentence already
+    carried a prior run's accuracy complaint. The wave widened the ask to
+    three ways; nothing held the doc to it, so the drift was silent."""
+
+    def test_the_skill_names_the_ask_the_wave_actually_emits(self):
+        prose = re.sub(r"\s+", " ", SKILL_MD.read_text(encoding="utf-8"))
+        self.assertIn(LOST_ASK_TAIL, self.src)
+        self.assertIn(LOST_ASK_TAIL, prose)
+        self.assertNotIn(LOST_ASK_STALE, prose)
 
 
 if __name__ == "__main__":  # pragma: no cover

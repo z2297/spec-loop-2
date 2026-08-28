@@ -1,0 +1,416 @@
+{
+  "schema_version": 2,
+  "run_id": "20260827-deferral-sweep",
+  "base_ref": "spec-loop-run/20260827-deferral-sweep",
+  "base_sha": "299f0dbd1f700f8f3b3991ea7d601df797dd3749",
+  "base_branch": "main",
+  "merge_mode": "single-branch",
+  "mode": "workflow",
+  "created_at": "2026-08-27T17:05:00Z",
+  "test_command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; claude plugin validate .",
+  "shared_constraints": [
+    "plugin_root AND every controller script call resolve to the FROZEN pre-run snapshot ~/.claude/spec-loop-2/plugin-snapshots/20260827-deferral-sweep/ (plugin 2.2.1, sha256-verified byte-identical to plugins/spec-loop at 299f0db). The installed cache is 2.2.0 and its run_state.py trigger tuple LACKS 'internal-error' (verified: grep count 0), so collecting through the cache would make persist_slice raise SidecarInvalid before its first write on any crash - destroying that slice's sidecar, events and report irreversibly. Never invoke a script from the cache during this run.",
+    "The 2.2.1 orchestration JS finally EXECUTES this run (dispatch by scriptPath from the snapshot), which is what closes item 3.1's 'never executed' complaint. Two honest limits, to be stated wherever this is described: (a) a non-crashing wave exercises only the non-crash paths - the internal-error branch runs only if something actually crashes; (b) the snapshot is frozen, so this run's OWN new code is again not self-exercising. The one place this run's modified Python really executes is the test suite inside each slice worktree.",
+    "'node --check' does NOT pass on slice-wave.workflow.js in either module mode: the file has a top-level return that is only legal inside the Workflow host's implicit async wrapper. Use slice_wave_contract_base.wrapped_source() (:260-265). Never claim the raw file is node-parseable.",
+    "QUALITY GATE MASKING - fill masked string/comment spans with a NON-WHITESPACE SENTINEL, never spaces. Measured: space-fill RAISES cognitive complexity on 31 of 2091 Python functions (run_metrics.py:481 parse_dag 51->75) because _cognitive_approx takes `level` from leading whitespace (quality_gate.py:545-546) while counting hits on line.strip(). Sentinel fill measures 0 rises.",
+    "QUALITY GATE MASKING - mask ONLY the text handed to _branch_count (quality_gate.py:418) and _cognitive_approx (:533). Never mask `source` at the top of analyze_builtin: _extract_functions_python (:440-443) ends a function at the first non-blank line whose indent is <= the def's, _match_brace_end (:489-503) and _nesting_depth_braces (:514-526) count raw braces, and _nonblank (:561) powers method_lines/class_lines. Function extraction, method_lines, parameter_count and both nesting_depth variants keep RAW lines.",
+    "QUALITY GATE MASKING - preserve template-literal interpolation content. The text inside ${ } is real code and its ?: && || genuinely branch. Measured: blanking whole template literals reports runSliceError at cyclomatic 5 / cognitive 8 instead of the correct 7 / 12 - a silent UNDER-count, the dangerous direction.",
+    "QUALITY GATE MASKING - comment recognition is MANDATORY for the cbrace scanner, not optional. slice-wave.workflow.js has 19 '//' comment lines containing an apostrophe (:153 \"JSON's\", :198 \"panel's\"); a strings-only scanner opens a phantom literal at :153 and closes it at :198, blanking ~45 lines of real code. The same class of apostrophe-in-comment exists in Python at quality_gate.py:60,61,102 and dashboard_server.py:83,86,120,137,141,148.",
+    "QUALITY GATE MASKING - FAIL TOWARD RAW. Python uses stdlib tokenize (verified: 0 failures across all 32 .py files in the repo), which raises on an unterminated literal instead of cascading. The cbrace scanner must end in the default state. On ANY tokenizer error, non-default end state, or a mask that blanks more than ~5% of non-blank lines, DISCARD the mask and scan the RAW text. Correct scanner blanks 7 of 812 non-blank lines; a broken one blanked 555 of 923 - that ratio guard alone catches the failure class. Every failure mode must land on today's over-counting behaviour, never on a silent under-count.",
+    "QUALITY GATE - the change may only ever LOWER cyclomatic and cognitive, and must leave nesting_depth, method_lines and (line_start, line_end) EXACTLY equal. Required verification: a differential harness calling analyze_builtin(path, source, [(1, len(lines))]) old-vs-new over EVERY .py and .js under plugins/spec-loop/, asserting new.cyclomatic <= old and new.cognitive <= old PLUS strict equality on those three. The equalities are what catch brace/span corruption (the explorer's observed 5->35 rise); the inequalities alone permit it.",
+    "QUALITY GATE - stageFixLoop (slice-wave.workflow.js:769-783) measures cognitive EXACTLY 15 against a threshold of 15 and passes only because _finding() uses value <= threshold (quality_gate.py:861-866). Any over-counting bug flips it PASS->FAIL immediately. Report measured before/after for stageFixLoop, runSliceError and globToRe.",
+    "QUALITY GATE - do NOT claim the fix rescues globToRe (slice-wave.workflow.js:166-177). Measured 25 -> 17 against a threshold of 15: the miscount inflates it by 8 points but the function is genuinely over. Three of its counted 'ternaries' are punctuation inside string literals (the ? in '.+^$()|[]{}\\\\?' and two in '^(?:.*/)?'). State this honestly.",
+    "QUALITY GATE - do not lex JS regex literals (the division-vs-regex ambiguity is not safely decidable by a hand scanner); document the residual. No regex literal in this repo currently contains a quote.",
+    "OLD-GATE BLOCKER - every slice's diff is graded by the FROZEN pre-change gate, including the gate slices' own diffs. test_quality_gate.py:264 test_counts_keywords_and_operators already measures cyclomatic 18 / cognitive 34 and survives only by being outside a diff: EDITING THAT FUNCTION WILL BE BLOCKED at 18 > 10. Put new coverage in NEW test methods and hoist keyword-bearing fixtures to module constants, the way slice_wave_contract_base.py:34-38 already does. Also keep control-flow words out of your own new string literals and docstrings.",
+    "The quality gate's measurement semantics change in this run, so metrics.json gate figures are NOT comparable across the boundary. quality.quality_gate.measurements, failures, first_pass_rate and final_status_counts all shift for a reason unrelated to code quality (recorded: 20260825 first_pass_rate 0.25, 20260826 0.3333, both under the old semantics). No recorded artifact is invalidated - nothing re-measures a historical run dir and sidecar quality blocks are free text - and nothing presents the figures side by side (dashboard_assets/index.html:873-878 shows only escalations/autonomy/wall-clock across runs). The obligation is documentary: the [Unreleased] CHANGELOG entry must record the semantics change and its date. No slice may cite a pre-2026-08-27 gate figure as a baseline for a post-change measurement.",
+    "No test may assert against a re-implementation of the code it protects. Assert against the real callable and import the real constant. A fix that introduces a fresh copy fails its own brief. (INTG-1's current test is WORSE than a faithful port: run_state._one_line slices [:limit-1]+ellipsis only when the text exceeds the limit, while the test slices unconditionally with no ellipsis.)",
+    "No comment, docstring, test-class name, or CHANGELOG sentence may claim more coverage or more record content than exists. Introducing a third instance of that defect in the run that fixes two is a P0.",
+    "The lost-slice record and the caught-exception record are DIFFERENT shapes and the ground truth is slice-wave.workflow.js, never any prose. Verified behaviourally: the caught-exception record (:887-898) passes three controller-named options; the lost-slice record (:919) passes options: [] and esc() (:255-263) substitutes ONE generic option labelled 'Proceed with the recommended default' whose detail repeats the whole context. That substitution is documented nowhere.",
+    "Cite behaviour, not line numbers, in comments and docs. Line-number citations are the recurring defect (INT-9, then INTG-7) and this run's diffs will move lines again. Where a citation is genuinely needed, name the function or the constant.",
+    "When a doc and the workflow disagree, the WORKFLOW is what runs (risk-tiers.md states this). Prose fixes move the doc to the code, never the reverse, and the slice must quote the code line it matched to.",
+    "Any 'I swept everything' claim must be backed by the pasted output of the grep that swept it. An unbacked sweep claim is not evidence (graph pattern: an-audit-of-a-self-report-must-not-itself-be-self-reported).",
+    "'internal-error' stays exactly one enum value with that exact spelling in every home (HUMAN-DECIDED, run 20260826 A2), and stays substring-safe in both directions against all six other triggers because run_metrics._legacy_match_triggers matches by containment. Never remove 'budget-exhausted' from any enum or tuple and never change its position - completed runs must keep validating and rendering.",
+    "The trigger enum has FOUR code homes (run_state.py:67-69, run_metrics.py:119-126, dashboard_server.py:149-151, slice-wave.workflow.js:40) and TWO unpinned PROSE homes (agents/slice-worker-fallback.md:152-153 and references/run-state-v2.md:101 - the latter is a home the source deferral report never names). slice_wave_contract_base.TRIGGER_ENUM_LINE is the LOCATOR for the JS enum, not a home. ANY slice that pins the enum or the option text becomes a new home and MUST update the census in the same change.",
+    "references/run-state-v2.md:112-119 is CLEAN - it correctly hedges. Do not 'fix' it. Verified negative result.",
+    "Never weaken a threshold to pass the gate. Thresholds are fixed in ~/.claude/spec-loop-2/quality-gate.json; this run changes what counts as a branch, never what the limit is.",
+    "Coverage floors are live and fail closed (python3 scripts/measure_coverage.py). Baseline: quality_gate.py 91.7% vs floor 86 (638/696 - needs 46 wholly-uncovered new lines to breach), run_state.py 100.0% vs 95 (671/671 - needs 36), run_metrics.py 98.6% vs 93, TOTAL 96.7% vs 90. Report the MEASURED number, never an estimate, and never reach for coverage_omit.txt.",
+    "A new .js/.mjs file over 300 non-blank lines is a NEW class_lines violation. The standing human acceptance covers only files already over the bar beforehand (precedent: docs/spec-loop/20260825-scope-ceiling/slice-s3-status.json, where a 422-line file this repo created had to be split into 183/215/220). Keep new files under 300 non-blank lines or split them.",
+    ".github/workflows/validate.yml:51 names exactly ONE JS test file explicitly, with a >=12 TAP floor. A new Node test file at any other path is invisible to CI - it must be added there or it is green locally and never runs.",
+    "Wave width N>1 is NEW to this repo (both prior runs ran one slice per wave, so slice-wave.workflow.js:912's parallel(A.slices.map(...)) had never executed with more than one slice). The controller verified N=4 behaviourally at intake: four slices, correct per-slice escalation-id attribution, no cross-contamination. Recorded rather than discovered."
+  ],
+  "scope_ceiling": [
+    "Do NOT refactor run_state.py's truncation limits. There are three budgets (200/300/400) across ten call sites and only SUMMARY_LIMIT is named; INTG-1 needs no run_state.py change at all. Naming one bare 400 in isolation is arbitrary and the whole refactor is out of scope.",
+    "Do NOT add automatic retry of a crashed stage. Ruled OUT by the scope ceiling of run 20260826 and confirmed by the human (answers-recorded.md A3). Settled - do not re-open.",
+    "Do NOT change schema_version. It stays 2 by human decision; every change this run makes is additive.",
+    "Do NOT weaken, retune or reinterpret CAPS, BUDGET_STAGE_FLOOR, or any quality-gate threshold value.",
+    "Do NOT redesign stage tracking. state.stage is last-writer-wins under concurrent fan-out and the correction shipped in 2.2.1 says so honestly; the mechanism stays.",
+    "Do NOT edit files under docs/spec-loop/*/ from a previous run. They are immutable historical records, including the full-enum prose they contain.",
+    "Do NOT touch test_dashboard_server.py's indentation. CONTROLLER DECISION at intake, on evidence: paren-alignment is that file's long-standing DOMINANT style (recurring at :642-646, :1178, :1180, :1211, :1213, :1318, :1472, :1483, :1513 and more, all predating the commit in question), so normalising only the two flagged spots would make the file LESS internally consistent, not more. The source report recorded this item to BE a record, not a fix request.",
+    "Do NOT lower the review bar or skip the differential verification on the quality-gate slices because they are 'just measurement'. They change a BLOCKING control for every future run in every language."
+  ],
+  "slices": [
+    {
+      "id": "s1",
+      "goal": "Node behavioural harness for slice-wave.workflow.js: load it through the existing wrapped_source() discipline into an AsyncFunction with mock sandbox globals, and assert on REAL executed behaviour (trigger, title, option labels, context ordering, per-slice attribution at wave width N>1) instead of source text. Pins CURRENT behaviour so the three later workflow changes land under test. Wire it into CI.",
+      "files": [
+        "plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs (NEW - final path is the slice's call)",
+        ".github/workflows/validate.yml"
+      ],
+      "subsystems": [
+        "workflow-orchestration",
+        "ci",
+        "test-infrastructure"
+      ],
+      "deps": [],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s2",
+      "goal": "Prose honesty: correct every unconditional claim about the internal-error record that is true only of the caught-exception record, and reconcile the inline twin's Pipeline step 3 with the workflow. Covers INTG-3/4/5/6 plus the step-3 trigger divergence (:96-100 is ONE coordinated edit, not two). Sweep for the CLAIM, not the cited line numbers, and paste the grep output.",
+      "files": [
+        "CHANGELOG.md",
+        "plugins/spec-loop/skills/escalation-gate/SKILL.md",
+        "plugins/spec-loop/agents/slice-worker-fallback.md"
+      ],
+      "subsystems": [
+        "documentation",
+        "escalation-contract",
+        "inline-fallback"
+      ],
+      "deps": [],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s3",
+      "goal": "Make the substring-safety test actually drive the matcher: feed real v1 prose containing internal-error through the live legacy_parse_escalations -> _legacy_match_triggers chain and assert the matched set, keeping the naming constraint too. Reuse the existing LEGACY_ESCALATIONS fixture shape.",
+      "files": [
+        "plugins/spec-loop/scripts/test_run_metrics.py"
+      ],
+      "subsystems": [
+        "metrics",
+        "legacy-v1-parsing",
+        "test-integrity"
+      ],
+      "deps": [],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s4",
+      "goal": "Quality gate part 1 of 2: introduce the _strip_for_scan(text, lang) seam at the two raw-scan sites and implement the PYTHON side with stdlib tokenize - sentinel fill, comments included, fail-toward-raw on any tokenizer error, plus the blanked-ratio guard. Ship the old-vs-new differential harness over every .py and .js under plugins/spec-loop/ as part of this slice.",
+      "files": [
+        "plugins/spec-loop/scripts/quality_gate.py",
+        "plugins/spec-loop/scripts/test_quality_gate.py"
+      ],
+      "subsystems": [
+        "quality-gate",
+        "python-tokenize"
+      ],
+      "deps": [],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s5",
+      "goal": "Make the two contract tests protect what they claim. INTG-1: assert against real run_state.render_escalation() output and DELETE the duplicated CRASH_CONTEXT_RENDER_LIMIT rather than importing a named 400 (no run_state.py change). INTG-2: adopt remedy (b) - extend the guard over both unpinned PROSE homes and rename to the true count, including any home s1 introduced; say in the report why remedy (a) was rejected. Depends on s8 because its INTG-1 assertion targets run_state.render_escalation(), which s8 modifies.",
+      "files": [
+        "plugins/spec-loop/scripts/slice_wave_contract_base.py",
+        "plugins/spec-loop/scripts/test_slice_wave_contract_crash.py"
+      ],
+      "subsystems": [
+        "contract-tests",
+        "escalation-contract",
+        "test-integrity"
+      ],
+      "deps": [
+        "s1",
+        "s2",
+        "s8"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s6",
+      "goal": "ROUND 2, NARROW. Your cbrace masker is otherwise ACCEPTED - the seam reuse, template-literal interpolation preservation, comment handling and the differential harness all stand, and the suite is green with only accepted pre-existing class_lines. Do NOT redesign and do NOT widen the diff. Two of your own reviewer's P2 residuals are SILENT UNDER-COUNTS on a blocking control, which this run's binding constraint forbids ('every failure mode must land on today's over-counting behaviour, never on a silent under-count'). Fix exactly these two, plus one stale docstring.\n\nBLOCKING 1 - the single-quote rule is applied to languages where ' is not a string delimiter. _EXT_LANG maps .rs, .c, .cpp, .h, .hpp, .go, .java and .cs to 'cbrace', and your masker now treats ' as a string opener for all of them. In Rust a ' is usually a LIFETIME, so two lifetimes on one line pair into a phantom string over the real code between them; your reviewer measured _branch_count dropping from 2 to 1 on `fn f(a: &'x A, b: &'y B) -> bool { helper(&'x a) && other(&'y b) }` with no fallback and no signal. C++ digit separators (1'000'000) form the same phantom. quality_gate.py is a SHIPPED marketplace tool that gates other people's repositories, so this is a real product defect even though no such file exists here. FIX: apply the single-quote-as-string rule ONLY to the JS/TS family (.js, .mjs, .cjs, .ts, .tsx, .jsx). For every other cbrace extension, fall back to raw - today's over-counting, which is the safe direction - rather than guessing at that language's quoting. Say plainly in the module comment which languages are masked and which are deliberately not.\n\nBLOCKING 2 - your documented safety claim for the regex residual is FALSE, and your reviewer falsified it with the real callable. The claim is that an odd number of quote characters on a line forces a whole-file fallback. Measured: _mask_cbrace_literals(\"x = /'/.test(a) && /'/.test(b); // don't\\n\") returns a SUCCESSFUL mask that hides the genuine &&, because the first two quotes pair into a phantom string and the third is swallowed by the trailing // comment, so the odd count never survives to end-of-line. Either make the fallback genuinely conservative for this shape, or narrow the documented claim to exactly what the code guarantees. What you must NOT do is leave a comment telling a reader the construct is safe by construction when it is not - that is this run's named defect class, and it is worse than the under-count itself.\n\nBLOCKING 3 - the test module's own docstring still says the scan mask hides 'python string-literal and comment content' only, though this same file now proves it masks brace-language content too. You correctly widened quality_gate.py's docstring and its Scan mask comment; the test file's parallel docstring was missed. Widen it.\n\nThe two class_lines findings (quality_gate.py, test_quality_gate.py) remain ACCEPTED pre-existing debt - do not split either file. Report MEASURED numbers only.",
+      "files": [
+        "plugins/spec-loop/scripts/quality_gate.py",
+        "plugins/spec-loop/scripts/test_quality_gate.py"
+      ],
+      "subsystems": [
+        "quality-gate",
+        "js-lexing"
+      ],
+      "deps": [
+        "s4"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s7",
+      "goal": "Widen the lost-slice escalation record to carry the same three controller-named options as the caught-exception record (retry / skip / stop), so the existing CHANGELOG wording becomes TRUE rather than being narrowed. HUMAN-DECIDED this run. Update the harness's pinned expectation in the same change.",
+      "files": [
+        "plugins/spec-loop/workflows/slice-wave.workflow.js",
+        "plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs"
+      ],
+      "subsystems": [
+        "workflow-orchestration",
+        "escalation-contract"
+      ],
+      "deps": [
+        "s1"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s8",
+      "goal": "ROUND 3. The design is SETTLED and your existing commits stand - true-identity de-duplication, no stickiness, no carry-answer-forward, open_escalations() unchanged, INTG-7 citation fixed. Do NOT redesign and do NOT re-raise the earlier council objection. Round 2 was rejected by the controller for three specific defects, each reproduced first-hand. Fix exactly these, then re-verify.\n\nBLOCKING 1 - a NEW silent data-loss path you introduced into escalations.md. _read_text swallows OSError and returns the empty string, and _place_escalation does `body = _read_text(path) or ESCALATIONS_HEADER`, so a page that EXISTS but cannot be read is replaced by a fresh header plus one section. Controller reproduction through the module's own API: a page built to three sections (912 bytes) became one section (370 bytes) after a read failure, the s1/s2/s3 entries gone, and nothing was raised. At the run base this branch used _append_text, which never reads and never truncates, so this is a regression. FIX: distinguish 'file absent' (fine, create it) from 'read failed' (must NOT overwrite - propagate or abort the placement). An empty read must never be treated as an empty page. Add a regression test reproducing exactly that scenario.\n\nBLOCKING 2 - section identity is computed from the TRUNCATED render and is therefore unsound for most real records. _escalation_identity compares the rendered '- Context:' and '- The decision:' lines, which render_escalation has already passed through _one_line(..., 400), so two distinct rounds agreeing on their first ~399 characters collide as 'the same question'. Controller-measured reachability: 7 of the 12 escalation-opened payloads in the recorded corpus carry contexts longer than 400 characters (445, 445, 489, 551, 560, 621, 652), and a quality-gate-block context is a newline-joined findings list whose rounds differ near the tail - the common case, not an edge. It also falsifies your own docstring's guarantee. FIX: compute identity from the RAW record fields - its id, context and question, whitespace-collapsed if you wish - instead of from rendered lines. SCOPE CLARIFICATION, because the reviewer thought the ceiling blocked this: it does NOT. Raw-field identity needs no change to any truncation limit, so the 'do not refactor run_state.py's truncation limits' ceiling is untouched and this fix is IN SCOPE. Do not change the 400s.\n\nBLOCKING 3 - the one genuinely new gate violation: append_event in run_state.py now takes 5 parameters against a threshold of 4. Fix it behaviour-preservingly; never weaken the threshold. The two class_lines findings (run_state.py 1023, test_run_state.py 1528) stay ACCEPTED as pre-existing debt - both files were already over the bar at the run base - so do not split either and do not spend a round on them.\n\nACCURACY: your round-2 sidecar claimed '8 violations across nesting_depth, parameter_count and class_lines'. Controller measurement of your worktree finds exactly THREE, none on nesting_depth. Report measured numbers only. If your ONLY remaining violations are the two accepted class_lines, say so precisely, naming each file and value, so the controller can accept on your evidence rather than looping you.",
+      "files": [
+        "plugins/spec-loop/scripts/run_state.py",
+        "plugins/spec-loop/scripts/test_run_state.py"
+      ],
+      "subsystems": [
+        "run-state",
+        "escalation-rendering"
+      ],
+      "deps": [],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s9",
+      "goal": "ROUND 2, VERY NARROW. Your round-suffix work is ACCEPTED and your commits stand - the id scheme, the answerFor reconciliation, the run_metrics merge change, the doc updates and the harness (now 23 tests, all passing) all survive. Your branch has been REBASED by the controller onto the integration head, which now contains slice s5. Do NOT redesign anything and do NOT widen the diff.\n\nONE BLOCKING DEFECT, and it is a collision between two individually-correct changes. s5 added a guard pinning the trigger-enum PROSE homes: slice_wave_contract_base.TRIGGER_PROSE_LEAD is the literal \"one of the seven triggers (\" and test_slice_wave_contract_crash's test_the_fallback_agent_prose_lists_exactly_those_triggers asserts that agents/slice-worker-fallback.md contains it exactly once. Your edit to that file inserted the round-suffix clause and in doing so re-wrapped the sentence, so the phrase is now split across a newline and the literal count is 0. Measured: root suite 106 tests FAILED (1), plugin suite 1282 tests FAILED (1). The second failure, test_measure_coverage.test_suite_still_green_and_meets_min_tests, is purely a CASCADE of the first - it runs the suite under trace and asserts green - so there is ONE root cause, not two.\n\nFIX IT AT THE GUARD, NOT AT THE PROSE. Make the prose pin whitespace-tolerant: collapse runs of whitespace in both the file text and the pinned constant before matching, so a hard-wrap can never break it again. Your wording is correct and must stay - the id form genuinely does gain the round component now, and that is the whole point of your slice. Re-wrapping the markdown to make a brittle literal match would leave the next rewrap to break it again, which is the recurring defect class this run exists to police. s5's files are MERGED, so you may edit slice_wave_contract_base.py and test_slice_wave_contract_crash.py for exactly this. Apply the same tolerance to the companion reference-union pin if it has the same brittleness.\n\nThen re-run the full seven-segment suite and report MEASURED numbers. Remaining class_lines findings (run_metrics.py, test_run_metrics.py, slice-wave.workflow.js) are ACCEPTED pre-existing debt - do not split any of them and do not spend a round on them.",
+      "files": [
+        "plugins/spec-loop/workflows/slice-wave.workflow.js",
+        "plugins/spec-loop/scripts/run_metrics.py",
+        "plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs",
+        "plugins/spec-loop/references/run-state-v2.md"
+      ],
+      "subsystems": [
+        "workflow-orchestration",
+        "escalation-contract",
+        "metrics"
+      ],
+      "deps": [
+        "s1",
+        "s7"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s10",
+      "goal": "ROUND 2, NARROW. Your budget-cap path is ACCEPTED and your commits stand - the wave-args override, the guard consulting it, the controller documentation and the three-way lost-slice question all survive, and at your shipped head the gate has only ONE violation, the accepted pre-existing class_lines on slice-wave.workflow.js. Your harness file measures 299 non-blank, just under the 300 threshold, so the crossing an earlier reviewer measured at an intermediate commit is already resolved - do not act on it, and do not let the file grow past 300 in this round. Do NOT redesign and do NOT widen the diff.\n\nTHREE FIXES, and the first two are P0 by this run's own binding constraint that no comment, test name or CHANGELOG sentence may claim more than exists. Shipping either would make this run commit, in its final wave, the exact defect it exists to fix.\n\nBLOCKING 1 - your new non-injection pin cannot fail for the regression it advertises. capturePrompts()'s mock agent pushes the prompt and then throws, so the FIRST dispatch (stagePlan) aborts the slice into runSliceError and the captured list has exactly one element: the plan prompt. The assertion `assert.ok(cap.seen.length > 0)` passes on that single element, so the critic, task, review, fix and verify prompts - precisely where an over-permissive answer injection would land - are never inspected. Yet the comment says it 'reads every prompt the workflow actually built' and the CHANGELOG says the guarantee is 'pinned now by execution as well as by source text'. EITHER make the mock return schema-valid results so the pipeline runs far enough to capture the full prompt set and the pin genuinely covers what it claims, OR narrow the comment and the CHANGELOG sentence to exactly what one prompt proves. Do not leave the claim broader than the check.\n\nBLOCKING 2 - your question change made a live plugin skill FALSE. skills/escalation-gate/SKILL.md still says the lost-slice record 'asks only whether to re-run the wave', but the wave-entry record now asks the three-way retry/skip/stop question. Nothing pins that sentence, so the drift is silent, and it is the same sentence that already carried a prior run's deferred accuracy complaint. Fix it. That file is added to your file list for this round.\n\nBLOCKING 3 - a supplied-but-unusable cap override is discarded in complete silence. agentCap() coerces with Number() and drops anything that is not an integer above the tier default, and nothing is emitted when that happens, so a controller who mistypes the slice-id key or hands a fractional value gets no signal that the lever did nothing - the effective cap only becomes visible if the slice hits the cap AGAIN. That is the failure shape this run's own graph pattern warns about: a path that looks answerable and quietly is not. Emit a positive signal when an override is present but unusable. While you are there, add the missing fractional-override test your own comment already claims the behaviour for.\n\nAlso remove the whole word 'for' from the new comment 'budget-exhausted asks for a resource...' in the test file - you reworded the identical phrase elsewhere in this same diff and missed this one.",
+      "files": [
+        "plugins/spec-loop/commands/spec-loop.md",
+        "plugins/spec-loop/workflows/slice-wave.workflow.js",
+        "plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs",
+        "plugins/spec-loop/references/run-state-v2.md",
+        "plugins/spec-loop/skills/escalation-gate/SKILL.md",
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "controller-contract",
+        "workflow-orchestration",
+        "budget"
+      ],
+      "deps": [
+        "s9"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s11",
+      "goal": "Write the CHANGELOG [Unreleased] entry for the whole run - accurately, from what actually shipped. Must record the quality-gate measurement-semantics change and its date as a comparability discontinuity, and must not overclaim what the behavioural harness verifies.",
+      "files": [
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "documentation",
+        "release-notes"
+      ],
+      "deps": [
+        "s2",
+        "s4",
+        "s5",
+        "s6",
+        "s7",
+        "s8",
+        "s9",
+        "s10"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s12",
+      "goal": "ROUND 3, FINAL AND VERY NARROW. Your pattern-based __main__-shim resolution is ACCEPTED, the resolve_main_shim complexity violations are FIXED, and the suite is green with only accepted pre-existing class_lines. Do NOT redesign and do NOT widen the diff. Your branch was rebased onto the integration head.\n\nONE BLOCKING ITEM, and it is this run's own defect class landing inside the slice whose entire purpose is to make a manifest stop lying. Your own reviewer found both halves and I confirmed the reasoning:\n\n(a) The manifest-integrity guard CANNOT FAIL for the shipped manifest. resolve_omit returns set(spec.lines) | resolve_main_shim(...), so for an all-symbolic spec min(resolved) IS by construction the line _MAIN_SHIM_RE just matched, making assertRegex(header, _MAIN_SHIM_RE) tautological. The sibling test asserts every target has lines == set(), so the numeric-drift case the inline comment describes cannot exist for it to catch. A guard that cannot fail is exactly the INTG-1 defect this run was convened to fix.\n\n(b) The manifest header promises the symbolic token 'cannot silently grow into a place to hide genuinely-untested code', but the token resolves a BLOCK of up to MAX_SHIM_LINES (5) lines, and every target resolves to 2 today. If someone later indents real statements under a __main__ guard, the block absorbs them and the gate stops measuring them - silently, with no manifest edit. The promise is not kept.\n\nONE CHANGE FIXES BOTH: make the guard assert something that can actually fail, by pinning the RESOLVED BLOCK per target - its size, and that every line in it belongs to the shim - so growth from 2 towards 5 fails the test loudly and a manifest edit becomes necessary to accept it. Then the header promise becomes true because a test enforces it. If you would rather keep the block flexible, then narrow the header promise to exactly what the code guarantees instead - but do not ship a promise no test keeps.\n\nRe-run the full seven-segment suite and report MEASURED numbers at the head you ship. The three class_lines findings (run_state.py, test_run_state.py, measure_coverage.py) are ACCEPTED pre-existing debt; do not act on them.",
+      "files": [
+        "scripts/measure_coverage.py",
+        "scripts/coverage_omit.txt",
+        "plugins/spec-loop/scripts/run_state.py",
+        "plugins/spec-loop/scripts/test_run_state.py"
+      ],
+      "subsystems": [
+        "ci",
+        "coverage-gate",
+        "run-state",
+        "workflow-orchestration"
+      ],
+      "deps": [
+        "s9"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete",
+      "remediation": true
+    },
+    {
+      "id": "s13",
+      "goal": "FINAL REMEDIATION, documentation accuracy only. No code changes. Four precise corrections, each one an instance of the defect class this whole run exists to sweep - a sentence claiming more or other than the code does.\n\n(1) and (2) THE SAME FALSE CLAIM IN TWO FILES. plugins/spec-loop/commands/spec-loop.md and plugins/spec-loop/references/run-state-v2.md both state that a NON-INTEGER agent_cap_overrides value is discarded and announced - the first says such an override 'raises nothing and says so', the second says a 'non-integer value, is announced once at slice start as a decision event'. Both are false for a JSON STRING that reads as a whole number, because agentCap coerces with Number(). The controller characterised the real behaviour by executing the merged workflow, and these are the measured results: an integer 14 is APPLIED and emits agent-cap-override with no discard; the string \"14\" is likewise APPLIED and emits agent-cap-override with no discard; a fractional 10.5 IS discarded with a decision event; a value at or below the tier default IS discarded; and a key naming no slice of the wave IS discarded. So the docs are wrong only in using 'non-integer' as a blanket term. Correct both sentences to describe exactly that: a value that does not read as a whole number is discarded and announced, and a string that does read as one is accepted. Reproduce the behaviour yourself before you write the sentence - do not copy the controller's table on trust.\n\n(3) CHANGELOG.md says run_metrics.merge_escalation_records 'needed no logic change'. That is true of the merge SEMANTICS but reads as 'was not touched', and the function was edited during this cycle - its loop body was extracted into a new helper. Re-word so the semantic claim survives without implying the file was untouched.\n\n(4) CHANGELOG.md says the non-injection guarantee is pinned across 'all eight prompts one slice builds'. Eight is the number of named ROLES the test's pipeline drives, not the prompt count of an arbitrary slice: a slice with more than one task dispatches the task and re-review roles repeatedly and so builds more than eight prompts. Re-word to the accurate unit.\n\nNothing else. Do not restate run process, do not bump the version, do not touch code, and do not edit anything under docs/spec-loop/.",
+      "files": [
+        "plugins/spec-loop/commands/spec-loop.md",
+        "plugins/spec-loop/references/run-state-v2.md",
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "documentation",
+        "controller-contract"
+      ],
+      "deps": [
+        "s11"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete",
+      "remediation": true
+    },
+    {
+      "id": "s14",
+      "goal": "PHASE-5 REMEDIATION. One sentence, one file. The cross-slice integration review returned ENDORSE with a single P1, and this closes it.\n\nCHANGELOG.md, in the [Unreleased] budget-cap bullet, ends with: \"The coercion is `Number()`, so a JSON string reading as a whole number - `\"14\"` - becomes `14` and the raise IS applied, emitting `agent-cap-override` and no discard event.\"\n\nThat is false at two of the three tiers. Verified in the merged code: CAPS is {1:10, 2:18, 3:32} and the guard is `Number.isInteger(raised) && raised > base`, so 14 raises only at tier 1. At tier 2 (default 18) and tier 3 (default 32) it is at-or-below default and is DISCARDED, emitting a decision event and no agent-cap-override - which is the very rule the same bullet states two sentences earlier. The sentence also closes by citing commands/spec-loop.md and references/run-state-v2.md as where this is documented, and slice s13 already corrected BOTH of those to say the coerced value is \"judged against the tier default like any other value\" - so the CHANGELOG now contradicts the two documents it points the reader to.\n\nFIX: bring the CHANGELOG sentence into line with its two siblings - the coerced value is judged against the tier default like any other value - so the coercion point survives without the tier-dependent claim. Match the siblings' wording rather than inventing a third phrasing.\n\nVerify by execution before you write it: drive the merged workflow with agent_cap_overrides {s1: \"14\"} at risk_tier 1 and at risk_tier 2 and show that the first emits agent-cap-override while the second emits a discard decision. Paste that output in your report.\n\nNothing else. Do not touch code, do not restructure the CHANGELOG, do not edit any other file, and do not introduce a fourth phrasing of this rule.",
+      "files": [
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "documentation",
+        "release-notes"
+      ],
+      "deps": [
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "s5",
+        "s6",
+        "s7",
+        "s8",
+        "s9",
+        "s10",
+        "s11",
+        "s12",
+        "s13"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete",
+      "remediation": true
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "slice_ids": [
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "s8"
+      ],
+      "workflow_run_id": "wf_fb4ab5ed-c2b",
+      "status": "dispatched"
+    },
+    {
+      "index": 2,
+      "slice_ids": [
+        "s6",
+        "s7",
+        "s8"
+      ],
+      "workflow_run_id": "wf_73953a08-c06",
+      "status": "dispatched"
+    },
+    {
+      "index": 3,
+      "slice_ids": [
+        "s5",
+        "s6",
+        "s9"
+      ],
+      "workflow_run_id": "wf_40dc994e-9cd",
+      "status": "dispatched"
+    },
+    {
+      "index": 4,
+      "slice_ids": [
+        "s10",
+        "s12"
+      ],
+      "workflow_run_id": "wf_4ed2c434-4e0",
+      "status": "dispatched"
+    },
+    {
+      "index": 6,
+      "slice_ids": [
+        "s11"
+      ],
+      "workflow_run_id": "wf_197b8abf-d66",
+      "status": "dispatched"
+    },
+    {
+      "index": 7,
+      "slice_ids": [
+        "s13"
+      ],
+      "workflow_run_id": "wf_7b08949e-35b",
+      "status": "dispatched"
+    },
+    {
+      "index": 8,
+      "slice_ids": [
+        "s14"
+      ],
+      "workflow_run_id": "wf_61e7a3cb-63e",
+      "status": "dispatched"
+    }
+  ]
+}

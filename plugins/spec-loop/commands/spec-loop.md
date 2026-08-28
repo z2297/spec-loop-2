@@ -93,7 +93,8 @@ deadlock is itself an escalation):
    thorough, polish}, slices: [{id, goal, files, subsystems, risk_tier, depth, worktree,
    branch, base_sha, kg_snippet}] (per-slice only —
    the scope ceiling is run-level and travels in ctx, never duplicated here),
-   answers: {}}` — then invoke
+   answers: {}, agent_cap_overrides: {} (optional; see step 7 — omit it on a normal
+   dispatch)}` — then invoke
    the Workflow named `spec-loop:slice-wave` (fallback: `scriptPath:
    "${CLAUDE_PLUGIN_ROOT}/workflows/slice-wave.workflow.js"`). Pass `args` as a real
    JSON object in the tool call, never a JSON-encoded string — a stringified object
@@ -128,8 +129,36 @@ deadlock is itself an escalation):
    `escalation-gate` precedent check (prior runs' answered escalations + runbook decision
    summaries); squarely-resolved → answer it yourself with a `decision` event citing the
    precedent. Everything else: ONE `AskUserQuestion` round for ALL open escalations
-   (recommended defaults first). Write answers back (`escalation-answered` events), then
-   **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
+   (recommended defaults first). Write answers back (`escalation-answered` events), keying
+   each answer by the escalation's `id` verbatim — a round-suffixed id keeps its suffix in
+   the `answers` map, and the wave reads the newest answered round. The wave derives a
+   dispatch's round number solely from the keys already present in `answers`, so every
+   re-dispatch this run makes — same session or after a `--resume` — must hand the wave an
+   `answers` map carrying EVERY answered escalation of the run, all rounds included, not
+   just the newest: dropping an earlier round's key reissues the id that round already
+   answered. Retaining the older keys surfaces no stale text to a slice, since the wave
+   still reads only the newest answered round.
+
+   A `budget-exhausted` record is a resource request, not a judgment: the wave injects
+   its answer into no prompt, so writing the answer back changes nothing on its own. The
+   AGENT-CAP variant of that record ("agent cap reached (N)") has a lever — after the
+   human authorises a raise, hand the very next dispatch `agent_cap_overrides:
+   {"<slice-id>": <integer>}` alongside the usual `answers` map. `agentCap` in the wave
+   reads it, the structural guard enforces the raised number, and an `agent-cap-override`
+   event records the authorisation. An override the wave cannot use — at or below the tier
+   default, not reading as a whole number, or keyed to a slice this wave never dispatched —
+   raises nothing and says so: it emits a `decision` event naming the discarded value, so a
+   mistyped key surfaces at the dispatch that carried it. The value is coerced with `Number()`,
+   so a JSON string reading as a whole number — `"14"` — is read as the integer 14 and judged
+   against the tier default like any other value. Two rules bind you. The override is
+   single-dispatch: it belongs to the one re-dispatch the human authorised, so drop it from
+   every later dispatch of the run rather than carrying it forward like `answers`. And it only ever
+   raises — a value at or below the tier default is discarded by the wave, so it is no
+   route to a tighter bound either. The TOKEN-FLOOR variant ("token budget exhausted")
+   has no such lever: its resource is the wave budget the host supplies, and no args
+   field in this contract changes the stage floor.
+
+   Then **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
    whose sidecars are not DONE/SPLIT (merged work never re-enters a wave; its worktree is
    already gone) — same `ctx`, `answers` filled in, and `resumeFromRunId: <wf_id>` so the
    escalated slices' completed stages replay from the journal where the cache holds. Never
@@ -159,8 +188,10 @@ Executive Readout, verbatim.
 
 `--resume <run-id>`: read `dag.json` (recover branch, mode, wave history), recreate
 `.active`, checkout the integration branch (clean-tree guard), `worktrees.py prepare
---resume` for the incomplete wave's slices, drain ANSWERED-but-undispatched escalations into
-the `answers` map, and re-enter the wave loop at the first incomplete wave — same-session
+--resume` for the incomplete wave's slices, drain EVERY answered escalation of the run into
+the `answers` map (every round, already-dispatched ones included, per step 7's
+cumulative-map invariant), and re-enter the wave loop at the first incomplete wave —
+same-session
 with `resumeFromRunId`, fresh invocation otherwise. All slices terminal → straight to
 Phase 5 (regenerating `runbook.md` is safe).
 

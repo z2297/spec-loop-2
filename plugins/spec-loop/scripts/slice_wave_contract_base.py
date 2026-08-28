@@ -1,8 +1,12 @@
 """Shared source-contract infrastructure for slice-wave.workflow.js.
 
-The wave workflow is JavaScript and is not run by any lane of this repo's
-suite: it is resolved at runtime from the installed plugin cache. Its
-correctness has therefore rested entirely on review, and this run paid for
+The wave workflow is JavaScript and is resolved at runtime from the installed
+plugin cache. One lane of this repo's suite now executes it: the companion
+module slice_wave_behaviour.test.mjs loads it through wrapped_source() and
+drives its deterministic control flow against a MOCK agent/parallel/log/budget
+sandbox. That lane exercises no real Workflow-host seam, so the host seam stays
+unverified and review remains the only control over it. Before that lane
+existed its correctness rested entirely on review, and this run paid for
 that twice - an unguarded optional-field read aborted a whole wave and was
 mislabelled as a budget escalation (both the read and the mislabelling are now
 pinned here). The three ``test_slice_wave_contract*.py`` modules that import
@@ -28,6 +32,20 @@ These are source-text assertions. They prove a guard is present; they
 cannot prove it behaves. Any change to the workflow that trips one of them
 is either a regression or an intentional contract change that belongs in
 one of the importing modules too.
+Companion lane: slice_wave_behaviour.test.mjs executes the workflow in a mock
+sandbox and pins the runtime record shapes it produces there, including the
+crash record's three option labels and, now that the lost-slice record was
+widened to the same three controller-named labels, its option labels too. It
+carries its own honest-limit header stating that it covers deterministic
+control flow only. The three labels therefore live in three non-historical
+places, shared by both records: the workflow itself, spelling the three
+option details out at two call sites, runSliceError and the wave-entry
+fallback; the CRASH_OPTION_RETRY / CRASH_OPTION_SKIP / CRASH_OPTION_STOP
+constants below, scoped to the crash source text; and RECORD_OPTIONS in that
+module, pinning the runtime labels of both records. esc()'s single generic
+substitution remains live across its other empty-array call sites, but no
+harness constant pins that label anymore. A label change must move every one of
+them.
 
 Every pinned JS snippet is a module-level constant rather than a literal in
 a test body, and continuation lines use a 4-space hanging indent. Both are
@@ -90,9 +108,17 @@ SPLIT_SUPPRESSION = "return (rec && depth < 2 && verdict !== 'OBJECT') ? rec : n
 OBJECTION_SELECTION = "ob: (safety || objections[0])"
 REPLAN_VETO = "if (safety || !ob.fixable_by_replan || state.replanned)"
 FINDING_CATEGORIES = "category: { enum: ["
-# The trigger enum has five homes: this line, and the ESCALATION_TRIGGERS
-# tuple in run_state.py, run_metrics.py and dashboard_server.py.
+# The trigger enum has six homes: this line, the ESCALATION_TRIGGERS tuple in
+# run_state.py, run_metrics.py and dashboard_server.py, and two PROSE
+# enumerations - the fallback agent's escalation section and the run-state
+# contract reference - located by the two locator constants below. Earlier
+# this comment said five and then listed four; the guard that names it now
+# asserts over all six.
 TRIGGER_ENUM_LINE = "trigger: { enum: ["
+TRIGGER_PROSE_LEAD = "one of the seven triggers ("
+TRIGGER_UNION_PREFIX = '"trigger": "'
+FALLBACK_MD = Path(__file__).resolve().parents[1] / "agents" / "slice-worker-fallback.md"
+RUN_STATE_MD = Path(__file__).resolve().parents[1] / "references" / "run-state-v2.md"
 COUNCIL_VERDICT_EVENT = "type: 'council-verdict'"
 SCOPE_HELPER = "function scopeRecord("
 DERIVE_INPUTS_FN = "function deriveCouncilInputs(verdicts) {"
@@ -144,18 +170,13 @@ CRASH_ERROR_EXPR = "${String((e && e.message) || e)}"
 CRASH_CLASSIFICATION_SENTENCE = "neither structural guard raised its escalation record"
 CRASH_GUARD_ORIGIN_OVERCLAIM = "so this crash came from neither"
 CRASH_HOST_LAYER_CAVEAT = "host- or agent-layer resource failure"
-# render_escalation() (run_state.py) collapses the context and hard-truncates it
-# at 400 characters, and escalations.md is the corpus the escalation gate's
-# precedent check reads. Both the exception text and the stage attribution have
-# to fit inside that budget, ahead of the fixed classification prose.
-CRASH_CONTEXT_RENDER_LIMIT = 400
 CRASH_STAGE_CAVEAT = "so a starting point, not a culprit"
 # The mirror-image overclaim this module now forbids: asserting "bug, NOT a
 # budget limit" is as unprovable as the old "budget" assertion it replaced.
 CRASH_CAUSE_OVERCLAIM = "This is a loop or agent-contract bug"
 CRASH_BUDGET_DENIAL_OVERCLAIM = "NOT a cap or budget limit"
 GUARD_BUDGET_TRIGGER = "esc(slice, 'budget-exhausted',"
-SLICE_LOST_RECORD = "esc(A.slices[i], 'internal-error', 'slice lost',"
+SLICE_LOST_RECORD = "esc(A.slices[i], 'internal-error', {\n    title: 'slice lost',"
 # Third instance of the same overclaim pattern: a thunk resolved to null
 # proves nothing about the cause, so the lost-slice record must not deny one.
 SLICE_LOST_CAUSE_DENIAL = "Not a resource limit."
@@ -257,6 +278,12 @@ THREE_DEFERRALS = [{"text": "first", "disposition_hint": "defer"},
                     {"text": "third", "disposition_hint": "defer"}]
 
 
+# Two consumers now. The Python side parses this with node via
+# TestTheFileStillParses. The Node side, slice_wave_harness.mjs, appends a call
+# to the wrapper function this body declares and EXECUTES the result, so it
+# depends on the WRAP_HEAD function NAME as well as on the wrapping itself. A
+# rename of that function must move slice_wave_harness.WRAPPER_NAME in the same
+# change; its loader-integrity test is the guard that makes a miss loud.
 def wrapped_source():
     """The workflow source in the async wrapper node can actually parse."""
     body = SOURCE.replace("\nexport const", "\nconst")

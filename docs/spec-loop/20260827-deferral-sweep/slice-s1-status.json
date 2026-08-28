@@ -1,0 +1,235 @@
+{
+  "schema_version": 2,
+  "id": "s1",
+  "status": "DONE",
+  "branch": "spec-loop/20260827-deferral-sweep/s1",
+  "commits": {
+    "base": "299f0dbd1f700f8f3b3991ea7d601df797dd3749",
+    "head": "6f9b7b0a65f9397908f000c3157841a2e602f3e9"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "OBJECT",
+    "concerns": 13,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 5,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 0,
+    "residual": [
+      "P2: The 'crash before any dispatch' test never asserts WHICH exception reached runSliceError, so it passes on any pre-dispatch throw, not specifically the budget-guard throw it is built to exercise. planPrompt(slice) is evaluated as an argument to dispatch(), i.e. BEFORE guard() runs, and it reads slice.files.join, slice.subsystems.join, slice.depth, A.run_id, CTX.run_dir and CTX.test_command. Any future trim to sliceFixture/waveArgs would make planPrompt throw a TypeError with state.stage still null, producing the same 'slice crashed before any agent was dispatched' title and the same 'none (the crash happened before any agent was dispatched)' context substring — and the test would stay green while the token-floor guard it names went entirely unexercised. Every sibling crash test pins the exception text (assert.ok(ctx.startsWith(\"Error: BOOM.\"))); this one is the only one that does not. I confirmed it currently passes for the right reason: the fixture supplies every field planPrompt and packet() read, so the throw today really is NOBUDGET from budget.remaining().",
+      "P2: defaultSandbox() sets budget.total to 0, which is falsy, so the workflow's token-floor guard short-circuits before it ever calls budget.remaining(): the guard is `if (budget.total && budget.remaining() < BUDGET_STAGE_FLOOR)`. Every test that does not override budget therefore runs the workflow with one of its two structural guards silently disabled, and the single test that does override budget replaces the whole object with a throwing remaining(), so the guard's normal pass-through path is executed by no test in the suite. This also contradicts the harness's own written contract clause, HOST_CONTRACT.budget, which states that budget.total is a number and remaining() returns a number — a total of 0 is the one value that makes remaining() unreachable. A large positive total keeps every current assertion green (1e9 is not below the 60000 floor) while actually exercising the guard, so there is no test cost to fixing it.",
+      "P3: The inlined Python pushes the wrapped workflow source through sys.stdout in TEXT mode, and that source is heavily non-ASCII (box-drawing, em dashes, arrows and the parallel operator all appear in slice-wave.workflow.js). The write therefore depends on the child interpreter's stdout encoding rather than being explicit. Python 3.7+ locale coercion (PEP 538/540) makes this safe on the ubuntu runner and on a normal developer shell, so I rate the practical risk low and my confidence in it triggering low — but the failure mode is a UnicodeEncodeError under a forced non-UTF-8 stdio encoding, which would surface as a red suite blamed on the harness rather than on the environment. The Node side already pins encoding: \"utf8\"; only the Python side is implicit.",
+      "P3: countWrapperName hardcodes the literal __wrap in its regex instead of deriving it from the exported WRAPPER_NAME constant it exists to protect, so the drift guard duplicates the very name it is guarding. The consequence is not a silent hole — a correctly coordinated rename of WRAP_HEAD plus WRAPPER_NAME still fails loudly, in the WRAPPER_NAME pin assertion, in this count going to zero, and again at execution time when `return <newname>()` hits a ReferenceError — but two of those three failures then point at a stale literal rather than at the pin the maintainer is supposed to update. Verified the guard does not leak: \\b__wrap\\b cannot match a longer identifier such as __wrapper, since the following character is a word character."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; claude plugin validate .",
+    "result": "All six suite segments passed: validate_marketplace.py (OK), scripts unittest (106 tests OK), plugins/spec-loop/scripts unittest (1159 tests OK), coverage measurement (1265 tests OK with all floors met), Node dashboard tests (48 tests pass), and claude plugin validation (passed).",
+    "scope": "full",
+    "tree_sha": "05726e2ea64a638922d7667310e59c71b209cb46"
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "Quality gate completed successfully with 78 checks all passing. All cyclomatic complexity, cognitive complexity, method lines, parameter count, nesting depth, and class lines metrics passed their thresholds across changed files: slice_wave_behaviour.test.mjs (143 lines), slice_wave_contract_base.py (292 lines), and slice_wave_harness.mjs (119 lines)."
+  },
+  "escalations": [],
+  "agents_used": 14,
+  "wave": 1,
+  "events": [
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "OBJECT",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 12,
+        "deferred": [
+          "The new CI step copies the existing client-JS step's `out=$(...)` then `rc=$?` shape. Under GitHub Actions' default `bash -e`, a failing test run aborts the step at the assignment, so neither the echoed TAP output nor the 'FAIL:' message ever prints and the failure is diagnosed from a bare exit code. Mirroring the established step is the right consistency call for this slice; the diagnosability wart belongs to both steps and should be fixed for both at once, not unilaterally here."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "replan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "deferred",
+      "payload": {
+        "summary": "The new CI step copies the existing client-JS step's `out=$(...)` then `rc=$?` shape. Under GitHub Actions' default `bash -e`, a failing test run aborts the step at the assignment, so neither the echoed TAP output nor the 'FAIL:' message ever prints and the failure is diagnosed from a bare exit code. Mirroring the established step is the right consistency call for this slice; the diagnosability wart belongs to both steps and should be fixed for both at once, not unilaterally here.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t4",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t5",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "quality-gate",
+      "payload": {
+        "status": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "review-summary",
+      "payload": {
+        "findings": 4,
+        "confirmed": 0,
+        "refuted": 0,
+        "fix_rounds": 0,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

@@ -1,0 +1,282 @@
+{
+  "schema_version": 2,
+  "id": "s12",
+  "status": "DONE",
+  "branch": "spec-loop/20260827-deferral-sweep/s12",
+  "commits": {
+    "base": "ac283ad",
+    "head": "af96f69aad9614a00b8cdde31bcaeafb58baa8f2"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "OBJECT",
+    "concerns": 11,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 1,
+  "review": {
+    "confirmed": 3,
+    "refuted": 3,
+    "evidence_failed": 0,
+    "fix_rounds": 2,
+    "residual": [
+      "P2: `test_an_anchor_embedded_in_prose_does_not_claim_another_section` cannot fail on the defect its name describes: it passes identically with the pre-fix unanchored `_IDENTITY_RE`. I measured this by monkeypatching the old pattern back in-process — the intruder record's fingerprint differs from the first record's under both regexes, so `place_escalation_section` appends either way and the assertions (2 sections, `## [s2]` present, first anchor kept) hold with and without the fix. The two sibling tests added in the same hunk ARE genuine guards: with the old regex `test_a_legacy_section_quoting_an_anchor_is_left_standing` yields 1 section instead of 2 and loses the older render, and `test_a_section_carrying_only_an_embedded_anchor_has_no_identity` gets the fingerprint back instead of \"\". So the fix is covered; this third test is a non-falsifying assertion whose name claims regression protection it does not provide, which the run's rule on tautological assertions targets.",
+      "P3: Implementer concern, verified: `self.assertLess(SHIPPED_SHIM_LINES, mc.MAX_SHIM_LINES)` compares two module-level constants (2 and 5) and can only change on a deliberate edit to one of them — no product-source change can move it. It is not strictly tautological (a maintainer lowering MAX_SHIM_LINES to 2 would trip it), and its own docstring discloses the limitation in those words, so it does not over-claim. My judgment on the run's cardinal rule: acceptable as shipped, because the falsifiable assertion sits two lines below it and the docstring narrows the claim rather than inflating it. Recorded so the decision is on the record rather than left implicit.",
+      "P2: Two of the four new pure helper functions added in this diff carry the repo's '(PURE)' docstring marker (resolve_main_shim, resolve_omit) while the other two equally pure helpers (_sole_shim_header, _guarded_block) do not — and this file had zero '(PURE)' markers anywhere before this diff (confirmed by grep over all ~15 pre-existing clearly-pure functions such as executable_lines, normalize_key, apply_omit, parse_omit), so the marker is being introduced piecemeal and inconsistently rather than following either this file's own prior style or a uniform rule within the new code itself.",
+      "P3: _guarded_block's trailing-blank-line trim is a two-pass approach: it first grows `resolved` forward through every line (blank or not) up to the next column-zero line, then repeatedly recomputes max(resolved) and discards it while that line is blank. A single forward scan that tracks the index of the last non-blank line seen, then builds the final range from `start` to that index, would express the same result without the repeated max()-over-a-set lookups. This exact simplification was already flagged as a residual P3 in the prior review round's package (s12-fix1.md) and remains unaddressed in the shipped diff."
+    ]
+  },
+  "tests": {
+    "command": "7-segment suite",
+    "scope": "full",
+    "tree_sha": "1c136fac0e13ecfe0a1d7d5868c04d5fca80401b",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand at af96f69, all seven segments as separate tool calls: marketplace OK; root unittest 126 OK (up from 106 - this slice added the manifest guard module); plugin unittest 1292 OK; coverage PASS TOTAL 96.9% vs 90% floor; node client 48/48; behavioural harness 35/35; claude plugin validate passed."
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "FAIL - ACCEPTED by controller precedent. Exactly THREE violations, all class_lines with function=None: run_state.py 1078, test_run_state.py 1730, scripts/measure_coverage.py 535. ZERO function-level violations across 170 checks - the resolve_main_shim complexity violations that blocked round 2 are fixed. All three files were already over 300 non-blank at the run base."
+  },
+  "escalations": [
+    {
+      "id": "s12:quality-gate-block",
+      "trigger": "quality-gate-block",
+      "title": "verification failed",
+      "context": "suite: All 7 test segments passed: 1418 Python tests (including 126 in scripts/, 1292 in plugins/spec-loop/scripts/), 83 Node.js tests (48 dashboard + 35 slice_wave), marketplace validation, and plugin validation. Coverage report passed all per-file and total floors.; quality: FAIL (summary_pass=false — Quality gate produced valid JSON with summary.pass: false. Three class_lines violations detected (all files exceeded 300-line threshold). Gate processed 170 total checks; 167 passed, 3 failed.)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: All 7 test segments passed: 1418 Python tests (including 126 in scripts/, 1292 in plugins/spec-loop/scripts/), 83 Node.js tests (48 dashboard + 35 slice_wave), marketplace validation, and plugin validation. Coverage report passed all per-file and total floors.; quality: FAIL (summary_pass=false — Quality gate produced valid JSON with summary.pass: false. Three class_lines violations detected (all files exceeded 300-line threshold). Gate processed 170 total checks; 167 passed, 3 failed.)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "ANSWERED",
+      "answered_at": "2026-08-28T03:26:55Z",
+      "answer": "ACCEPTED at round 3. The deliverable is controller-verified by measurement: coverage_omit.txt now names the shim SYMBOLICALLY (scripts/run_state.py:__main__) instead of by line range, so file growth can no longer repoint it, and run_state.py coverage is restored to 100.0% (740/740) from 99.9% (739/740) because its real sys.exit(main()) is once again correctly omitted rather than counted. The tautological guard is replaced by a real one: the new scripts/test_measure_coverage_manifest.py pins SHIPPED_SHIM_LINES = 2 and adds falsifiable cases - oversized block raises, two shims raise, absent shim raises, position moves with the file - so growth from 2 towards MAX_SHIM_LINES fails loudly and the manifest header promise is now enforced by a test. Remaining gate violations are accepted pre-existing class_lines."
+    }
+  ],
+  "agents_used": 16,
+  "wave": 5,
+  "events": [
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "OBJECT",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 10,
+        "deferred": [
+          "A per-target expected-block-size map (dict of relpath -> lines) would make a bump cost exactly one target instead of thirteen, and would be the only shape that genuinely forces a per-file decision. It is out of scope for the final narrow slice and would enlarge a diff the goal explicitly caps. Log it rather than build it."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "replan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "deferred",
+      "payload": {
+        "summary": "A per-target expected-block-size map (dict of relpath -> lines) would make a bump cost exactly one target instead of thirteen, and would be the only shape that genuinely forces a per-file decision. It is out of scope for the final narrow slice and would enlarge a diff the goal explicitly caps. Log it rather than build it.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:s12-t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 3
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260827-deferral-sweep/s12/docs/spec-loop/20260827-deferral-sweep/slice-s12-report.md",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:2",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:2",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "review-summary",
+      "payload": {
+        "findings": 6,
+        "confirmed": 3,
+        "refuted": 3,
+        "fix_rounds": 2,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s12",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

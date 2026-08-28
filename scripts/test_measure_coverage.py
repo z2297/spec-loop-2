@@ -9,6 +9,10 @@ The corrected run-under-trace seam is exercised end-to-end in ``TracedRunTests``
 by invoking the real tool in a clean subprocess (never in-process — see that
 class's docstring for why).
 
+The ``__main__``-entry-shim resolver and the shipped manifest's integrity are
+covered separately in ``test_measure_coverage_manifest.py``, kept in its own
+module so this file stays a manageable size.
+
 Usage: python3 -m unittest scripts.test_measure_coverage
        (or) python3 scripts/test_measure_coverage.py
 """
@@ -86,8 +90,9 @@ class ParseOmitTests(unittest.TestCase):
             """
         )
         omit = mc.parse_omit(text)
-        self.assertEqual(omit["scripts/release.py"], {194, 195})
-        self.assertEqual(omit["scripts/pr_resolver.py"], {488})
+        self.assertEqual(omit["scripts/release.py"].lines, {194, 195})
+        self.assertFalse(omit["scripts/release.py"].main_shim)
+        self.assertEqual(omit["scripts/pr_resolver.py"].lines, {488})
 
     def test_ignores_comments_and_blank_lines(self):
         text = "# only comments\n\n   \n"
@@ -100,6 +105,37 @@ class ParseOmitTests(unittest.TestCase):
     def test_raises_on_malformed_entry(self):
         with self.assertRaises(ValueError):
             mc.parse_omit("this is not a valid entry  # rationale\n")
+
+    def test_parses_the_symbolic_main_shim_token(self):
+        omit = mc.parse_omit("scripts/dag.py:%s  # entry shim\n" % mc.MAIN_SHIM_TOKEN)
+        self.assertTrue(omit["scripts/dag.py"].main_shim)
+        self.assertEqual(omit["scripts/dag.py"].lines, set())
+
+    def test_raises_on_an_unknown_symbolic_token(self):
+        with self.assertRaises(ValueError):
+            mc.parse_omit("scripts/dag.py:__nonsense__  # rationale\n")
+
+
+class ResolveOmitTests(unittest.TestCase):
+    SRC = "a = 1\nb = 2\nif __name__ == \"__main__\":\n    sys.exit(main())\n"
+
+    def test_literal_lines_pass_through_unchanged(self):
+        spec = mc.OmitSpec(lines={1, 2})
+        self.assertEqual(mc.resolve_omit(spec, self.SRC, "synthetic.py"), {1, 2})
+
+    def test_symbolic_token_resolves_to_the_shim_lines(self):
+        spec = mc.OmitSpec(main_shim=True)
+        self.assertEqual(mc.resolve_omit(spec, self.SRC, "synthetic.py"), {3, 4})
+
+    def test_the_resolved_position_follows_the_file_as_it_grows(self):
+        grown = "z = 0\n" + self.SRC
+        spec = mc.OmitSpec(main_shim=True)
+        self.assertEqual(mc.resolve_omit(spec, grown, "synthetic.py"), {4, 5})
+
+    def test_empty_spec_resolves_to_nothing(self):
+        self.assertEqual(
+            mc.resolve_omit(mc.OmitSpec(), self.SRC, "synthetic.py"), set()
+        )
 
 
 class ApplyOmitTests(unittest.TestCase):

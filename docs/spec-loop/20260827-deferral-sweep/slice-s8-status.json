@@ -1,0 +1,305 @@
+{
+  "schema_version": 2,
+  "id": "s8",
+  "status": "DONE",
+  "branch": "spec-loop/20260827-deferral-sweep/s8",
+  "commits": {
+    "base": "4fea954",
+    "head": "cc57376c831a5decb70053a3801a444333ee8250"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "OBJECT",
+    "concerns": 15,
+    "over_scope": {
+      "flag": false,
+      "reason": "I judged scope against all twelve ceiling entries. Task 3 raw-field identity is explicitly cleared by the ceiling text itself and changes no 400/300 limit. Task 1's append_event narrowing is directed by BLOCKING 3. schema_version stays 2, open_escalations() and dashboard_server._escalation_event_statuses are untouched, no threshold value moves, no previous run's docs are edited, no retry is added. The one thing that would exceed the slice goal - a behaviour-preserving flatten of render_escalation - is forced collateral of the directed fix, not new scope, and the plan does not currently include it."
+    }
+  },
+  "tasks_completed": 4,
+  "review": {
+    "confirmed": 4,
+    "refuted": 1,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: `_IDENTITY_RE` is not line-anchored and `_section_identity` uses a bare `.search()` over the whole section, so a section that carries no real fingerprint anchor of its own can claim another record's identity from text embedded mid-line in a rendered field. Reproduced: an escalation-answered for an unknown id whose answer text ends with the rendered anchor of a different record produces an orphan-answer section for which `rs._section_identity(page)` returns that record's fingerprint; the subsequent genuine escalation-opened for that record then matched the orphan section, was suppressed by the keep rule, and produced no section of its own — the page ended with no entry for the escalation at all. This variant needs no newline and no control character, so the deferred remedy the council recorded (passing the remaining raw fields through `_one_line`, or rejecting control characters in `validate_escalation`) does not close it, while a line anchor does. Adversarial or self-referential input only (an answer or legacy context quoting escalations.md, which now contains these anchors), hence P2 rather than P1.",
+      "P2: This diff grew run_state.py from 1105 to 1299 lines, which invalidates the coverage manifest's pinned omit range for that file: `scripts/run_state.py:1104-1105` no longer covers the `__main__` shim but two ordinary, executed lines inside a critique check, while the real shim now sits at 1298-1299 and its `sys.exit(main())` is counted as executable-but-unrun. Verified by reading both ends: lines 1104-1105 are now `if isinstance(critique, dict) and critique.get(\"verdict\") \\` / `and critique[\"verdict\"] != \"SKIPPED\":`, and 1298-1299 are the shim. Benign today — I measured `python3 scripts/measure_coverage.py` as PASS with run_state.py at 99.9% (739/740) against a floor of 95 — but a live blocking control is now measuring the wrong lines, and if the stale range ever lands on a genuinely uncovered line the measured percentage is silently inflated. coverage_omit.txt is forbidden to this slice by the run constraints, so this needs a controller decision rather than a fix here.",
+      "P3: `append_event` no longer normalizes the event it is handed: the `payload or {}` default moved into `build_event`, and `append_event` indexes `event[\"type\"]`, `event[\"scope\"]` and (via `_place_escalation`/`_answer_on_page`) `event[\"payload\"]` directly. Every current caller goes through `build_event`, so no persisted record changes, and I verified the events.jsonl line is written before any renderer runs so the event stays durable. But a future caller hand-rolling an event dict without a `payload` key now writes the malformed line to events.jsonl first and then fails with a bare `KeyError` from inside a renderer, rather than a `RunStateError` naming the problem.",
+      "P2: The implementer's rolled-up self-report cites stale/incorrect measured quality-gate numbers for the exact metric (class_lines, total checks) this run's binding constraint says must be reported as MEASURED and nothing else. Re-running the frozen gate myself at base 299f0dbd1f700f8f3b3991ea7d601df797dd3749..HEAD gives run_state.py class_lines = 1074 (not the claimed 1037), test_run_state.py class_lines = 1696 (not the claimed 1577), and summary.checks = 507 (not the claimed 422). The underlying verdict (exactly two failures, both accepted pre-existing class_lines, nothing else) is still correct, but the specific figures the report hands the controller to 'accept on evidence' are wrong. This is the same defect class the run's own hard rule calls out: 'Report MEASURED numbers only - a wave-1 slice overstated its own violation count as 8 when the true figure was 3, and that is the defect class this run exists to police.' A stale sidecar under docs/spec-loop/20260827-deferral-sweep/slice-s8-status.json shows a third, different set of numbers again (1023/1528), confirming these figures have drifted across the round's own history and were never re-measured against the final diff before being reported.",
+      "P3: place_escalation_section's dedup-vs-answer-protection logic has one untested truth-table combination: an existing section that already carries an answer, re-emitted with a record that ALSO carries a (possibly different) answer. Hand-tracing all four combinations of has_answer(old)/has_answer(new) against every test in TestPlaceEscalationSection/TestAppendEvent/TestAnswerWriteBack shows the other three combinations produce identical output whether `and` is mutated to `or`, because in each of those cases the winning content happens to be textually identical either way. Only the old=answered/new=answered-differently combination would actually diverge under an `and`->`or` mutation, and no test in this diff exercises it, so that mutation would pass the full suite silently.",
+      "P3: Three new docstrings added by this diff use the bare word 'for' as ordinary English prose, which literally violates this run's binding shared constraint: 'keep control-flow words (if/for/while/case/catch/when) and the characters && || ? OUT of your own new string literals and docstrings - the frozen gate still counts them as branches.' A full sweep of every added ('+') line against the banned-word/char pattern (git diff 299f0db -- run_state.py test_run_state.py | grep -E '^\\+' | grep -nE '\\b(if|elif|for|while|case|catch|when)\\b|&&|\\|\\||\\?') turns up exactly these three prose (non-code) instances, after excluding real Python for/if/comprehension code (which is fine and expected) and one pre-existing 'matched?' line that predates this diff verbatim. None currently push their owning function over threshold (the full gate run shows only the two accepted class_lines failures), but the rule as written is unconditional, not threshold-conditional, and this is fragile: any later edit that adds even one more branch to these same functions could tip them over with zero warning, since the docstring text itself is already contributing branch-word hits to their score."
+    ]
+  },
+  "tests": {
+    "command": "7-segment suite",
+    "scope": "full",
+    "tree_sha": "f332e115f48f32b23f330ec9e073940347c89470",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand after the controller REBASED this branch onto the integration branch, all seven segments as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1226 OK; coverage PASS TOTAL 96.9% vs 90% floor (run_state.py 99.9%, 739/740, vs 95); node client 48/48; behavioural harness 15/15; claude plugin validate passed. The workflow-reported suite failure was a CONTROLLER ERROR, not a slice defect: wave 2's test_command included the behavioural harness added in wave 1, but this slice's worktree was still at the original run base where that file does not exist. Rebasing removed the false red."
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "FAIL - ACCEPTED by controller precedent. Exactly TWO violations, controller-measured after rebase: class_lines on run_state.py (1074) and test_run_state.py (1696), both vs threshold 300, both function=None. ZERO function-level violations across 507 checks - the append_event parameter_count 5>4 that blocked round 2 is FIXED. Both files were already over the bar at the run base. No threshold weakened, nothing split."
+  },
+  "escalations": [
+    {
+      "id": "s8:review-block",
+      "trigger": "review-block",
+      "title": "verification failed",
+      "context": "suite: Segment 6 failed: Could not find plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs. Segments 1-5 and 7 passed (106+1199+coverage+48+plugin validation tests). This test file was added in wave 1 and is not present in the worktree at the original run base.; quality: FAIL (summary_pass=false — Quality gate detected 2 class_lines violations. Both are pre-existing accepted debt per controller precedent: run_state.py (1074 > 300) and test_run_state.py (1696 > 300) are both listed as covered files in the accepted class_lines threshold exceptions.)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: Segment 6 failed: Could not find plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs. Segments 1-5 and 7 passed (106+1199+coverage+48+plugin validation tests). This test file was added in wave 1 and is not present in the worktree at the original run base.; quality: FAIL (summary_pass=false — Quality gate detected 2 class_lines violations. Both are pre-existing accepted debt per controller precedent: run_state.py (1074 > 300) and test_run_state.py (1696 > 300) are both listed as covered files in the accepted class_lines threshold exceptions.)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "ANSWERED",
+      "answered_at": "2026-08-27T22:03:42Z",
+      "answer": "ACCEPTED at round 3. All three blocking defects controller-verified as fixed by first-hand reproduction: (1) an unreadable escalations.md is now preserved intact and raises RunStateError instead of being silently replaced - re-ran the exact reproduction that failed round 2 and the page kept all 3 sections; (2) two rounds whose contexts differ only after char 450 now render as 2 distinct sections; (3) append_event's parameter_count violation is gone. Deliverable verified against the real corpus: replaying run 20260825's 11 escalation-opened events renders 8 sections against 12 in the committed artifact, and s3:budget-exhausted - the one id that genuinely re-escalated - survives as TWO sections. The remaining suite failure was a controller test-command error, fixed by rebase."
+    }
+  ],
+  "agents_used": 18,
+  "wave": 2,
+  "events": [
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "OBJECT",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 13,
+        "deferred": [
+          "RISK - the same defect class as BLOCKING 1 survives on the path the human gate actually depends on, and it should be logged rather than left implied. Task 2 step 6 keeps _read_text unedited with the rationale 'read_events still uses it, and a missing events.jsonl legitimately reads as no events'. That rationale covers only the absent case. _read_text also swallows OSError for a file that EXISTS but cannot be read, so a present-but-unreadable events.jsonl makes read_events return [], which makes open_escalations() return nothing, which means the escalation gate sees no open question and the run proceeds past a human decision - silently, and fail-open. This is pre-existing at 299f0db (not a round-2 regression) and the ceiling forbids changing open_escalations() semantics, so it must NOT be built in this slice. Defer: record it as its own DEFERRED item, and make the retained rationale in step 6 honest about what _read_text does and does not protect rather than stating only the missing-file half.",
+          "Pre-existing, verified, and outside this slice's three-defect mandate - logging so it is not lost. `render_escalation` passes `title`, `context`, `question`, option `detail`, `if_unanswered` and `answer` through `_one_line` (which collapses whitespace) but renders `record['id']`, `trigger`, `opened`, option `label` and `answered_at` RAW, and `validate_escalation` only requires `id` to be a non-empty string with no newline check - while the `append-event` CLI path performs no escalation validation at all. Confirmed by execution: an id of `\"s1:review-block\\n<!-- escalation-identity: aaaaaaaaaaaaaaaa -->\"` injects extra lines into the rendered section. This already lets a crafted id forge round-2's line-prefixed identity tuple and even forge a `## ` section boundary, so it is not introduced here. Line-anchoring per the objection narrows it but does not close it. Defer: the real fix is passing the remaining rendered fields through `_one_line` (or rejecting control characters in `validate_escalation`), which is a separate slice - this round was told to fix exactly three defects."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": "I judged scope against all twelve ceiling entries. Task 3 raw-field identity is explicitly cleared by the ceiling text itself and changes no 400/300 limit. Task 1's append_event narrowing is directed by BLOCKING 3. schema_version stays 2, open_escalations() and dashboard_server._escalation_event_statuses are untouched, no threshold value moves, no previous run's docs are edited, no retry is added. The one thing that would exceed the slice goal - a behaviour-preserving flatten of render_escalation - is forced collateral of the directed fix, not new scope, and the plan does not currently include it."
+        }
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "replan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "deferred",
+      "payload": {
+        "summary": "RISK - the same defect class as BLOCKING 1 survives on the path the human gate actually depends on, and it should be logged rather than left implied. Task 2 step 6 keeps _read_text unedited with the rationale 'read_events still uses it, and a missing events.jsonl legitimately reads as no events'. That rationale covers only the absent case. _read_text also swallows OSError for a file that EXISTS but cannot be read, so a present-but-unreadable events.jsonl makes read_events return [], which makes open_escalations() return nothing, which means the escalation gate sees no open question and the run proceeds past a human decision - silently, and fail-open. This is pre-existing at 299f0db (not a round-2 regression) and the ceiling forbids changing open_escalations() semantics, so it must NOT be built in this slice. Defer: record it as its own DEFERRED item, and make the retained rationale in step 6 honest about what _read_text does and does not protect rather than stating only the missing-file half.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "deferred",
+      "payload": {
+        "summary": "Pre-existing, verified, and outside this slice's three-defect mandate - logging so it is not lost. `render_escalation` passes `title`, `context`, `question`, option `detail`, `if_unanswered` and `answer` through `_one_line` (which collapses whitespace) but renders `record['id']`, `trigger`, `opened`, option `label` and `answered_at` RAW, and `validate_escalation` only requires `id` to be a non-empty string with no newline check - while the `append-event` CLI path performs no escalation validation at all. Confirmed by execution: an id of `\"s1:review-block\\n<!-- escalation-identity: aaaaaaaaaaaaaaaa -->\"` injects extra lines into the rendered section. This already lets a crafted id forge round-2's line-prefixed identity tuple and even forge a `## ` section boundary, so it is not introduced here. Line-anchoring per the objection narrows it but does not close it. Defer: the real fix is passing the remaining rendered fields through `_one_line` (or rejecting control characters in `validate_escalation`), which is a separate slice - this round was told to fix exactly three defects.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t4",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 2
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "review-summary",
+      "payload": {
+        "findings": 8,
+        "confirmed": 4,
+        "refuted": 1,
+        "fix_rounds": 1,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "debug-fix",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:2",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

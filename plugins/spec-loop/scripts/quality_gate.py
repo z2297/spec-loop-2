@@ -27,7 +27,12 @@ Pipeline:
      analyzer splits the source into functions by signature regex (python / js /
      ts / java / c# / go styles, language by extension) and estimates each
      metric by branch-keyword counting, signature parsing, and indent/brace
-     nesting. Every such finding is marked "source": "builtin-heuristic".
+     nesting. Branch counting reads a masked copy of the source in which the
+     content of string literals and comments has been replaced by a sentinel
+     -- python via stdlib tokenize, brace languages via a hand scanner that
+     keeps ${} interpolation code visible -- so words and punctuation inside
+     them are not measured as branching; a scanner failure falls back to the
+     raw text. Every such finding is marked "source": "builtin-heuristic".
      cognitive_complexity is ONLY ever produced by this heuristic (a
      nesting-weighted approximation) or skipped -- it is never attributed to a
      real tool.
@@ -49,12 +54,14 @@ Usage:
 """
 
 import argparse
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tokenize
 import xml.etree.ElementTree as ET
 
 # The default thresholds mirror the quality-gate skill's table (SKILL.md) and
@@ -89,6 +96,24 @@ _EXT_LANG = {
     ".c": "cbrace", ".h": "cbrace", ".cpp": "cbrace", ".cc": "cbrace",
     ".hpp": "cbrace", ".rs": "cbrace",
 }
+
+# The subset of the brace extensions whose scan mask may be lexed by the hand
+# scanner below. It implements plain JS/TypeScript quoting rules alone, where
+# a single quote always opens a string. In Rust a single quote usually opens
+# a lifetime, in C++ it also serves as a digit separator, so two of them on
+# one line pair into a phantom string covering the real code between them --
+# measured, that turns 2 branches into 1 with no signal, the one direction
+# this mask is never allowed to move a count. Rust, C, C++, Go, Java and C#
+# therefore keep their raw text: they stay on today's over-count, which is
+# the safe direction, rather than being lexed by quoting rules that are not
+# theirs. JSX and TSX carry the same residual for a different reason: the
+# scanner has no model of a JSX text node, where an apostrophe is prose, not
+# a string opener, so two contractions on one JSX text line pair into a
+# phantom string over real code between them -- measured on
+# `function Row(p) { return (<p>It's {p.a && p.b} - don't worry</p>); }`,
+# cyclomatic_complexity 1 where the raw branch count is 2. `.jsx` and `.tsx`
+# therefore also stay on raw text.
+_JS_MASK_EXTS = frozenset({".js", ".mjs", ".cjs", ".ts"})
 
 # Branch keywords whose occurrence adds one to cyclomatic complexity. Matched as
 # whole words (or operators) so an identifier like `ifield` is not counted.
@@ -373,6 +398,20 @@ def _lang_for(path):
     return _EXT_LANG.get(os.path.splitext(path)[1].lower())
 
 
+def _scan_lang_for(path):
+    """The language family whose scan mask may be applied to `path`, else None
+    to leave the file on raw text. Distinct from _lang_for on purpose: that one
+    picks the extraction and nesting model, this one picks the mask, and only
+    the JS/TypeScript subset of the brace extensions has a mask that lexes its
+    quoting correctly. (PURE)"""
+    lang = _lang_for(path)
+    if lang != "cbrace":
+        return lang
+    if os.path.splitext(path)[1].lower() in _JS_MASK_EXTS:
+        return "js"
+    return None
+
+
 def _count_params(sig):
     """Count parameters in a parenthesized signature substring. PURE. Splits the
     top-level parameter list on commas ignoring nested brackets, and drops a
@@ -413,6 +452,389 @@ def _count_params(sig):
     if names and names[0] in ("self", "cls"):
         names = names[1:]
     return len(names)
+
+
+# --------------------------------------------------------------------------
+# Scan mask -- what the two branch scans are allowed to see
+# --------------------------------------------------------------------------
+# The builtin heuristic used to scan raw source text, so a branch word or a
+# piece of operator punctuation inside a string literal or a comment was
+# measured as real branching. The worst measured example in this repo was a
+# human question ending in a question mark, counted as a ternary and pushing a
+# function to exactly its cognitive threshold. Masking is applied ONLY to the
+# text handed to _branch_count and _cognitive_approx: function extraction,
+# brace depth, method_lines and class_lines all keep reading raw text, because
+# a masked docstring continuation line starts at column 0 and would move the
+# indent-derived end of the enclosing function. Masked spans are filled with a
+# non-whitespace sentinel rather than spaces, because _cognitive_approx derives
+# its nesting level from leading whitespace: space-fill would RAISE the measured
+# cognitive complexity of dozens of functions. Every failure path returns the
+# raw text, so the worst case remains today's over-count. Two maskers sit
+# behind this seam: python via stdlib tokenize, the plain JS/TypeScript family
+# (.js, .mjs, .cjs, .ts) via the hand scanner below. The remaining brace
+# extensions -- .rs, .c, .h, .cpp, .cc, .hpp, .go, .java, .cs -- are
+# deliberately NOT masked, because the hand scanner lexes JS quoting rules
+# alone. .jsx and .tsx are ALSO deliberately NOT masked, because the scanner
+# has no model of a JSX text node and an apostrophe inside one is prose, not
+# a string opener. _scan_lang_for holds that routing.
+
+_SCAN_SENTINEL = "x"
+
+# The corruption trip-wire, expressed as a denominator: a mask that leaves more
+# than one line in _MASK_LOST_DENOM of the non-blank lines with no content at
+# all is discarded in favour of raw text. A correct mask empties nothing (the
+# sentinel is non-blank), so any trip here means the span arithmetic went wrong.
+_MASK_LOST_DENOM = 20
+
+
+def _masked_token_types():
+    """Token types whose text is masked out of a branch scan: string literals,
+    comments, and the literal segments of an f-string. An f-string's embedded
+    expression arrives as ordinary tokens and stays visible, so genuine
+    operators inside one are still measured. (PURE)"""
+    types = {tokenize.STRING, tokenize.COMMENT}
+    types.add(getattr(tokenize, "FSTRING_MIDDLE", None))
+    types.discard(None)
+    return frozenset(types)
+
+
+_MASKED_TOKEN_TYPES = _masked_token_types()
+
+
+def _scan_tokens(text):
+    """Tokenized `text`, or None on any tokenizer failure or a non-default end
+    state. Every None return sends the caller back to the raw text. (PURE)"""
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+        return None
+    if not toks:
+        return None
+    if toks[-1].type != tokenize.ENDMARKER:
+        return None
+    return toks
+
+
+def _masked_tokens(toks):
+    """The subset of `toks` whose text gets masked out of a branch scan.
+    (PURE)"""
+    return [tok for tok in toks if tok.type in _MASKED_TOKEN_TYPES]
+
+
+def _mask_line_range(row, start_col, end_col):
+    """`row` with the half-open column range replaced by sentinel characters, so
+    the line keeps its original length. (PURE)"""
+    stop = min(end_col, len(row))
+    width = max(0, stop - start_col)
+    return row[:start_col] + (_SCAN_SENTINEL * width) + row[stop:]
+
+
+def _token_mask_spans(tok, rows):
+    """The (row_index, start_col, end_col) spans one masked token covers, one per
+    physical line it reaches. Row indexes are 0-based into `rows`. On the
+    opening physical line, masking starts at the token's own start column. On
+    every later physical line, masking starts after that row's own leading
+    spaces rather than at column 0, so the sentinel fill never erases the
+    leading whitespace a downstream nesting-level reader derives from that
+    row: leading whitespace carries no branch words or operator punctuation,
+    so leaving it unmasked is measurement-neutral. (PURE)"""
+    (first_row, first_col), (last_row, last_col) = tok.start, tok.end
+    spans = []
+    for row in range(first_row, last_row + 1):
+        line = rows[row - 1]
+        start = first_col if row == first_row else (
+            len(line) - len(line.lstrip(" ")))
+        end = len(line)
+        if row == last_row:
+            end = last_col
+        spans.append((row - 1, start, end))
+    return spans
+
+
+def _mask_lost_too_much(raw_rows, masked_rows):
+    """True once the mask has emptied more than one line in _MASK_LOST_DENOM of
+    the non-blank lines -- the corruption signal that sends the scan back to raw
+    text. (PURE)"""
+    nonblank = sum(1 for row in raw_rows if row.strip())
+    lost = sum(1 for raw, masked in zip(raw_rows, masked_rows)
+               if raw.strip() and not masked.strip())
+    return bool(nonblank) and (lost * _MASK_LOST_DENOM > nonblank)
+
+
+def _mask_python_literals(text):
+    """`text` with every string-literal, comment and f-string-literal span filled
+    with the non-whitespace sentinel, preserving line count and line lengths, or
+    None to fall back to the raw text. (PURE)"""
+    toks = _scan_tokens(text)
+    if toks is None:
+        return None
+    rows = text.split("\n")
+    masked = list(rows)
+    for tok in _masked_tokens(toks):
+        for row_idx, start, end in _token_mask_spans(tok, rows):
+            masked[row_idx] = _mask_line_range(masked[row_idx], start, end)
+    if _mask_lost_too_much(rows, masked):
+        return None
+    return "\n".join(masked)
+
+
+# --------------------------------------------------------------------------
+# Brace-language scan mask
+# --------------------------------------------------------------------------
+# Brace languages get no stdlib tokenizer, so this is a hand character
+# scanner over five constructs: the two comment forms and the three string
+# forms. Template literals are handled separately from the flat forms
+# because a ${...} interpolation holds real code -- blanking a whole template
+# deletes genuine operators and UNDER-counts a function, the dangerous
+# direction. The scanner stops short of one construct on purpose: a regex
+# literal. Telling a regex literal from a division operator needs the
+# parser's expectation of the next token, which a character scanner does not
+# have, so a lone slash outside a comment is stepped over and a regex
+# literal's interior stays visible. Four residuals follow from that. First,
+# a quote character inside a regex literal opens a phantom string, and that
+# phantom can cover real operator punctuation lying between it and a later
+# quote, which lowers a count silently. Two limits a reader might expect are
+# NOT there, both measured against _mask_cbrace_literals and pinned by
+# TestRegexQuotePhantom. An odd number of quote characters on the line does
+# not force the whole-file fallback: a trailing line comment swallows the
+# unpaired quote before end-of-line, so the mask succeeds with a real
+# boolean operator hidden, and that line's branch count drops from 2 to 1.
+# Nor is the phantom held to one line: the quote alternative accepts a
+# backslash followed by any character, the newline included, so a backslash
+# in final position on the opening line carries the phantom onto the next
+# line and hides real operator punctuation there, with the same shape
+# repeatable to extend it further. Second, a doubled slash inside a regex
+# literal reads as a line comment and masks the rest of that line, which
+# lowers a count silently as well. Neither residual is guarded; both are
+# recorded rather than fixed, and hardening the scanner against them is
+# deferred to a slice that can carry its own differential re-measurement.
+# Third, and unbounded: a star-slash sequence inside a regex literal's
+# character contents reads as a block-comment opener, and the block-comment
+# alternative's closing search crosses newlines, so it would otherwise pair
+# with the next real block comment anywhere later in the source and blank
+# every line between the two.
+# The scanner guards against this one directly: once a bare slash has been
+# stepped over on the current source line, a later star-slash sequence on
+# that same line is refused rather than treated as a comment opener, and the
+# whole scan fails toward raw text instead of silently under-counting. Fourth,
+# also unbounded: a backtick inside a regex literal's character contents
+# reads as a template-literal opener, and the template alternative's closing
+# search crosses newlines with no escape needed, so it would otherwise pair
+# with the next real backtick anywhere later in the source and blank every
+# line between the two, exactly as the star-slash shape above does. The
+# scanner guards against this one the same way: once a bare slash has been
+# stepped over on the current source line, a later backtick on that same
+# line is refused rather than treated as a template-literal opener, and the
+# whole scan fails toward raw text instead. Both guards are verified by a
+# dedicated test rather than a repo sweep, because a sweep can only bound
+# occurrences that already exist, not ones a later file introduces. Measured
+# at the time this landed, the sweep of regex-literal
+# uses in this repo surfaced none containing a quote character, every
+# doubled slash the scanner treated as a line comment was a genuine trailing
+# comment after a properly closed regex literal, and the scanner closes every
+# construct it recognises in every brace source here. The sweeping greps
+# behind those statements are recorded in the slice report.
+
+_CB_FLAT_RE = re.compile(
+    r"//[^\n]*"
+    r"|/\*[\s\S]*?\*/"
+    r"|'(?:\\[\s\S]|[^'\\\n])*'"
+    r'|"(?:\\[\s\S]|[^"\\\n])*"'
+)
+_CB_OPENERS = "/'\""
+_CB_TPL_RE = re.compile(r"\\[\s\S]|\$\{|`")
+_CB_DEPTH = {"{": 1, "}": -1}
+
+
+def _cb_flat_step(text, pos, stop, slash_since_newline):
+    """One scanner step at a comment or a quote opener: (next_pos, spans,
+    slash_since_newline) once the flat regex closed the construct, else None
+    to fail toward raw text. A lone slash is division or a regex literal, so
+    it is stepped over and remembered for the rest of the line. A star-slash
+    match reached after such a lone slash on the same line is refused rather
+    than treated as a block-comment opener, since its unbounded closing
+    search would otherwise pair with a real block comment far later in the
+    file and blank real code in between; refusing sends the whole scan back
+    to raw text instead. (PURE)"""
+    is_block_open = text.startswith("/*", pos)
+    if slash_since_newline and is_block_open:
+        return None
+    m = _CB_FLAT_RE.match(text, pos, stop)
+    if m is not None:
+        return m.end(), [(m.start(), m.end())], slash_since_newline
+    if text[pos] == "/" and not is_block_open:
+        return pos + 1, [], True
+    return None
+
+
+def _cb_step(text, pos, stop, slash_since_newline):
+    """One scanner step from `pos`: (next_pos, mask_spans,
+    slash_since_newline), else None to fail toward raw text. The
+    lone-slash memory resets at the newline that ends its line. A backtick
+    reached after a lone slash on the same line is refused rather than
+    treated as a template-literal opener, mirroring the star-slash guard in
+    `_cb_flat_step`: its closing search would otherwise cross newlines and
+    pair with a real backtick far later in the file, blanking real code in
+    between; refusing sends the whole scan back to raw text instead. (PURE)"""
+    ch = text[pos]
+    if ch == "\n":
+        return pos + 1, [], False
+    if ch == "`":
+        if slash_since_newline:
+            return None
+        got = _cb_template_step(text, pos, stop)
+        if got is None:
+            return None
+        nxt, spans = got
+        return nxt, spans, slash_since_newline
+    if ch in _CB_OPENERS:
+        return _cb_flat_step(text, pos, stop, slash_since_newline)
+    return pos + 1, [], slash_since_newline
+
+
+def _cbrace_spans(text, start, stop):
+    """The mask spans over text[start:stop] as half-open (begin, end)
+    character ranges covering comment and string content, else None once a
+    construct never closes, which sends the caller back to raw text.
+    (PURE)"""
+    spans = []
+    pos = start
+    slash_since_newline = False
+    while pos < stop:
+        got = _cb_step(text, pos, stop, slash_since_newline)
+        if got is None:
+            return None
+        pos, found, slash_since_newline = got
+        spans.extend(found)
+    return spans
+
+
+def _cb_depth_delta(text, pos, got):
+    """The brace-depth change one scanner step makes: nonzero only on a plain
+    code character, so braces inside a literal or a comment are ignored.
+    (PURE)"""
+    plain = (got[0] == pos + 1) and not got[1]
+    if not plain:
+        return 0
+    return _CB_DEPTH.get(text[pos], 0)
+
+
+def _cb_interp_end(text, start, stop):
+    """The index just past the brace closing the ${ that opens at `start`,
+    paired with the mask spans found inside it, else None. Nested literals
+    and comments are stepped over with the same scanner, so a brace inside
+    one does not close the interpolation; their spans are returned here so
+    the caller reuses this single walk rather than repeating it. (PURE)"""
+    depth = 1
+    pos = start + 2
+    spans = []
+    slash_since_newline = False
+    while pos < stop:
+        got = _cb_step(text, pos, stop, slash_since_newline)
+        if got is None:
+            return None
+        depth += _cb_depth_delta(text, pos, got)
+        if depth == 0:
+            return pos + 1, spans
+        spans.extend(got[1])
+        pos, _found, slash_since_newline = got
+    return None
+
+
+def _cb_template_hop(text, m, stop, chunk):
+    """The scanner state after one non-closing hit inside a template literal:
+    (next_pos, next_chunk_start, spans). A backslash escape masks straight
+    through. A ${ ends the current masked chunk, scans the interpolation as
+    ordinary code, and restarts the chunk past its closing brace.
+    (None, None, []) once the interpolation never closes. (PURE)"""
+    if m.group(0) != "${":
+        return m.end(), chunk, []
+    got = _cb_interp_end(text, m.start(), stop)
+    if got is None:
+        return None, None, []
+    end, inner = got
+    return end, end, [(chunk, m.start())] + inner
+
+
+def _cb_template_step(text, pos, stop):
+    """The whole template literal opening at the backtick at `pos`:
+    (next_pos, mask_spans). Literal content is masked and every ${...}
+    interpolation is scanned as ordinary code, so real operators inside one
+    stay visible. None once the literal never closes. (PURE)"""
+    spans = []
+    chunk = pos
+    m = _CB_TPL_RE.search(text, pos + 1, stop)
+    while m is not None:
+        if m.group(0) == "`":
+            spans.append((chunk, m.end()))
+            return m.end(), spans
+        nxt, chunk, inner = _cb_template_hop(text, m, stop, chunk)
+        if nxt is None:
+            return None
+        spans.extend(inner)
+        m = _CB_TPL_RE.search(text, nxt, stop)
+    return None
+
+
+# The fill preserves the newline and the two brace characters. Line count and
+# line lengths matter because a masked body must cover exactly the same lines
+# as its raw body, and brace positions matter because _cognitive_approx's
+# brace-language arm derives its nesting level from the brace counts it sees
+# on the masked text: dropping a brace out of a literal could RAISE the
+# weight of every following line, and the mask is only ever allowed to lower
+# a count. Neither character carries a branch word or operator punctuation,
+# so preserving both is measurement-neutral. Same shape as the reason the
+# sentinel is non-whitespace.
+_CB_PRESERVED = "\n{}"
+
+
+def _cb_masked_char(ch):
+    """The mask character of one source character: the newline and the two
+    brace characters survive, everything else becomes the sentinel.
+    (PURE)"""
+    if ch in _CB_PRESERVED:
+        return ch
+    return _SCAN_SENTINEL
+
+
+def _mask_cbrace_literals(text):
+    """`text` with comment and string content replaced by the non-whitespace
+    sentinel, preserving line count, line lengths and brace positions, else
+    None to fall back to the raw text. Code inside a ${} interpolation stays
+    visible. (PURE)"""
+    spans = _cbrace_spans(text, 0, len(text))
+    if spans is None:
+        return None
+    chars = list(text)
+    for begin, end in spans:
+        chars[begin:end] = [_cb_masked_char(ch) for ch in chars[begin:end]]
+    masked = "".join(chars)
+    if _mask_lost_too_much(text.split("\n"), masked.split("\n")):
+        return None
+    return masked
+
+
+def _mask_for_lang(text, lang):
+    """The masked form of `text` in one SCAN language, else None once no mask
+    applies. Keyed by the value _scan_lang_for produces, never by the
+    extraction family. (PURE)"""
+    if lang == "python":
+        return _mask_python_literals(text)
+    if lang == "js":
+        return _mask_cbrace_literals(text)
+    return None
+
+
+def _strip_for_scan(text, lang):
+    """`text` with string-literal and comment content masked out, so words and
+    punctuation inside literals stop being measured as real branching. Python
+    is masked via stdlib tokenize, the JS/TypeScript family via the hand
+    scanner that keeps ${} interpolation code visible. Every other language
+    family, plus every mask failure, returns the raw text. (PURE)"""
+    masked = _mask_for_lang(text, lang)
+    if masked is None:
+        return text
+    return masked
 
 
 def _branch_count(text):
@@ -562,12 +984,60 @@ def _nonblank(lines):
     return sum(1 for line in lines if line.strip())
 
 
+def _extract_functions_for(lines, lang):
+    """The extracted callables of one file, by language family. (PURE)"""
+    if lang == "python":
+        return _extract_functions_python(lines)
+    return _extract_functions_cbrace(lines)
+
+
+def _nesting_depth_for(body_lines, lang, base_indent):
+    """Nesting depth of one RAW function body, by language family. Always
+    measured on raw text: the mask is for branch scanning only. (PURE)"""
+    if lang == "python":
+        return _nesting_depth_python(body_lines[1:], base_indent)
+    return _nesting_depth_braces("\n".join(body_lines))
+
+
+def _scan_lines_for(source, scan_lang, lines):
+    """The masked counterpart of `lines`, for the two branch scans only. Falls
+    back to `lines` unless the mask preserved the physical line count exactly,
+    so a masked body always covers the same lines as its raw body. The
+    language here is the SCAN language from _scan_lang_for, not the extraction
+    family. (PURE)"""
+    scan_lines = _strip_for_scan(source, scan_lang).splitlines()
+    if len(scan_lines) != len(lines):
+        return lines
+    return scan_lines
+
+
+def _function_metrics(lines, scan_lines, fn, lang):
+    """Measured metric values for one extracted function. `lines` is raw source;
+    `scan_lines` is its masked counterpart, read by the two branch scans alone,
+    so span, indentation and length metrics all stay on raw text. (PURE)"""
+    body_lines = lines[fn["header_idx"]:fn["end"]]
+    scan_body = scan_lines[fn["header_idx"]:fn["end"]]
+    header_line = lines[fn["header_idx"]]
+    base_indent = len(header_line) - len(header_line.lstrip(" "))
+    return {
+        "cyclomatic_complexity": _branch_count("\n".join(scan_body)),
+        "method_lines": _nonblank(body_lines),
+        "parameter_count": _count_params(header_line),
+        "cognitive_complexity": _cognitive_approx(
+            scan_body, lang, base_indent),
+        "nesting_depth": _nesting_depth_for(body_lines, lang, base_indent),
+    }
+
+
 def analyze_builtin(path, source, changed_ranges):
     """Pure-stdlib heuristic analysis of one changed file. Returns
     (function_findings, class_finding_or_None) where each finding is a dict of
     measured metric values for functions intersecting `changed_ranges`, tagged
     source="builtin-heuristic". `source` is the file text; changed_ranges is the
-    file's list of (start, end) changed spans.
+    file's list of (start, end) changed spans. The two branch scans read a
+    masked copy of the source (see _strip_for_scan); the mask is selected by
+    _scan_lang_for, so a brace language outside the JS family keeps its raw
+    text. Every other metric reads the raw text.
 
     An unsupported/binary file (no known language) yields ([], None); the caller
     records a skip for it."""
@@ -575,35 +1045,17 @@ def analyze_builtin(path, source, changed_ranges):
     if lang is None:
         return [], None
     lines = source.splitlines()
-    if lang == "python":
-        funcs = _extract_functions_python(lines)
-    else:
-        funcs = _extract_functions_cbrace(lines)
+    scan_lines = _scan_lines_for(source, _scan_lang_for(path), lines)
+    funcs = _extract_functions_for(lines, lang)
 
     findings = []
     for fn in funcs:
         if not _intersects_changed(fn["start"], fn["end"], changed_ranges):
             continue
-        body_lines = lines[fn["header_idx"]:fn["end"]]
-        body_text = "\n".join(body_lines)
-        header_line = lines[fn["header_idx"]]
-        base_indent = len(header_line) - len(header_line.lstrip(" "))
-        metrics = {
-            "cyclomatic_complexity": _branch_count(body_text),
-            "method_lines": _nonblank(body_lines),
-            "parameter_count": _count_params(header_line),
-            "cognitive_complexity": _cognitive_approx(body_lines, lang,
-                                                       base_indent),
-        }
-        if lang == "python":
-            metrics["nesting_depth"] = _nesting_depth_python(
-                body_lines[1:], base_indent)
-        else:
-            metrics["nesting_depth"] = _nesting_depth_braces(body_text)
         findings.append({
             "file": path, "function": fn["name"],
             "line_start": fn["start"], "line_end": fn["end"],
-            "metrics": metrics,
+            "metrics": _function_metrics(lines, scan_lines, fn, lang),
         })
 
     class_finding = None

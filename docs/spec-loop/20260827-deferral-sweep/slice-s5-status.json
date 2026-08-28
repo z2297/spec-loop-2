@@ -1,0 +1,169 @@
+{
+  "schema_version": 2,
+  "id": "s5",
+  "status": "DONE",
+  "branch": "spec-loop/20260827-deferral-sweep/s5",
+  "commits": {
+    "base": "8518f56aa84d0128b7271210f2dec489aacd8b68",
+    "head": "f54cb05c39cfc8df1804953a0db6ea48c89bd832"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 5,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 2,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 0,
+    "residual": [
+      "P3: The fixture record passed to the real run_state.render_escalation() is not a valid EscalationRecord: it omits `options`, which run_state.validate_escalation requires as a non-empty list (and omits `opened`/`if_unanswered`). The test therefore exercises the real renderer with a record shape persist_slice would reject, so it proves the collapse-and-truncate behaviour but not that a production-shaped record renders the same way. Behaviour under test is unaffected today because render_escalation reads every field through .get() and _ordered_options tolerates a missing list (verified by running the module: 22 tests OK, and the rendered `- Context: ` line measures 411 chars = 11-char prefix + the 400-char budget).",
+      "P3: The helper's docstring spends four of its five lines narrating the deleted re-implementation rather than describing what the helper returns. The historical claim is accurate today (the removed body was `\" \".join(filled.split())[:CRASH_CONTEXT_RENDER_LIMIT - 1]` — collapse correct, unconditional slice wrong, no ellipsis wrong, i.e. two of _one_line's three behaviours), but it is a claim about code that no longer exists anywhere in the tree and no future reader can check it. The repo's convention is decision-justifying comments; this is closer to a changelog entry, which belongs in the commit body (where it already is, in 7edd648)."
+    ]
+  },
+  "tests": {
+    "command": "7-segment suite",
+    "scope": "full",
+    "tree_sha": "ea0179667b48ca74bc7f279fdcdd9a2f2fb4178f",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand at f54cb05 after the slice CRASHED at its own verify stage, all seven segments as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1228 OK; coverage PASS TOTAL 96.9% vs 90% floor; node client 48/48; behavioural harness 15/15; claude plugin validate passed. NOTE the sidecar's originally-reported head de55460 was STALE by one commit: the crash record captured it before f54cb05 (the INTG-2 prose-home pinning) landed. The branch head is authoritative."
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "Quality gate executed successfully. All 11 checks passed. Metrics evaluated: cyclomatic_complexity, cognitive_complexity, method_lines, parameter_count, nesting_depth, and class_lines. No violations found."
+  },
+  "escalations": [
+    {
+      "id": "s5:internal-error",
+      "trigger": "internal-error",
+      "title": "slice crashed after verify:1",
+      "context": "Error: agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output. Last stage/role dispatched before the failure: verify:1 — the most recent dispatch, not a per-throw stage, so a starting point, not a culprit. Cause unknown: neither structural guard raised its escalation record, and that is all the check one line above proves — the stage token floor calls budget.remaining() itself, so a throw from inside a guard reaches here with no record either. It may be a loop or agent-contract bug, and it may equally be a host- or agent-layer resource failure (a rejected agent call on a hard token or rate limit, say) — the exception text above is the evidence, not this classification. state.stage is never cleared and concurrent fan-outs overwrite it, so the failure may also have happened after that role finished, or in a sibling of it. 2 task(s) had already completed and any committed work is on the branch.",
+      "question": "Retry this slice, skip it and continue the run, or stop the run to diagnose the exception?",
+      "options": [
+        {
+          "label": "Retry this slice",
+          "detail": "Recommended default. The CONTROLLER must act on this at the next dispatch: re-dispatch the wave on this slice, keeping the committed work on its branch.",
+          "recommended": true
+        },
+        {
+          "label": "Skip this slice",
+          "detail": "The CONTROLLER must act on this at the next dispatch: leave the slice ESCALATED and dispatch only the independent slices. Nothing in the loop enforces a skip — the default re-dispatch procedure would retry it."
+        },
+        {
+          "label": "Stop the run",
+          "detail": "The CONTROLLER must act on this at the next dispatch: halt the run instead of dispatching another wave, so the exception can be diagnosed before more agents are spent. Nothing in the loop stops the run by itself."
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "ANSWERED",
+      "answered_at": "2026-08-27T23:22:47Z",
+      "answer": "RETRY resolved by CONTROLLER VERIFICATION rather than by re-dispatch. The crash was an agent-layer StructuredOutput retry cap exceeded at verify:1 - the final verification stage - after every task had already committed and the quality gate had already PASSED with 0 violations across 22 checks. Re-dispatching would have re-run a completed pipeline to reproduce a verification the controller can perform directly, so the controller ran all seven suite segments first-hand instead: green. Both deliverables confirmed present: INTG-1's duplicated CRASH_CONTEXT_RENDER_LIMIT is deleted and the test now renders through the real run_state.render_escalation(); INTG-2's guard is renamed TestTheTriggerEnumAgreesAcrossAllSixHomes and adds two methods pinning the two PROSE homes (slice-worker-fallback.md and references/run-state-v2.md)."
+    }
+  ],
+  "agents_used": 7,
+  "wave": 3,
+  "events": [
+    {
+      "scope": "s5",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s5",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s5",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council"
+        ],
+        "safety": false,
+        "concerns_folded": 5,
+        "deferred": [],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s5",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s5",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s5",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s5",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:full",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s5",
+      "type": "quality-gate",
+      "payload": {
+        "status": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "scope": "s5",
+      "type": "review-summary",
+      "payload": {
+        "findings": 2,
+        "confirmed": 0,
+        "refuted": 0,
+        "fix_rounds": 0,
+        "reviewers": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,182 @@
+{
+  "schema_version": 2,
+  "id": "s2",
+  "status": "DONE",
+  "branch": "spec-loop/20260827-deferral-sweep/s2",
+  "commits": {
+    "base": "299f0dbd1f700f8f3b3991ea7d601df797dd3749",
+    "head": "2bb925082ac67d10d8e1d81e8bf96ea3c674481b"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 7,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 4,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 0,
+    "residual": [
+      "P2: Step 3 now asserts \"Pick the trigger the way the workflow does\" while the sentence immediately before it still says a genuine `BLOCKED` escalates on the FIRST attempt, which the workflow does not do: `attemptTask` calls `if (!taskNeedsRetry(r)) return r` and `taskNeedsRetry` is true for `BLOCKED`, so a first genuine `BLOCKED` is re-dispatched once with a lane lift, and only `runTask`'s re-test escalates. The same edit also deleted the only trigger guidance that covered a pre-exhaustion escalation (`material-assumption` or `review-block` as fits), so the inline twin is now told to escalate a genuine `BLOCKED` immediately with no trigger named for that path. The implementer disclosed the retry-policy half of this and the plan supplied the retained clause verbatim, so plan conformance is intact — but the divergence is exactly the doc-vs-code class this slice exists to close, in a spec an agent reads at runtime.",
+      "P3: The paragraph this diff rewrites still carries a bare line-number citation, `the lost-slice record at :919`, which the run's binding constraint forbids (\"Cite behaviour, not line numbers... Name the function or constant instead\") and which this run's other slices can invalidate. The plan explicitly directed keeping this sentence as-is, so it is plan-conformant, not an implementer error; recording it so the intent to preserve it is a human decision rather than an oversight. It currently happens to be accurate (the `title: 'slice lost'` record is at slice-wave.workflow.js:919)."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; claude plugin validate .",
+    "result": "All segments passed: validate_marketplace OK; scripts tests 106 OK; plugins/spec-loop/scripts tests 1159 OK; coverage 1265 OK (96.7% total, all floors met); Node tests 48 TAP OK; plugin validate OK",
+    "scope": "full",
+    "tree_sha": "1e5ebab3ff2f0f09865fe796e0712dbdb82de841"
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "Quality gate produced valid JSON. No failures reported. Findings array empty. Summary.pass is true."
+  },
+  "escalations": [],
+  "agents_used": 9,
+  "wave": 1,
+  "events": [
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council"
+        ],
+        "safety": false,
+        "concerns_folded": 6,
+        "deferred": [
+          "OBSERVATION recorded, not a fix request (matches Task 3 step 5, and I confirmed the text): the `## Escalations` paragraph in slice-worker-fallback.md says the workflow \"classifies both shapes of that as `ambiguity`\" naming only the two no-result shapes, and also says `internal-error` is \"an unhandled exception that aborted the slice, and nothing else\" - which understates the lost-slice record that also carries `internal-error`. Both sit in the span another slice owns. Correct to leave; report it so the owning slice inherits it rather than losing it."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "deferred",
+      "payload": {
+        "summary": "OBSERVATION recorded, not a fix request (matches Task 3 step 5, and I confirmed the text): the `## Escalations` paragraph in slice-worker-fallback.md says the workflow \"classifies both shapes of that as `ambiguity`\" naming only the two no-result shapes, and also says `internal-error` is \"an unhandled exception that aborted the slice, and nothing else\" - which understates the lost-slice record that also carries `internal-error`. Both sit in the span another slice owns. Correct to leave; report it so the owning slice inherits it rather than losing it.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t4",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:full",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "quality-gate",
+      "payload": {
+        "status": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "review-summary",
+      "payload": {
+        "findings": 2,
+        "confirmed": 0,
+        "refuted": 0,
+        "fix_rounds": 0,
+        "reviewers": 1
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

@@ -1,0 +1,290 @@
+{
+  "schema_version": 2,
+  "id": "s7",
+  "status": "DONE",
+  "branch": "spec-loop/20260827-deferral-sweep/s7",
+  "commits": {
+    "base": "c6781749b73a9133895f684a7a3c90bdaf5bf0db",
+    "head": "4d152414f86c80d186f17265d40286ff946a8f8a"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "OBJECT",
+    "concerns": 9,
+    "over_scope": {
+      "flag": false,
+      "reason": "The plan touches exactly two files (plugins/spec-loop/workflows/slice-wave.workflow.js wave-entry fallback, plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs) plus read-only verification. It builds nothing on the run scope ceiling: esc()'s id scheme is untouched (s9's), no schema_version change, no automatic retry, no threshold change, no stage-tracking redesign, no previous-run docs. The doc-clause correction I ask for in the objection is mandated by a binding shared constraint, not scope growth."
+    }
+  },
+  "tasks_completed": 4,
+  "review": {
+    "confirmed": 2,
+    "refuted": 1,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: The widened record now offers three options that its own question cannot be answered with. render_escalation writes '- The decision: Re-run the wave to retry this slice?' followed by the three options, and answer_escalation stores free text with no option binding, so a human or controller who answers the binary question ('no', 'do not re-run') selects neither Skip this slice nor Stop the run - the answer is ambiguous between them, and internal-error is not in ANSWERABLE_TRIGGERS so nothing downstream resolves the ambiguity. The plan records keeping the question binary as a deliberate scope decision (widening it would force edits to test_slice_wave_contract_crash.py's assertIn(\"Re-run the wave to retry this slice?\", wave_entry)), so this is the residual risk that decision leaves rather than an implementation error; it is worth a human's attention because the sibling record's question does enumerate its three options.",
+      "P2: The new test comment asserts as settled fact that 'The human ruled that widening this record to the same three controller-named labels as the crash record is the fix,' but no such ruling is traceable in this run's own decision artifacts. grep -n 'widening\\|lost-slice\\|three.*option\\|s7' docs/spec-loop/20260827-deferral-sweep/decisions-log.md docs/spec-loop/20260827-deferral-sweep/escalations.md returns zero hits in both files. controller-verified-evidence.md §2 explicitly frames the question as still open at intake: 'This is a live question for the human, not a controller call.' The only trace found is dag.json's terse s7 goal field text 'HUMAN-DECIDED this run' — dispatch metadata, not a decision record with rationale or timestamp. This is precisely the overclaim shape ('No comment... may claim more... than exists') the run's own binding constraints target, now permanently shipped in test source. The implementer's own concerns list already flags this gap and asks the controller to confirm the attribution, but the comment shipped unchanged and unqualified regardless.",
+      "P3: The new clause opens with 'Both records now offer the same three...' — run-relative wording in a living skill doc with no anchor for what 'now' means to a future reader (no version/date/PR reference), a nit already self-flagged by the implementer's own concerns. The same parenthetical also restates 'the lost-slice record carries neither' a second time (line 79 already establishes this), adding partial redundancy though it does append new information (the binary-question contrast) on the second occurrence."
+    ]
+  },
+  "tests": {
+    "command": "7-segment suite",
+    "scope": "full",
+    "tree_sha": "bd052f0d3c469165a8ee0c74ca0188c24363f7ab",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at 4d15241, all seven segments as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1186 OK; coverage PASS TOTAL 96.8% vs 90% floor; node client 48/48; behavioural harness 15/15 (up from 14 - it added the widened-record assertion); claude plugin validate passed."
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "FAIL - ACCEPTED by controller precedent. Exactly ONE violation, controller-measured at 4d15241: class_lines on plugins/spec-loop/workflows/slice-wave.workflow.js, 815 non-blank vs threshold 300, function=None. ZERO function-level violations. The file was already over the bar at the run base (923 raw lines) and run 20260825 recorded the identical acceptance for this same file. No threshold weakened, nothing split."
+  },
+  "escalations": [
+    {
+      "id": "s7:quality-gate-block",
+      "trigger": "quality-gate-block",
+      "title": "verification failed",
+      "context": "suite: All 7 suite segments passed: validate_marketplace OK; 106 unittest tests passed (scripts); 1186 unittest tests passed (plugins/spec-loop/scripts); 1292 coverage tests passed (TOTAL 96.8% vs 90% floor); 48 Node tests passed (dashboard_assets); 15 Node tests passed (slice_wave_behaviour); claude plugin validate OK; quality: FAIL (summary_pass=false — Quality gate exit 1 with JSON output. The gate identified one failure: plugins/spec-loop/workflows/slice-wave.workflow.js exceeds the class_lines threshold (815 lines vs 300 threshold). Two other files passed their checks: slice_wave_behaviour.test.mjs (163 lines) and slice_wave_contract_base.py (296 lines).)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: All 7 suite segments passed: validate_marketplace OK; 106 unittest tests passed (scripts); 1186 unittest tests passed (plugins/spec-loop/scripts); 1292 coverage tests passed (TOTAL 96.8% vs 90% floor); 48 Node tests passed (dashboard_assets); 15 Node tests passed (slice_wave_behaviour); claude plugin validate OK; quality: FAIL (summary_pass=false — Quality gate exit 1 with JSON output. The gate identified one failure: plugins/spec-loop/workflows/slice-wave.workflow.js exceeds the class_lines threshold (815 lines vs 300 threshold). Two other files passed their checks: slice_wave_behaviour.test.mjs (163 lines) and slice_wave_contract_base.py (296 lines).)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "ANSWERED",
+      "answered_at": "2026-08-27T22:01:52Z",
+      "answer": "CONTROLLER-RESOLVED BY PRECEDENT: the sole remaining violation is pre-existing class_lines on slice-wave.workflow.js. Accepted; nothing split, no threshold weakened."
+    }
+  ],
+  "agents_used": 16,
+  "wave": 2,
+  "events": [
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "OBJECT",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 8,
+        "deferred": [
+          "CONSISTENCY: the crash record's option details are pinned twice — behaviourally in the harness AND as source text in Python via slice_wave_contract_base's CRASH_OPTION_RETRY/SKIP/STOP and CRASH_OPTION_CONTROLLER_ACTS (test_every_option_says_the_controller_must_act_on_it counts 3 inside crash_fallback()). The plan gives the lost-slice options only the behavioural pin. That is the better protection and I am not asking for a second pin, but since the sibling record has both, the report should say the choice was deliberate — behavioural execution over source text — rather than leaving it to look like an oversight in the option-text home census the later slice owns."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": "The plan touches exactly two files (plugins/spec-loop/workflows/slice-wave.workflow.js wave-entry fallback, plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs) plus read-only verification. It builds nothing on the run scope ceiling: esc()'s id scheme is untouched (s9's), no schema_version change, no automatic retry, no threshold change, no stage-tracking redesign, no previous-run docs. The doc-clause correction I ask for in the objection is mandated by a binding shared constraint, not scope growth."
+        }
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "replan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "deferred",
+      "payload": {
+        "summary": "CONSISTENCY: the crash record's option details are pinned twice — behaviourally in the harness AND as source text in Python via slice_wave_contract_base's CRASH_OPTION_RETRY/SKIP/STOP and CRASH_OPTION_CONTROLLER_ACTS (test_every_option_says_the_controller_must_act_on_it counts 3 inside crash_fallback()). The plan gives the lost-slice options only the behavioural pin. That is the better protection and I am not asking for a second pin, but since the sibling record has both, the report should say the choice was deliberate — behavioural execution over source text — rather than leaving it to look like an oversight in the option-text home census the later slice owns.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t4",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 1
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-0 refuted by batched verifier",
+        "rationale": "The run scope ceiling states class_lines is accepted as pre-existing debt 'for any file already over 300 non-blank at the run base.' plugins/spec-loop/workflows/slice-wave.workflow.js was already 812 non-blank-ish lines (`git show c6781749...:plugins/spec-loop/workflows/slice-wave.workflow.js | grep -c '^.'` = 812) at the run base commit c6781749b73a9133895f684a7a3c90bdaf5bf0db, well over the 300 threshold, so it qualifies under the general pre-existing-debt rule regardless of the four files named as confirmed examples. This slice's diff only touches lines 919-922 of the file and does not grow it meaningfully (926 lines now vs 812 at base, and s7's own hunk only adds ~3 lines net).",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260827-deferral-sweep/s7/plugins/spec-loop/workflows/slice-wave.workflow.js, /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260827-deferral-sweep/s7/plugins/spec-loop/scripts/slice_wave_contract_base.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "review-summary",
+      "payload": {
+        "findings": 5,
+        "confirmed": 2,
+        "refuted": 1,
+        "fix_rounds": 1,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

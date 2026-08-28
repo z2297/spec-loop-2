@@ -1,0 +1,141 @@
+{
+  "schema_version": 2,
+  "id": "s14",
+  "status": "DONE",
+  "branch": "spec-loop/20260827-deferral-sweep/s14",
+  "commits": {
+    "base": "5ecc25de055f813bdc1a004d6cd962804b0d5ad0",
+    "head": "2116ec664fc45a873a0238daf1da4bea32e8cecc"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 5,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 1,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 0,
+    "residual": [
+      "P3: The specific example the corrected sentence rests on — a JSON *string* `\"14\"` coercing to the integer 14 — is not pinned by any executing test. `slice_wave_behaviour.test.mjs` drives numeric `14`, `5`, `10`, `10.5` and the non-numeric string `\"lots\"`, but never a numeric string. The claim is trivially true of `Number()` and I verified `agentCap()` reads `Number(CAP_OVERRIDES[slice.id])` directly, so this is documentation-example drift risk, not a defect in the shipped sentence. Adding the test is outside this slice's ceiling (\"Do NOT change any code\"); noting it so a future slice can close it."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs ; claude plugin validate .",
+    "result": "All 7 suite segments passed. Segment 1: marketplace validation OK. Segment 2: 126 unit tests passed in scripts/. Segment 3: 1292 unit tests passed in plugins/spec-loop/scripts/. Segment 4: 1418 tests passed with coverage floors met (96.9% total coverage, all files >= floor). Segment 5: 48 dashboard asset tests passed. Segment 6: 35 slice wave behaviour tests passed. Segment 7: plugin validation passed.",
+    "scope": "full",
+    "tree_sha": "54d75f7e88cc6f0eab5e615142a8cda51cbb4b76"
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "Quality gate passed. No code violations detected. CHANGELOG.md marked as unsupported file type and skipped from analysis (expected, documentation-only change). crap_score check skipped (no coverage report baseline needed). Gate configuration: builtin-heuristic backend, vacuous result (0 checks run) appropriate for code-neutral diff."
+  },
+  "escalations": [],
+  "agents_used": 6,
+  "wave": 8,
+  "events": [
+    {
+      "scope": "s14",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s14",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s14",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council"
+        ],
+        "safety": false,
+        "concerns_folded": 5,
+        "deferred": [],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s14",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s14",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s14",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:full",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s14",
+      "type": "quality-gate",
+      "payload": {
+        "status": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "scope": "s14",
+      "type": "review-summary",
+      "payload": {
+        "findings": 1,
+        "confirmed": 0,
+        "refuted": 0,
+        "fix_rounds": 0,
+        "reviewers": 1
+      }
+    },
+    {
+      "scope": "s14",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

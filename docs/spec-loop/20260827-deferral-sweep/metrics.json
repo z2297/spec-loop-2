@@ -1,0 +1,355 @@
+{
+  "schema_version": 2,
+  "run_id": "20260827-deferral-sweep",
+  "run_schema_detected": 2,
+  "generated_at": "2026-08-28T05:42:06+00:00",
+  "sources": {
+    "dag": true,
+    "dag_schema_version": 2,
+    "events": 539,
+    "events_skipped": 0,
+    "events_truncated": false,
+    "event_types": {
+      "agent-dispatch": 323,
+      "baseline": 1,
+      "council-verdict": 25,
+      "decision": 33,
+      "deferred": 26,
+      "escalation-answered": 13,
+      "escalation-opened": 19,
+      "integration-check": 5,
+      "phase5-gate": 2,
+      "quality-gate": 24,
+      "review-summary": 37,
+      "run-created": 1,
+      "slice-merged": 14,
+      "wave-collected": 7,
+      "wave-dispatched": 9
+    },
+    "sidecars": 14,
+    "runbook": false
+  },
+  "safety": {
+    "basis": "events-jsonl+sidecar-v2",
+    "escalations": {
+      "basis": "events-jsonl+sidecar-v2",
+      "total": 11,
+      "open": 0,
+      "answered": 11,
+      "by_trigger": {
+        "council-objection": 1,
+        "internal-error": 1,
+        "quality-gate-block": 8,
+        "review-block": 1
+      },
+      "per_scope": {
+        "s10": 1,
+        "s12": 1,
+        "s3": 1,
+        "s4": 1,
+        "s5": 1,
+        "s6": 1,
+        "s7": 1,
+        "s8": 3,
+        "s9": 1
+      },
+      "unkeyed_events": 0
+    },
+    "decisions_total": 33,
+    "deferrals_total": 26,
+    "over_scope_deferrals": null,
+    "autonomy_ratio": 0.75,
+    "escalation_answer_latency_s": null,
+    "council": {
+      "basis": "events-jsonl+sidecar-v2",
+      "verdicts": {
+        "ENDORSE_WITH_CONCERNS": 15,
+        "OBJECT": 9
+      },
+      "object_rate": 0.375,
+      "safety_objections": 1,
+      "concerns_total": 215,
+      "concerns_deferred": 19,
+      "by_member": null,
+      "slice_verdicts": {
+        "ENDORSE_WITH_CONCERNS": 8,
+        "OBJECT": 6
+      },
+      "over_scope_flags": 2
+    },
+    "reversibility_mix": {
+      "n/a": 10,
+      "other": 22,
+      "trivial": 1
+    },
+    "precedent_reuse": {
+      "count": 1,
+      "rate": 0.0303
+    }
+  },
+  "quality": {
+    "basis": "events-jsonl+sidecar-v2",
+    "quality_gate": {
+      "basis": "events-jsonl+sidecar-v2",
+      "measurements": 24,
+      "scopes": 14,
+      "first_pass": 6,
+      "first_pass_rate": 0.4286,
+      "refactor_passes_total": null,
+      "failures": 16,
+      "final_status_counts": {
+        "FAIL": 8,
+        "PASS": 6
+      }
+    },
+    "review": {
+      "basis": "events-jsonl+sidecar-v2",
+      "counters": {
+        "confirmed": 21,
+        "refuted": 14,
+        "evidence_failed": 0,
+        "fix_rounds": 13,
+        "residual": 40
+      },
+      "verified_findings": 35,
+      "refuted_rate": 0.4,
+      "evidence_failed_drop_rate": 0.0,
+      "fix_rounds_total": 13,
+      "residual_total": 40,
+      "findings_total": 94,
+      "reviewer_dispatches": 62,
+      "findings_per_reviewer_dispatch": 1.5,
+      "refuted_by_fixer": null,
+      "refuted_by_fixer_rate": null,
+      "block_escalations": 1
+    },
+    "merges": {
+      "basis": "events-jsonl",
+      "count": 14,
+      "commits": [
+        "0d5cda4",
+        "19723a0",
+        "32c68be",
+        "35409a8",
+        "39f7a28",
+        "4fea954",
+        "5ecc25d",
+        "8518f56",
+        "9a587d7",
+        "a63cf39",
+        "abe293b",
+        "ac283ad",
+        "c678174",
+        "f608fbd"
+      ]
+    },
+    "splits": {
+      "basis": "dag-json",
+      "total_slices": 14,
+      "split_parents": 0,
+      "split_rate": 0.0,
+      "max_depth": 0,
+      "remediation_slices": 3,
+      "risk_tiers": {
+        "2": 6,
+        "3": 8
+      }
+    },
+    "integration": {
+      "basis": "events-jsonl",
+      "checks": [
+        {
+          "scope": "wave1",
+          "result": null
+        },
+        {
+          "scope": "wave1",
+          "result": null
+        },
+        {
+          "scope": "wave2",
+          "result": null
+        },
+        {
+          "scope": "wave3",
+          "result": null
+        },
+        {
+          "scope": "wave5",
+          "result": null
+        }
+      ],
+      "check_failures": 0,
+      "gate": "PASS",
+      "remediation_slices": 3
+    },
+    "requirement_coverage": null,
+    "slice_outcomes": {
+      "basis": "sidecar-v2",
+      "counts": {
+        "DONE": 14
+      }
+    },
+    "tests": {
+      "basis": "sidecar-v2",
+      "results": {
+        "All 7 segments passed: validate_marketplace OK; scripts tests: 126 pass; plugins/spec-loop/scripts tests: 1292 pass; coverage: 1418 tests pass, 96.9% coverage (6230/6426), all floors met; index.test.mjs: 48 pass; slice_wave_behaviour.test.mjs: 35 pass; plugin validation passed": 1,
+        "All 7 suite segments passed. Segment 1: marketplace validation OK. Segment 2: 126 tests passed. Segment 3: 1292 tests passed. Segment 4: 1418 tests passed with 3 skipped, coverage floors met (96.9% total, 90% floor). Segment 5: 48 tests passed. Segment 6: 35 tests passed. Segment 7: plugin validation passed.": 1,
+        "All 7 suite segments passed. Segment 1: marketplace validation OK. Segment 2: 126 unit tests passed in scripts/. Segment 3: 1292 unit tests passed in plugins/spec-loop/scripts/. Segment 4: 1418 tests passed with coverage floors met (96.9% total coverage, all files >= floor). Segment 5: 48 dashboard asset tests passed. Segment 6: 35 slice wave behaviour tests passed. Segment 7: plugin validation passed.": 1,
+        "All segments passed: validate_marketplace OK; scripts tests 106 OK; plugins/spec-loop/scripts tests 1159 OK; coverage 1265 OK (96.7% total, all floors met); Node tests 48 TAP OK; plugin validate OK": 1,
+        "All six suite segments passed: validate_marketplace.py (OK), scripts unittest (106 tests OK), plugins/spec-loop/scripts unittest (1159 tests OK), coverage measurement (1265 tests OK with all floors met), Node dashboard tests (48 tests pass), and claude plugin validation (passed).": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand after the controller REBASED this branch onto the integration branch, all seven segments as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1226 OK; coverage PASS TOTAL 96.9% vs 90% floor (run_state.py 99.9%, 739/740, vs 95); node client 48/48; behavioural harness 15/15; claude plugin validate passed. The workflow-reported suite failure was a CONTROLLER ERROR, not a slice defect: wave 2's test_command included the behavioural harness added in wave 1, but this slice's worktree was still at the original run base where that file does not exist. Rebasing removed the false red.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand at 058b316, all seven segments as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1288 OK; coverage PASS TOTAL 96.9% vs 90% floor (run_metrics.py 98.8% vs 93); node client 48/48; behavioural harness 23/23; claude plugin validate passed. Both segments that were RED before this round are green.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand at 3abed0f, all seven segments as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1277 OK; coverage PASS TOTAL 96.9% vs 90% floor (quality_gate.py 93.6%, 824/880, vs 86); node client 48/48; behavioural harness 15/15; claude plugin validate passed.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand at 4237b04, all seven segments as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1289 OK; coverage PASS TOTAL 96.9% vs 90% floor; node client 48/48; behavioural harness 35/35; claude plugin validate passed.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand at af96f69, all seven segments as separate tool calls: marketplace OK; root unittest 126 OK (up from 106 - this slice added the manifest guard module); plugin unittest 1292 OK; coverage PASS TOTAL 96.9% vs 90% floor; node client 48/48; behavioural harness 35/35; claude plugin validate passed.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand at f54cb05 after the slice CRASHED at its own verify stage, all seven segments as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1228 OK; coverage PASS TOTAL 96.9% vs 90% floor; node client 48/48; behavioural harness 15/15; claude plugin validate passed. NOTE the sidecar's originally-reported head de55460 was STALE by one commit: the crash record captured it before f54cb05 (the INTG-2 prose-home pinning) landed. The branch head is authoritative.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at 4d15241, all seven segments as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1186 OK; coverage PASS TOTAL 96.8% vs 90% floor; node client 48/48; behavioural harness 15/15 (up from 14 - it added the widened-record assertion); claude plugin validate passed.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at af31142, all six segments run as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1161 OK; coverage PASS (TOTAL 96.7-96.8% vs 90% floor, every per-file floor met); node client 48/48 pass; claude plugin validate passed.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at d3c3ddd, all six segments run as separate tool calls: marketplace OK; root unittest 106 OK; plugin unittest 1184 OK; coverage PASS (TOTAL 96.7-96.8% vs 90% floor, every per-file floor met); node client 48/48 pass; claude plugin validate passed.": 1
+      }
+    }
+  },
+  "performance": {
+    "basis": "dag-json+events-jsonl",
+    "run_wall_clock_s": 45372.0,
+    "started_at": "2026-08-27T17:05:00+00:00",
+    "finished_at": "2026-08-28T05:41:12+00:00",
+    "slices": null,
+    "waves": [
+      {
+        "wave": 1,
+        "slices": 5,
+        "status": "dispatched",
+        "dispatched_via_workflow": true,
+        "agent_count": 68,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 10367.5
+      },
+      {
+        "wave": 2,
+        "slices": 3,
+        "status": "dispatched",
+        "dispatched_via_workflow": true,
+        "agent_count": 51,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 5270.0
+      },
+      {
+        "wave": 3,
+        "slices": 3,
+        "status": "dispatched",
+        "dispatched_via_workflow": true,
+        "agent_count": 57,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 6840.4
+      },
+      {
+        "wave": 4,
+        "slices": 2,
+        "status": "dispatched",
+        "dispatched_via_workflow": true,
+        "agent_count": 62,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 7988.6
+      },
+      {
+        "wave": 6,
+        "slices": 1,
+        "status": "dispatched",
+        "dispatched_via_workflow": true,
+        "agent_count": 17,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 4558.5
+      },
+      {
+        "wave": 7,
+        "slices": 1,
+        "status": "dispatched",
+        "dispatched_via_workflow": true,
+        "agent_count": 12,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 1686.4
+      },
+      {
+        "wave": 8,
+        "slices": 1,
+        "status": "dispatched",
+        "dispatched_via_workflow": true,
+        "agent_count": null,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": null
+      }
+    ],
+    "agents": {
+      "basis": "events-jsonl",
+      "count": 323,
+      "timed": 0,
+      "total_s": null,
+      "by_agent": null,
+      "by_model": null,
+      "by_role": null,
+      "by_effort": {
+        "high": 110,
+        "low": 150,
+        "medium": 63
+      }
+    },
+    "engine_active_s": null,
+    "human_wait_s": null
+  },
+  "tokens": {
+    "basis": "wave-collected-events",
+    "totals": null,
+    "dispatches": 323,
+    "dispatches_with_tokens": 0,
+    "coverage_rate": 0.0,
+    "by_model": null,
+    "by_role": null,
+    "by_agent": null,
+    "by_scope": null,
+    "wave_totals": {
+      "basis": "wave-collected-events",
+      "total": 16849977,
+      "waves": [
+        {
+          "wave": 2,
+          "subagent_tokens": 3386245
+        },
+        {
+          "wave": 1,
+          "subagent_tokens": 4309580
+        },
+        {
+          "wave": 3,
+          "subagent_tokens": 3151501
+        },
+        {
+          "wave": 4,
+          "subagent_tokens": 3900877
+        },
+        {
+          "wave": 5,
+          "subagent_tokens": 752712
+        },
+        {
+          "wave": 6,
+          "subagent_tokens": 948140
+        },
+        {
+          "wave": 7,
+          "subagent_tokens": 400922
+        }
+      ],
+      "waves_reporting": 7,
+      "waves_total": 7
+    }
+  }
+}
