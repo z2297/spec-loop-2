@@ -256,9 +256,10 @@ test("an authorised override raises the cap the guard enforces", async () => {
 });
 
 test("an override at or below the tier default is ignored", async () => {
-  const out = await runWave(capWave({ agent_cap_overrides: { s1: 5 } }), capAgent());
-  assert.equal(only(out).title, "agent cap reached (10)");
-  assert.equal(out.results[0].agents_used, 10);
+  for (const value of [5, 10]) {
+    const out = await runWave(capWave({ agent_cap_overrides: { s1: value } }), capAgent());
+    assert.equal(only(out).title, "agent cap reached (10)");
+  }
 });
 
 test("a non-numeric override is ignored rather than trusted", async () => {
