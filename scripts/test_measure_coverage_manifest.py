@@ -5,8 +5,8 @@ path-key, OMIT-parsing and threshold tests) to keep each test module a
 manageable size. Covers ``resolve_main_shim`` and its two extracted helpers
 directly, and separately asserts that the shipped ``coverage_omit.txt``
 manifest — parsed and resolved through the real code paths, never a fixture
-copy — names every target's shim symbolically and resolves to that file's
-own shim header.
+copy — names every target's shim symbolically and resolves to a block of the
+size pinned by SHIPPED_SHIM_LINES in this module.
 
 Usage: python3 -m unittest scripts.test_measure_coverage_manifest
        (or) python3 scripts/test_measure_coverage_manifest.py
@@ -17,6 +17,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import measure_coverage as mc  # noqa: E402
+
+# Every shipped target's entry shim is a guard header plus a single-line body, so the
+# resolved omission is exactly this many lines. One pin covers all thirteen targets:
+# raising it relaxes every target at once, not just the one that grew.
+SHIPPED_SHIM_LINES = 2
 
 
 class ResolveMainShimTests(unittest.TestCase):
@@ -84,14 +89,21 @@ class ManifestIntegrityTests(unittest.TestCase):
     def test_no_manifest_key_is_outside_the_target_set(self):
         self.assertEqual(set(self.omit) - set(mc.TARGET_FILES), set())
 
-    def test_each_resolved_omission_is_the_files_own_shim_header(self):
+    def test_each_resolved_omission_is_the_pinned_block_size(self):
+        """The resolved block stays at its pinned size, so it cannot absorb code.
+
+        This is the guard that can fail: a statement added beneath a target's
+        entry guard grows the resolved block, the count stops matching
+        SHIPPED_SHIM_LINES, and the pinned size must be deliberately raised in
+        this module to go green again. The companion assertLess is a pin too,
+        not a check - it restates that the shipped size sits under the resolver
+        cap and moves only on a source edit.
+        """
+        self.assertLess(SHIPPED_SHIM_LINES, mc.MAX_SHIM_LINES)
         for relpath, spec in self.omit.items():
             source = mc._target_source_path(relpath).read_text()
             resolved = mc.resolve_omit(spec, source, relpath)
-            header = source.splitlines()[min(resolved) - 1]
-            # The real module pattern, not a copy of it: a numeric entry that has
-            # drifted off its shim points its lowest line at other code and fails.
-            self.assertRegex(header, mc._MAIN_SHIM_RE)
+            self.assertEqual(len(resolved), SHIPPED_SHIM_LINES, relpath)
 
     def test_each_resolved_omission_passes_validate_omit(self):
         for relpath, spec in self.omit.items():

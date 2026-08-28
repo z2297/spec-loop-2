@@ -7,9 +7,14 @@
 # Blank lines and full-line '#' comments are ignored. Every data entry MUST carry
 # a '# rationale'; measure_coverage.py refuses to run on a malformed or
 # rationale-less entry, so this manifest stays auditable and cannot silently grow
-# into a place to hide genuinely-untested code. An entry is also rejected by
-# validate_omit on overshooting end-of-file, or on removing more than 25% of a
-# file's executable lines, so it cannot collapse a file to a false 0/0 = 100%.
+# into a place to hide genuinely-untested code.
+# Each symbolic entry resolves to the guard header plus its indented body.
+# scripts/test_measure_coverage_manifest.py pins the resolved block size of
+# every target, so a statement added beneath a guard grows the block and fails
+# the suite until the new size is deliberately accepted in that test.
+# An entry is also rejected by validate_omit on overshooting end-of-file, or on
+# removing more than 25% of a file's executable lines, so it cannot collapse a
+# file to a false 0/0 = 100%.
 #
 # WHY THE SYMBOLIC TOKEN EXISTS. Every entry below names a process-entry shim: the
 # module is imported rather than run as __main__ under unittest, so the shim header
