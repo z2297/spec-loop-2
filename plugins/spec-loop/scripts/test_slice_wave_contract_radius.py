@@ -196,5 +196,43 @@ class TestNoRadiusComparisonIsReachedByCoercion(WorkflowSourceTestCase):
             self.assertIn(marker, self.region())
 
 
+# ---- the declared block on PLAN_RESULT, and the planner instruction ----
+
+PLAN_REQUIRED = "required: ['status'],"
+RADIUS_SCHEMA = "refactor_radius: { type: 'object', additionalProperties: false"
+RADIUS_RATIO_TYPE = "rewrite_ratio: { type: ['number', 'null'] }"
+PROMPT_ASK = "Also return refactor_radius: your DECLARED estimate"
+PROMPT_NO_ZERO = "omit it rather than guessing a zero"
+PROMPT_JUDGE = "the workflow judges them against the run's ceiling"
+CTX_FIELD = "refactor_radius{enabled,max_rewrite_ratio"
+PLAN_PROMPT_START = "function planPrompt(slice) {"
+PLAN_PROMPT_END = "function criticPrompt("
+
+
+class TestThePlannerDeclaresNumbersAndTheWorkflowJudgesThem(WorkflowSourceTestCase):
+    """The planner is an ACTOR that reports numbers; the verdict is JS's.
+    The field stays optional because absence must remain a different claim
+    from zero all the way from the schema to the event payload."""
+
+    def test_the_schema_carries_an_optional_refactor_radius_block(self):
+        self.assertIn(RADIUS_SCHEMA, self.src)
+        self.assertIn(RADIUS_RATIO_TYPE, self.src)
+
+    def test_plan_result_still_requires_status_and_nothing_else(self):
+        self.assertIn(PLAN_REQUIRED, self.src)
+        self.assertNotIn("required: ['status', 'refactor_radius']", self.src)
+
+    def test_the_plan_prompt_asks_for_the_numbers_without_asking_for_a_verdict(self):
+        prompt = self.between(PLAN_PROMPT_START, PLAN_PROMPT_END)
+        self.assertIn(PROMPT_ASK, prompt)
+        self.assertIn(PROMPT_JUDGE, prompt)
+
+    def test_the_plan_prompt_forbids_inventing_a_zero_for_an_unknown(self):
+        self.assertIn(PROMPT_NO_ZERO, self.between(PLAN_PROMPT_START, PLAN_PROMPT_END))
+
+    def test_the_ctx_field_list_names_refactor_radius_as_the_one_channel(self):
+        self.assertIn(CTX_FIELD, self.line_containing("const CTX = A.ctx"))
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

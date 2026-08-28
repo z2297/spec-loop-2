@@ -30,7 +30,7 @@ export const meta = {
 // Tolerate stringified args: some harness paths deliver the args value
 // JSON-encoded even when the caller passed an object (verified 2026-07-30).
 const A = typeof args === 'string' ? JSON.parse(args) : args
-const CTX = A.ctx // {run_dir, plugin_root, base_ref, test_command, conventions_path, shared_constraints[], scope_ceiling[] (optional), tier3_surfaces[], quality_gate_cmd, models{reviewer}, thorough, polish}
+const CTX = A.ctx // {run_dir, plugin_root, base_ref, test_command, conventions_path, shared_constraints[], scope_ceiling[] (optional), tier3_surfaces[], refactor_radius{enabled,max_rewrite_ratio,max_touched_existing_files,min_rewritten_lines} (optional), quality_gate_cmd, models{reviewer}, thorough, polish}
 
 const CAPS = { 1: 10, 2: 18, 3: 32 }
 const MAX_FIX_ROUNDS = 2
@@ -62,6 +62,14 @@ const PLAN_RESULT = {
     tasks: { type: 'array', maxItems: 10, items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, title: { type: 'string' }, lane: { enum: ['transcribe', 'standard', 'judgment'] }, files: { type: 'array', items: { type: 'string' } } }, required: ['id', 'title', 'lane', 'files'] } },
     split: { type: 'object', additionalProperties: false, properties: { children: { type: 'array', minItems: 2, items: { type: 'object', additionalProperties: false, properties: { goal: { type: 'string' }, files: { type: 'array', items: { type: 'string' } }, subsystems: { type: 'array', items: { type: 'string' } }, internal_deps: { type: 'array', items: { type: 'integer' } } }, required: ['goal', 'files', 'subsystems', 'internal_deps'] } } }, required: ['children'] },
     escalation: ESCALATION,
+    // OPTIONAL, and deliberately absent from `required` below: an absent block
+    // means "the planner declared no estimate", which is a different claim
+    // from a zero ratio. Every read of it runs through radiusNumbers(), which
+    // guards each field individually — PLAN_RESULT.required is ['status']
+    // only, and an unguarded optional read here aborted a whole wave of this
+    // run. `basis` is the planner's one-sentence account of how it counted,
+    // carried for a human reading the escalation and never parsed.
+    refactor_radius: { type: 'object', additionalProperties: false, properties: { rewrite_ratio: { type: ['number', 'null'] }, touched_existing_files: { type: ['integer', 'null'] }, rewritten_lines: { type: ['integer', 'null'] }, basis: { type: 'string' } } },
   },
   required: ['status'],
 }
@@ -451,7 +459,8 @@ Plan slice ${slice.id} of run ${A.run_id}: ${slice.goal}
 Named files: ${slice.files.join(', ') || '(none named)'} · Subsystems: ${slice.subsystems.join(', ') || '—'}
 Risk tier: ${slice.risk_tier} · Split depth: ${slice.depth} (split allowed only below depth 2)
 Write the plan to exactly: ${CTX.run_dir}/plans/${slice.id}.md
-Test/build command for verification steps: ${CTX.test_command}${answerFor(slice, 'ambiguity')}${answerFor(slice, 'material-assumption')}${answerFor(slice, 'refactor-scope')}`
+Test/build command for verification steps: ${CTX.test_command}
+Also return refactor_radius: your DECLARED estimate of how much EXISTING code this plan rewrites — {rewrite_ratio: existing lines your tasks rewrite or delete ÷ total lines the plan changes, touched_existing_files: how many pre-existing files your tasks modify, rewritten_lines: the absolute count of existing lines rewritten or deleted, basis: one sentence on how you counted}. Report the numbers only, never a verdict: the workflow judges them against the run's ceiling. If you genuinely cannot estimate one, omit it rather than guessing a zero.${answerFor(slice, 'ambiguity')}${answerFor(slice, 'material-assumption')}${answerFor(slice, 'refactor-scope')}`
 }
 
 function criticPrompt(slice, plan, role) {
