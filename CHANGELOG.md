@@ -7,6 +7,34 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+### Added
+- **A `budget-exhausted` answer that actually raises the cap.** The wave args gain one optional
+  top-level field, `agent_cap_overrides: {"<slice-id>": <integer>}`. `agentCap` in
+  `slice-wave.workflow.js` reads it and the per-slice structural guard enforces the number it
+  returns, so a human who authorises a raise now has a lever instead of prose. The channel is
+  deliberately narrow: it can only RAISE (a value at or below the review tier's own cap in
+  `CAPS` is discarded), it is keyed per slice, it lives in the args object of the single
+  re-dispatch the controller hands it to, and it moves no default. An applied raise emits an
+  `agent-cap-override` event carrying `{tier, default_cap, effective_cap}`, so the exception is
+  auditable in `events.jsonl` rather than inferable from a larger `agents_used`. The record
+  itself now offers three controller-named options and its recommended option names the args
+  field to write. `budget-exhausted` remains NOT a judgment trigger — its answer is injected
+  into no agent prompt, pinned now by execution as well as by source text — and the per-stage
+  token floor is untouched, having no args-level lever at all: its resource is the wave budget
+  the host supplies. The controller still translates the human's free-text answer into the
+  integer it writes; nothing in the loop parses that text. Documented in `commands/spec-loop.md`
+  step 7 and `references/run-state-v2.md`.
+
+### Changed
+- **The lost-slice escalation asks the three-way question its options already offered.** The
+  record widened to `Retry this slice` / `Skip this slice` / `Stop the run` but still asked
+  "Re-run the wave to retry this slice?", so a human answering "no" had chosen none of the
+  three and the stored free text bound to no option. It now asks "Retry this slice, skip it and
+  continue the run, or stop the run to investigate the silent failure?", matching the crash
+  record's shape with its own tail — the lost-slice record has no exception text to diagnose.
+  Pinned by execution in `slice_wave_behaviour.test.mjs` and by source text in
+  `test_slice_wave_contract_crash.py`.
+
 ### Fixed
 - **`escalations.md` renders one section per distinct escalation question.** An
   `escalation-opened` event whose raw `id`, `context` and `question` match a section already on
