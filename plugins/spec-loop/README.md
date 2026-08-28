@@ -155,7 +155,9 @@ sidecar closed rather than reading as clean.
 - **Scripts (11 runtime + tests)**: dag, worktrees, run_state, review_package,
   quality_gate, knowledge_graph, run_metrics, pr_resolver, spec_loop_guard,
   dashboard_server, dashboard_launcher (+ dashboard_assets, and the
-  `slice_wave_contract_base` test-support module).
+  `slice_wave_contract_base` and `slice_wave_contract_radius_driver`
+  test-support modules, which back three Node harness modules:
+  `slice_wave_behaviour`, `slice_wave_radius` and `slice_wave_replan`).
 
 ## Migrating from v1
 

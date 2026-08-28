@@ -97,5 +97,49 @@ class TestRiskTiersSeparatesTierTriggersFromThePlanTimeOne(unittest.TestCase):
         self.assertIn(TIERS_OVER_SCOPE_KEPT, self.text)
 
 
+# ---- README: the counted component inventory ----
+
+INVENTORY_COUNTS = (
+    ("commands", "**Commands (%d)**"),
+    ("agents", "**Agents (%d)**"),
+    ("skills", "**Skills (%d)**"),
+)
+RADIUS_DRIVER = "`slice_wave_contract_radius_driver`"
+THREE_HARNESS_MODULES = "three Node harness modules"
+
+
+def _counted(kind):
+    """How many components of one kind actually exist on disk. (PURE)"""
+    if kind == "commands":
+        return len(list((PLUGIN_ROOT / "commands").glob("*.md")))
+    if kind == "agents":
+        return len(list((PLUGIN_ROOT / "agents").glob("*.md")))
+    return len([p for p in (PLUGIN_ROOT / "skills").iterdir() if p.is_dir()])
+
+
+class TestTheComponentInventoryIsCountedNotRemembered(unittest.TestCase):
+    """The README inventory is the only place a reader learns how big the
+    plugin is. It drifted before because a contributor trusted the printed
+    number instead of the tree, so this test compares it to the tree."""
+
+    def setUp(self):
+        self.text = prose(README_MD)
+
+    def test_each_printed_count_equals_the_number_of_files_on_disk(self):
+        for kind, template in INVENTORY_COUNTS:
+            with self.subTest(kind=kind):
+                self.assertIn(template % _counted(kind), self.text)
+
+    def test_the_runtime_script_count_matches_the_non_test_modules(self):
+        runtime = [p for p in (PLUGIN_ROOT / "scripts").glob("*.py")
+                   if not p.name.startswith("test_")
+                   and not p.name.startswith("slice_wave_contract")]
+        self.assertIn("**Scripts (%d runtime + tests)**" % len(runtime), self.text)
+
+    def test_the_inventory_names_this_runs_new_test_support_modules(self):
+        self.assertIn(RADIUS_DRIVER, self.text)
+        self.assertIn(THREE_HARNESS_MODULES, self.text)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
