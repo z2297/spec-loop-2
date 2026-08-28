@@ -152,9 +152,10 @@ regardless of how the work went.
 ## Escalations
 
 Every escalation is an EscalationRecord in `escalations[]`: stable id `<slice-id>:<trigger>`,
-plus `:<round>` from the second round of that trigger in that slice onward, one of the seven
+plus `:<round>` from the second round of that trigger in that slice onward, one of the eight
 triggers (`ambiguity`, `material-assumption`, `review-block`,
-`council-objection`, `quality-gate-block`, `budget-exhausted`, `internal-error`), the context,
+`council-objection`, `quality-gate-block`, `refactor-scope`, `budget-exhausted`,
+`internal-error`), the context,
 the precise question, options with one marked `recommended`, and `if_unanswered`.
 Proceed-and-log stays the default — surface only genuine ambiguity or a material assumption
 touching behavior, public contracts, persisted data, security, or an external integration. A
@@ -170,6 +171,9 @@ carries the real error text and names the stage/role you were actually running w
 aborted: you drive every stage serially, so unlike the workflow you DO know which one it was
 — say it. Hedge only for a failure inside step 4's concurrent review ∥ quality-gate message,
 where either dispatch may be the one that died; there, name both and say which is unclear.
+`refactor-scope` is raised only by the workflow itself at plan time, when the plan's own
+declared refactor-to-feature ratio crosses the configured threshold; you never mint one, and
+you never use it for a refactor you merely think is large.
 
 ## Return
 

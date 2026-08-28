@@ -218,6 +218,17 @@ class TestValidateSidecar(unittest.TestCase):
             escalation(id="s1:internal-error", trigger="internal-error")])
         self.assertValid(body)
 
+    def test_escalation_trigger_accepts_refactor_scope(self):
+        # The plan-time refactor-scope checkpoint writes a real
+        # EscalationRecord, and validate_escalation runs BEFORE
+        # persist_slice writes anything: a value missing from
+        # ESCALATION_TRIGGERS would cost the slice its sidecar, its
+        # events and its report rather than mislabelling one field.
+        # This drives the membership check, it does not re-list the tuple.
+        body = sidecar("ESCALATED", escalations=[
+            escalation(id="s1:refactor-scope", trigger="refactor-scope")])
+        self.assertValid(body)
+
     def test_escalation_trigger_still_rejects_a_bogus_value(self):
         body = sidecar("ESCALATED", escalations=[escalation(trigger="kaboom")])
         self.assertMentions(body, "trigger")
