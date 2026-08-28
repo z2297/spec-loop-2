@@ -150,7 +150,8 @@ Event types (extensible; consumers ignore unknown types): `run-created`,
 `baseline`, `council-verdict`, `decision`, `deferred`, `escalation-opened`,
 `escalation-answered`, `wave-dispatched`, `wave-collected`, `slice-merged`,
 `integration-check`, `split-ingested`, `quality-gate`, `review-summary`,
-`agent-dispatch`, `phase5-gate`, `publish-choice`, `agent-cap-override`.
+`agent-dispatch`, `phase5-gate`, `publish-choice`, `agent-cap-override`,
+`refactor-radius`.
 
 Pinned payload facts (consumers rely on these; everything else is
 best-effort):
@@ -181,6 +182,20 @@ best-effort):
   reading as a whole number — `"14"` — is read as the integer 14 and judged against the tier
   default like any other value.
   The discard is therefore visible without waiting on a second cap record.
+- **`refactor-radius`** payload: `{summary, state, exceeded[], measured{rewrite_ratio,
+  touched_existing_files, rewritten_lines}, thresholds{enabled, max_rewrite_ratio,
+  max_touched_existing_files, min_rewritten_lines}|null}`, plus `suppressed_by_answer: true`
+  when a human has already answered this slice's `refactor-scope` escalation. Emitted by
+  the wave's PLAN stage on EVERY evaluation — `state` is one of `NOT_CONFIGURED`,
+  `DISABLED`, `NOT_MEASURED`, `WITHIN`, `BELOW_FLOOR`, `EXCEEDED`, and only `EXCEEDED`
+  halts. The no-fire cases are emitted precisely because a ceiling that silently declines
+  to fire is invisible narrowing: `measured` and `thresholds` are both present in every
+  state so a reader never re-derives why nothing happened. `measured` is null-honest —
+  an undeclared number is `null`, never `0`, and `0` is a real measurement. The numbers
+  are planner-DECLARED: a proxy declared before implementation, not a measured diff, so
+  they cannot catch a blowup discovered mid-implementation, and no second,
+  post-implementation checkpoint exists. `thresholds` is `null` only when
+  `ctx.refactor_radius` was absent or unusable.
 - **`wave-collected`** payload carries the per-wave aggregates the workflow
   completion notification reports: `{index, agent_count, subagent_tokens,
   duration_ms}` — the honest wave-level token/duration channel while

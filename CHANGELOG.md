@@ -6,6 +6,22 @@ All notable changes to the spec-loop plugin are documented here. The format is
 [v1 repository](https://github.com/z2297/spec-loop).
 
 ## [Unreleased]
+### Added
+- **The wave workflow now halts a slice at PLAN time when its plan declares a rewrite of
+  existing code larger than the run's configured ceiling.** `slice-wave.workflow.js` gains
+  an optional `refactor_radius` block on `PLAN_RESULT` that the planner fills with declared
+  numbers, a pure `refactorRadiusStatus()` predicate that judges them in JS — mirroring
+  `qualityStatus()`, with every comparison behind an explicit null guard because
+  `undefined >= n` is false and `null >= 0` is true — and a `refactor-scope` escalation
+  offering three trade-offs (narrow, approve, carve out) when a measured number exceeds a
+  ceiling. Thresholds arrive only through `ctx.refactor_radius`, resolved by the controller
+  from `quality_gate.py --print-config`. Every evaluation emits a `refactor-radius` event
+  carrying both the measured numbers and the thresholds compared, including the no-fire and
+  not-measured cases, and it renders into `decisions-log.md`. Honest limits: the numbers are
+  a planner-declared proxy rather than a measured diff, so this cannot catch a blowup
+  discovered mid-implementation; the check runs once, on the first plan, and a post-OBJECT
+  replan is not re-evaluated; and a controller that does not thread `ctx.refactor_radius`
+  records `NOT_CONFIGURED` and never halts.
 
 ## [2.2.2] - 2026-08-28
 ### Added

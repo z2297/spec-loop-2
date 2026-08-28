@@ -83,11 +83,14 @@ deadlock is itself an escalation):
 3. **Dispatch**: resolve the effective gate config once through the one door —
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/quality_gate.py" --print-config --config
    ~/.claude/spec-loop-2/quality-gate.json --overlay .spec-loop/quality-gate.json` — and
-   take `tier3_surfaces` and `models` from it. Build the wave args object exactly as
-   `slice-wave.workflow.js` documents — `{run_id, wave_index, ctx: {run_dir (absolute),
-   plugin_root, base_ref, test_command, conventions_path, shared_constraints,
+   take `tier3_surfaces`, `models` and `refactor_radius` from it. Build the wave args object
+   exactly as `slice-wave.workflow.js` documents — `{run_id, wave_index, ctx: {run_dir
+   (absolute), plugin_root, base_ref, test_command, conventions_path, shared_constraints,
    scope_ceiling (dag.json's run-level list, verbatim; omit or pass [] when the run has
-   none — the workflow puts it in every agent packet), tier3_surfaces, quality_gate_cmd
+   none — the workflow puts it in every agent packet), tier3_surfaces,
+   refactor_radius (the merged block verbatim from --print-config; the workflow has no
+   filesystem access, so this is the ONLY way its plan-time ceiling is configured — omit it
+   and the wave records NOT_CONFIGURED and never halts), quality_gate_cmd
    ("python3 <plugin_root>/scripts/quality_gate.py --config <global> --overlay <repo
    overlay>" — the same two paths, so agents measure against the merged bar), models,
    thorough, polish}, slices: [{id, goal, files, subsystems, risk_tier, depth, worktree,

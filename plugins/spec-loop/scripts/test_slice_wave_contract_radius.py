@@ -32,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from slice_wave_contract_base import WorkflowSourceTestCase  # noqa: E402
+from slice_wave_contract_base import COMMAND_MD, RUN_STATE_MD, WorkflowSourceTestCase  # noqa: E402
 
 RADIUS_START = "const RADIUS_NULL ="
 RADIUS_END = "function scopeRecord("
@@ -266,6 +266,36 @@ class TestOnlyAMeasuredBreachHaltsAndOnlyAtPlanTime(WorkflowSourceTestCase):
         self.assertIn(GATE_CALL, self.between(STAGE_PLAN_START, STAGE_PLAN_END))
         self.assertIn(GATE_STOP, self.between(STAGE_PLAN_START, STAGE_PLAN_END))
         self.assertEqual(self.src.count("refactorRadiusGate("), 2)
+
+
+# ---- the controller thread: ctx is the only lawful door ----
+
+CTX_THREAD = "refactor_radius"
+ONE_DOOR = "--print-config"
+EVENT_IN_LIST = "`refactor-radius`"
+PAYLOAD_BULLET = "**`refactor-radius`** payload"
+PROXY_LIMIT = "a proxy declared before implementation, not a measured diff"
+
+
+class TestTheThresholdsReachTheWorkflowOnlyThroughCtx(WorkflowSourceTestCase):
+    """The workflow has no fs and no process access by design, so the only
+    lawful path for a threshold is --print-config -> the controller command
+    -> ctx. If the command stops threading it, every installation silently
+    evaluates NOT_CONFIGURED and the ceiling never fires again."""
+
+    def test_the_controller_takes_the_block_from_the_one_config_door(self):
+        text = COMMAND_MD.read_text(encoding="utf-8")
+        self.assertIn(ONE_DOOR, text)
+        self.assertIn(CTX_THREAD, text)
+
+    def test_the_event_type_is_listed_in_its_single_home(self):
+        text = RUN_STATE_MD.read_text(encoding="utf-8")
+        self.assertIn(EVENT_IN_LIST, text)
+        self.assertIn(PAYLOAD_BULLET, text)
+
+    def test_the_contract_states_the_pre_execution_proxy_limit_plainly(self):
+        self.assertIn(PROXY_LIMIT, RUN_STATE_MD.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
