@@ -142,5 +142,41 @@ class TestThePlannerIsToldToDeclareItsOwnRadius(unittest.TestCase):
         self.assertEqual(PLANNER_MD.read_text(encoding="utf-8").count("```json"), 0)
 
 
+# ---- the controller command: six triggers, and the answer's one route ----
+
+CMD_SIX = "`escalation-gate` six-trigger test"
+CMD_STALE_FIVE = "`escalation-gate` five-trigger test"
+CMD_ANSWER_KEY = '`answers["<slice-id>:refactor-scope"]`'
+CMD_ARITHMETIC = "the one trigger the wave raises from its own arithmetic"
+CMD_NO_OTHER_LEVER = "there is no other lever"
+CMD_CTX_KEY = "refactor_radius (the merged block verbatim from --print-config"
+CMD_ONE_DOOR = "--print-config"
+
+
+class TestTheControllerCarriesTheSixthTriggerEndToEnd(unittest.TestCase):
+    """The controller is the only layer that can ask a human, so its own
+    trigger count is load-bearing; and refactor-scope is the only trigger
+    whose answer is the sole thing that unblocks the slice, since no
+    re-dispatch clears a breach the arithmetic will just recompute."""
+
+    def setUp(self):
+        self.text = prose(COMMAND_MD)
+
+    def test_the_controller_applies_the_six_trigger_test(self):
+        self.assertIn(CMD_SIX, self.text)
+        self.assertNotIn(CMD_STALE_FIVE, self.text)
+
+    def test_the_answer_is_keyed_by_the_refactor_scope_id_verbatim(self):
+        self.assertIn(CMD_ANSWER_KEY, self.text)
+
+    def test_the_command_names_the_trigger_as_the_workflows_own_arithmetic(self):
+        self.assertIn(CMD_ARITHMETIC, self.text)
+        self.assertIn(CMD_NO_OTHER_LEVER, self.text)
+
+    def test_the_ctx_key_still_travels_from_the_one_config_door(self):
+        self.assertIn(CMD_ONE_DOOR, self.text)
+        self.assertIn(CMD_CTX_KEY, self.text)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

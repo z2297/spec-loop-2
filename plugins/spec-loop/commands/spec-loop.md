@@ -161,6 +161,17 @@ deadlock is itself an escalation):
    has no such lever: its resource is the wave budget the host supplies, and no args
    field in this contract changes the stage floor.
 
+   A `refactor-scope` record is the one trigger the wave raises from its own arithmetic
+   rather than from an agent's judgment: the plan stage compared the planner's declared
+   rewrite numbers against `ctx.refactor_radius` and stopped the slice before any
+   implementation dispatch. Write the answer back like any other, keyed
+   `answers["<slice-id>:refactor-scope"]` verbatim; the wave injects it into the
+   re-dispatched plan prompt and stops raising the halt for that slice. Answering it is the
+   only thing that unblocks the slice — re-dispatching without the answer recomputes the same
+   breach and stops again, and the ceiling itself is operator config, so there is no other
+   lever. Narrowing the slice instead is your call to make explicit: the wave does not split a
+   refactor out on its own.
+
    Then **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
    whose sidecars are not DONE/SPLIT (merged work never re-enters a wave; its worktree is
    already gone) — same `ctx`, `answers` filled in, and `resumeFromRunId: <wf_id>` so the
@@ -201,7 +212,7 @@ Phase 5 (regenerating `runbook.md` is safe).
 ## Escalation discipline
 
 You are the only layer that can ask the human. Never ask mid-wave, never one-at-a-time;
-apply the `escalation-gate` five-trigger test and precedent check to every candidate
+apply the `escalation-gate` six-trigger test and precedent check to every candidate
 question, including your own. Announce every question you do ask: immediately before ANY
 `AskUserQuestion` (escalation rounds, the publish prompt), fire a best-effort desktop alert —
 `printf '\a'; command -v osascript >/dev/null 2>&1 && osascript -e 'display notification
