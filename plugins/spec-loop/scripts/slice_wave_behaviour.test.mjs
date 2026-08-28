@@ -8,7 +8,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   HOST_CONTRACT, countExportConst, countWrapperName, WRAPPER_NAME, rawSource,
-  wrappedSource, makeWave, runWave, sliceFixture, waveArgs } from "./slice_wave_harness.mjs";
+  wrappedSource, makeWave, runWave, sliceFixture, waveArgs,
+  capturePrompts, capAgent } from "./slice_wave_harness.mjs";
 
 test("the export-const rewrite matches exactly once", () => {
   assert.equal(countExportConst(rawSource()), 1);
@@ -209,14 +210,6 @@ test("an answer to one trigger does not advance another trigger's round", async 
 
 // Answer MATCHING, observed where it is observable: the planner prompt. A round-suffixed
 // id whose answer no longer reaches the prompt is pinned here by execution, not inspection.
-const capturePrompts = () => {
-  const seen = [];
-  return {
-    seen,
-    agent: async (prompt) => { seen.push(prompt); throw new Error("BOOM"); },
-  };
-};
-
 test("an answer keyed without a round still reaches the prompt", async () => {
   const cap = capturePrompts();
   await runWave(withAnswers({ "s1:ambiguity": "ANSWER-ONE" }), { agent: cap.agent });
@@ -239,32 +232,16 @@ test("the newest answered round wins with several rounds answered", async () => 
 });
 
 // ── the per-slice agent cap and its human-authorised raise (guard/agentCap) ──
-// Driven by EXECUTION, not by inspection: a plan of twelve standard tasks makes
-// the wave spend one dispatch per task, so the tier-1 default of ten is reached
-// inside stageTasks and a raised cap is reached later, in stageReviewGate. The
-// caps themselves are the workflow's own CAPS values; nothing here restates the
-// rule, it reads the record the guard actually produced.
+// Driven by EXECUTION, not by inspection: the twelve-task fixture in the
+// harness makes the wave spend one dispatch per task, so the tier-1 default of
+// ten is reached inside stageTasks and a raised cap is reached later, in
+// stageReviewGate. The caps themselves are the workflow's own CAPS values;
+// nothing here restates the rule, it reads the record the guard actually produced.
 
-const TASK_IDS = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12"];
-const PLAN_TWELVE = {
-  status: "PLANNED",
-  plan_path: "/tmp/plan.md",
-  tasks: TASK_IDS.map((id) => ({ id, title: "task " + id, lane: "standard", files: ["a.py"] })),
-};
-const TASK_DONE = {
-  status: "DONE", touched_files: [], concerns: [], deviations: [],
-  commits: { base: "0000000", head: "c0ffee0" },
-};
-const CAP_AGENT = {
-  agent: async (prompt, opts) => {
-    const isTask = String(opts.label).indexOf(":task:") > 0;
-    return isTask ? TASK_DONE : PLAN_TWELVE;
-  },
-};
 const capWave = (overrides) => waveArgs([sliceFixture("s1")], {}, overrides);
 
 test("the tier default agent cap stops the slice with a budget-exhausted record", async () => {
-  const out = await runWave(capWave(undefined), CAP_AGENT);
+  const out = await runWave(capWave(undefined), capAgent());
   assert.equal(out.results[0].status, "ESCALATED");
   assert.equal(only(out).trigger, "budget-exhausted");
   assert.equal(only(out).id, "s1:budget-exhausted");
@@ -274,7 +251,7 @@ test("the tier default agent cap stops the slice with a budget-exhausted record"
 });
 
 test("an authorised override raises the cap the guard enforces", async () => {
-  const out = await runWave(capWave({ agent_cap_overrides: { s1: 14 } }), CAP_AGENT);
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: 14 } }), capAgent());
   assert.equal(only(out).trigger, "budget-exhausted");
   assert.equal(only(out).title, "agent cap reached (14)");
   assert.ok(only(out).context.includes("tier 1 default 10, effective cap 14"));
@@ -283,24 +260,24 @@ test("an authorised override raises the cap the guard enforces", async () => {
 });
 
 test("an override at or below the tier default is ignored", async () => {
-  const out = await runWave(capWave({ agent_cap_overrides: { s1: 5 } }), CAP_AGENT);
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: 5 } }), capAgent());
   assert.equal(only(out).title, "agent cap reached (10)");
   assert.equal(out.results[0].agents_used, 10);
 });
 
 test("a non-numeric override is ignored rather than trusted", async () => {
-  const out = await runWave(capWave({ agent_cap_overrides: { s1: "lots" } }), CAP_AGENT);
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: "lots" } }), capAgent());
   assert.equal(only(out).title, "agent cap reached (10)");
 });
 
 test("an override keyed to another slice does not raise this slice's cap", async () => {
-  const out = await runWave(capWave({ agent_cap_overrides: { s2: 30 } }), CAP_AGENT);
+  const out = await runWave(capWave({ agent_cap_overrides: { s2: 30 } }), capAgent());
   assert.equal(only(out).title, "agent cap reached (10)");
   assert.equal(out.results[0].agents_used, 10);
 });
 
 test("the cap record's options name the controller action that applies a raise", async () => {
-  const rec = only(await runWave(capWave(undefined), CAP_AGENT));
+  const rec = only(await runWave(capWave(undefined), capAgent()));
   assert.deepEqual(rec.options.map((o) => o.label), [
     "Raise the agent cap and resume", "Accept the slice as-is", "Drop the slice",
   ]);
@@ -313,19 +290,19 @@ test("the cap record's options name the controller action that applies a raise",
 const capEvents = (out) => out.results[0].events.filter((e) => e.type === "agent-cap-override");
 
 test("an applied raise is recorded as one auditable event", async () => {
-  const out = await runWave(capWave({ agent_cap_overrides: { s1: 14 } }), CAP_AGENT);
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: 14 } }), capAgent());
   assert.equal(capEvents(out).length, 1);
   assert.equal(capEvents(out)[0].scope, "s1");
   assert.deepEqual(capEvents(out)[0].payload, { tier: 1, default_cap: 10, effective_cap: 14 });
 });
 
 test("no override means no override event at all", async () => {
-  const out = await runWave(capWave(undefined), CAP_AGENT);
+  const out = await runWave(capWave(undefined), capAgent());
   assert.equal(capEvents(out).length, 0);
 });
 
 test("an ignored override records nothing, matching the cap it left alone", async () => {
-  const out = await runWave(capWave({ agent_cap_overrides: { s1: 5 } }), CAP_AGENT);
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: 5 } }), capAgent());
   assert.equal(capEvents(out).length, 0);
 });
 

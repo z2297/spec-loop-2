@@ -113,10 +113,10 @@ export async function runWave(waveArgsObj, sandbox) {
   return makeWave()(waveArgsObj, s.agent, s.parallel, s.log, s.budget, s.phase, s.pipeline);
 }
 
-export function sliceFixture(id) {
+export function sliceFixture(id, riskTier) {
   return {
     id, goal: "goal of " + id, files: ["a.py"], subsystems: ["x"],
-    deps: [], risk_tier: 1, depth: 0, parent: null,
+    deps: [], risk_tier: riskTier || 1, depth: 0, parent: null,
     branch: "spec-loop/t/" + id, base_sha: "0000000", worktree: "/tmp/wt/" + id,
   };
 }
@@ -140,3 +140,29 @@ export function waveArgs(slices, answers, extra) {
     ...(extra || {}),
   };
 }
+
+// ── Mock sandboxes and mock agent returns ────────────────────────────────
+// Fixture DATA lives here, beside defaultSandbox, so the test module carries
+// assertions and their rationale instead. Nothing below restates a workflow
+// rule: every value is a schema-shaped agent return the wave reads.
+
+export const capturePrompts = () => {
+  const seen = [];
+  return { seen, agent: async (prompt) => { seen.push(prompt); throw new Error("BOOM"); } };
+};
+
+const TASK_IDS = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12"];
+const PLAN_TWELVE = {
+  status: "PLANNED", plan_path: "/tmp/plan.md",
+  tasks: TASK_IDS.map((id) => ({ id, title: "task " + id, lane: "standard", files: ["a.py"] })),
+};
+const TASK_DONE = {
+  status: "DONE", touched_files: [], concerns: [], deviations: [],
+  commits: { base: "0000000", head: "c0ffee0" },
+};
+
+// Twelve standard tasks: one dispatch per task, so a tier-1 slice reaches its
+// tier default inside stageTasks and a raised cap later, in stageReviewGate.
+export const capAgent = () => ({
+  agent: async (prompt, opts) => (String(opts.label).indexOf(":task:") > 0 ? TASK_DONE : PLAN_TWELVE),
+});
