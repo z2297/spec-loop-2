@@ -18,15 +18,14 @@ type-safe read of CTX.scope_ceiling, the answer-injection sites, and the
 record-only isolation of the over-scope flag from the four control-flow
 branches, and the ONE-durable-record-per-defer-hinted-concern guarantee.
 
-This module (and its importers) do NOT claim every optional agent-return
-field is guarded. Two known instances of the same defect class remain
-unguarded BY DECISION, deferred and logged by this run's own council rather
-than fixed here: `plan.escalation.trigger` is read unguarded on the
-ESCALATE branch (`PLAN_RESULT.required` is `['status']` only), and
-`plan.split` is passed through as `undefined` on a SPLIT return that
-carries no `split` object. Fixing either would exceed this task's scope
-router; these modules pin what actually exists, not what a docstring would
-prefer existed.
+The two instances this docstring used to record as deliberately unguarded -
+`plan.escalation.trigger` on the ESCALATE branch and the `plan.split`
+pass-through on SPLIT - are now guarded, together with the `fix.commits.base`
+read that aborted a wave of run 20260828; `test_slice_wave_contract_replan.py`
+pins all three and asserts the raw reads are gone. What these modules still do
+NOT claim is exhaustiveness: they pin the reads that have failed in
+production, not every optional field in every schema, and no static check here
+enumerates the rest.
 
 These are source-text assertions. They prove a guard is present; they
 cannot prove it behaves. Any change to the workflow that trips one of them

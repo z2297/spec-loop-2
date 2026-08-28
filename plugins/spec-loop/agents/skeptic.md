@@ -70,7 +70,7 @@ Same contract as plan-critic, with premise findings only.
   materially changes scope, or a missing success criterion that makes "done" undefinable. The
   bar is whether a reasonable person would refuse to start until it is answered. State the
   precise question a human would need to answer (the workflow escalates it verbatim), a
-  recommended default, and `fixableByReplan: true` when one planner revision would resolve it
+  recommended default, and `fixable_by_replan: true` when one planner revision would resolve it
   without a human.
 - **`over_scope`** — an optional record-only field on the shared verdict contract, owned by
   plan-critic's scope lane. Scope is not your lane: leave it absent. Absent means "no scope

@@ -533,11 +533,25 @@ Findings:
 ${JSON.stringify(findings, null, 1)}`
 }
 
+// FIX_RESULT.commits is optional (`required` is status/touched_files/addressed/
+// refuted), so reading `base` straight off `fix.commits` dereferences an object
+// that need not exist. It threw exactly that way during wave 1 of run 20260828
+// (the raw read is spelled out nowhere in this file on purpose: a contract test
+// pins its absence by source text) and the catch-all mislabelled the TypeError
+// as budget-exhausted, losing the whole wave. Same type tolerance as
+// scopeCeilingList: an object passes through, anything else becomes {} and the
+// caller falls back to the shas the slice already holds.
+// HONEST LIMIT: those fallback shas are the slice's own base/head, so a package
+// built from them can be WIDER than the fix round's own diff. That is
+// deliberate — a wider real package beats a `--base undefined` command that
+// cannot run at all.
+const fixCommits = (fix) => (fix && typeof fix.commits === 'object' && fix.commits) ? fix.commits : {}
+
 function reReviewPrompt(slice, state, findings, fix) {
   return `${packet(slice)}
 
 Re-review after a fix round for slice ${slice.id}. Build the fix-only package:
-  ${packageCmd(slice, fix.commits.base, fix.commits.head, `fix${state.review.fix_rounds}`)}
+  ${packageCmd(slice, fixCommits(fix).base || state.commits.base, fixCommits(fix).head || state.commits.head, `fix${state.review.fix_rounds}`)}
 Prior blocking findings (verdict each): ${JSON.stringify(findings, null, 1)}
 Fixer refutations to adjudicate: ${JSON.stringify(fix.refuted, null, 1)}`
 }
@@ -716,13 +730,59 @@ function refactorRadiusGate(slice, state, plan) {
   return esc(slice, 'refactor-scope', refactorAsk(slice, verdict))
 }
 
+// PLAN_RESULT.required is ['status'] only, so both branches below read a field
+// the schema never promised. Neither read is guarded upstream, and this exact
+// defect class has aborted a whole wave of this repo twice.
+
+// A split with no children array is schema-legal and unusable: passing it
+// through produced a sidecar that run_state.py's validator rejects one stage
+// later, far from the cause. Fail closed HERE instead. (PURE)
+const usableSplit = (s) => !!s && typeof s === 'object' && Array.isArray(s.children) && s.children.length > 0
+
+function splitResult(slice, state, plan) {
+  if (usableSplit(plan.split)) return doneResult(slice, state, 'SPLIT', { split: plan.split })
+  return escalated(slice, state, esc(slice, 'ambiguity', { title: 'planner returned SPLIT with no usable split object', context: 'The planner returned status SPLIT but no `split.children`. That is schema-legal (PLAN_RESULT requires only `status`) and unusable: passing it through writes a sidecar the run-state validator rejects one stage later. The slice is paused here, at the cause.', question: 'Re-dispatch the planner for this slice, split it by hand, or drop it?', options: [] }))
+}
+
+// One optional string field of an escalation record, or the substitute copy.
+// Every one of the four fields below needs the identical explicit type test,
+// and inlining it four times put planEscalation over the gate's
+// cyclomatic/cognitive thresholds for no gain in clarity. An empty string is
+// NOT a readable field: it would render as a blank line in the human's
+// decisions log, so it takes the fallback too. (PURE)
+const escText = (v, fallback) => (typeof v === 'string' && v) ? v : fallback
+
+// The substitute copy for a planner that escalated without saying anything.
+// Module-level so planEscalation stays a short list of guarded reads.
+const BARE_ESCALATION = {
+  title: 'planner escalated without a readable escalation record',
+  context: 'The planner returned status ESCALATE with no usable escalation object. The wave substituted this record so the slice pauses for a human instead of crashing the wave with a TypeError.',
+  question: 'The planner escalated without saying what it needs. Re-dispatch the planner, answer the slice goal directly, or drop the slice?',
+}
+
+// The trigger is TYPE-guarded, not enum-guarded: an unrecognized non-empty
+// string still passes through and will fail run_state.py's validate_escalation
+// downstream, exactly as it does today. Widening this to an enum check would
+// need a second copy of the enum in this file, and that enum has eight homes
+// already. Stated as a limit rather than silently half-fixed.
+function planEscalation(slice, plan) {
+  const e = (plan.escalation && typeof plan.escalation === 'object') ? plan.escalation : {}
+  const trigger = (typeof e.trigger === 'string' && e.trigger) ? e.trigger : 'ambiguity'
+  return esc(slice, trigger, {
+    title: escText(e.title, BARE_ESCALATION.title),
+    context: escText(e.context, BARE_ESCALATION.context),
+    question: escText(e.question, BARE_ESCALATION.question),
+    options: Array.isArray(e.options) ? e.options : [],
+  })
+}
+
 // Stage P — plan (+ right-size gate inside the planner)
 async function stagePlan(slice, state) {
   const plan = await dispatch(slice, state, 'plan', planPrompt(slice),
     { agentType: 'spec-loop:slice-planner', schema: PLAN_RESULT, effort: 'low' })
   if (!plan) return { stop: escalated(slice, state, esc(slice, 'ambiguity', { title: 'planner returned no result', context: 'The planner dispatch failed terminally.', question: 'Retry the slice, or drop it?', options: [] })) }
-  if (plan.status === 'SPLIT') return { stop: doneResult(slice, state, 'SPLIT', { split: plan.split }) }
-  if (plan.status === 'ESCALATE') return { stop: escalated(slice, state, esc(slice, plan.escalation.trigger, plan.escalation)) }
+  if (plan.status === 'SPLIT') return { stop: splitResult(slice, state, plan) }
+  if (plan.status === 'ESCALATE') return { stop: escalated(slice, state, planEscalation(slice, plan)) }
   const radius = refactorRadiusGate(slice, state, plan)
   if (radius) return { stop: escalated(slice, state, radius) }
   return { plan }
@@ -807,6 +867,68 @@ function councilObjectionEscalation(slice, state, ob, safety) {
   return escalated(slice, state, esc(slice, 'council-objection', { title: `${safety ? 'SAFETY — ' : ''}council objects: ${ob.objection.reason.slice(0, 60)}`, context: ob.objection.reason, question: ob.objection.question, options: [{ label: ob.objection.recommendation, detail: 'critic-recommended default', recommended: true }] }))
 }
 
+// The re-check itself is a CRITIQUE, not an objection: `objection` is optional
+// on that schema (required is verdict/safety/concerns), so a re-check that
+// flags a NEW safety risk on a clean ENDORSE verdict — RECHECK_SAFETY's exact
+// shape — carries no `objection` block at all. Falling back to the ORIGINAL
+// council objection in that case would describe the wrong risk to the human:
+// the concern the revision was written to fix, not the one the re-check just
+// raised. This builds the escalation straight from the re-check's own
+// `safety.reason` so that text — otherwise written nowhere — reaches the
+// human and the events log. (PURE)
+function safetyRecheckEscalation(slice, state, reason) {
+  return escalated(slice, state, esc(slice, 'council-objection', {
+    title: `SAFETY — re-check flags: ${reason.slice(0, 60)}`,
+    context: reason,
+    question: 'The revised plan raises a new safety risk. Accept it, revise by hand, or drop the slice?',
+  }))
+}
+
+// A revision is a REMEDY CLAIM, not a remedy. Accepting `status: 'PLANNED'` on
+// its own meant one silent retry absorbed the objection: nobody ever re-read
+// the plan the council rejected, so a well-formed revision that fixed nothing
+// reached implementation and the objection never reached the human, while the
+// doctrine described the mechanism as blocking. The revision therefore goes
+// back to ONE plan-critic seat and only a non-OBJECT, non-safety verdict
+// proceeds. HONEST LIMITS, all deliberate: the re-check is a single
+// full-council seat, NOT the original panel (guardian and skeptic do not
+// re-run, so a tier-3 objection is re-checked by one member); it happens once,
+// because state.replanned already vetoes a second replan; and the plan-time
+// refactor-radius gate is NOT re-evaluated on the revised plan - that remains
+// this run's logged, deliberate gap and would mean raising the trigger from a
+// stage other than plan.
+
+// Explicit null/type guards before any comparison: null, a non-object, or any
+// status other than the literal 'PLANNED' is not a plan, and no truthiness
+// shortcut gets to decide that. (PURE)
+const isRevisedPlan = (r) => !!r && typeof r === 'object' && r.status === 'PLANNED'
+
+// The human needs the reason the REVISION was rejected. `objection` is optional
+// on CRITIQUE (required is verdict/safety/concerns), so a verdict without a
+// readable one falls back to the original objection rather than throwing the
+// same class of TypeError this file is closing elsewhere. (PURE)
+const objectionSource = (v, fallback) => (v && v.objection && typeof v.objection.reason === 'string') ? v : fallback
+
+async function recritiqueRevisedPlan(slice, state, plan) {
+  const v = await dispatch(slice, state, 'critic:replan', criticPrompt(slice, plan, null),
+    { agentType: 'spec-loop:plan-critic', schema: CRITIQUE, effort: 'high' })
+  return v || failClosedCritique()
+}
+
+async function acceptRevisedPlan(slice, state, ctx) {
+  const { revised, ob, safety } = ctx
+  if (!isRevisedPlan(revised)) return { stop: councilObjectionEscalation(slice, state, ob, safety) }
+  const rc = await recritiqueRevisedPlan(slice, state, revised)
+  const flagged = !!(rc.safety && rc.safety.flag === true)
+  const safetyReason = flagged && rc.safety && typeof rc.safety.reason === 'string' ? rc.safety.reason : null
+  const accepted = rc.verdict !== 'OBJECT' && !flagged
+  const reason = accepted ? null : (safetyReason || objectionSource(rc, ob).objection.reason)
+  state.events.push({ scope: slice.id, type: 'replan-recheck', payload: { verdict: rc.verdict, safety: flagged, accepted, reason, safety_reason: safetyReason } })
+  if (accepted) return { plan: revised }
+  if (safetyReason) return { stop: safetyRecheckEscalation(slice, state, safetyReason) }
+  return { stop: councilObjectionEscalation(slice, state, objectionSource(rc, ob), flagged || safety) }
+}
+
 // The council OBJECT branch: an unanswered fixable objection gets one replan
 // attempt; anything else (safety, unfixable, or a failed replan) escalates.
 // answered → proceed with the existing plan; the answer is already injected
@@ -818,7 +940,7 @@ async function resolveCouncilObjection(slice, state, ctx) {
   state.replanned = true
   const revised = await dispatch(slice, state, 'replan', replanPrompt(slice, plan, ob),
     { agentType: 'spec-loop:slice-planner', schema: PLAN_RESULT, effort: 'low' })
-  return (revised && revised.status === 'PLANNED') ? { plan: revised } : { stop: councilObjectionEscalation(slice, state, ob, safety) }
+  return acceptRevisedPlan(slice, state, { revised, ob, safety })
 }
 
 // Resolves an OBJECT verdict and records deferrals only if the resolution

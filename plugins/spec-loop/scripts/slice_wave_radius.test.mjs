@@ -94,7 +94,11 @@ test("the payload leads with a human-readable summary for the decisions log", as
 });
 
 test("a SPLIT plan is discarded before the gate and emits no evaluation", async () => {
-  const split = { status: "SPLIT", split: { children: [] } };
+  // Two real children, not an empty array: a childless SPLIT is now itself an
+  // escalation (usableSplit), which would end this slice before the question
+  // under test - whether the radius gate runs on a SPLIT - could be asked.
+  const child = { goal: "half", files: ["a.py"], subsystems: ["x"], internal_deps: [] };
+  const split = { status: "SPLIT", split: { children: [child, child] } };
   const out = await runWave(radiusArgs(S1(), RADIUS_DEFAULTS), planThenStop(split));
   assert.equal(out.results[0].status, "SPLIT");
   assert.equal(radiusEvents(out.results[0]).length, 0);
