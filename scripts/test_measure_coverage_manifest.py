@@ -2,7 +2,8 @@
 
 Split out of ``test_measure_coverage.py`` (which keeps the executable-line,
 path-key, OMIT-parsing and threshold tests) to keep each test module a
-manageable size. Covers ``resolve_main_shim`` directly, and separately
+manageable size. Covers ``resolve_main_shim`` and its two extracted helpers
+directly, and separately
 asserts that the shipped ``coverage_omit.txt`` manifest — parsed and
 resolved through the real code paths, never a fixture copy — names every
 target's shim symbolically and resolves to that file's own shim header.
@@ -50,6 +51,15 @@ class ResolveMainShimTests(unittest.TestCase):
         src = "if __name__ == \"__main__\":\n" + body
         with self.assertRaises(ValueError):
             mc.resolve_main_shim(src, "synthetic.py")
+
+    def test_sole_shim_header_reports_the_headers_own_line(self):
+        src = "\n" * 12 + "if __name__ == \"__main__\":\n    sys.exit(main())\n"
+        self.assertEqual(mc._sole_shim_header(src.splitlines(), "synthetic.py"), 13)
+
+    def test_guarded_block_stops_at_the_next_column_zero_line(self):
+        lines = ["if __name__ == \"__main__\":", "    sys.exit(main())", "",
+                 "TRAILER = 1"]
+        self.assertEqual(mc._guarded_block(lines, 1), {1, 2})
 
     def test_every_manifest_target_resolves_against_its_real_source(self):
         for relpath in mc.TARGET_FILES:

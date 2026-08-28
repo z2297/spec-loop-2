@@ -214,26 +214,26 @@ def normalize_key(path: str) -> str | None:
     return None
 
 
-def resolve_main_shim(source: str, relpath: str) -> set[int]:
-    """The 1-based line numbers of a module's ``__main__`` entry shim (PURE).
+def _sole_shim_header(lines: list[str], relpath: str) -> int:
+    """The 1-based line number of the module's single ``__main__`` guard header.
 
-    Scans for the ``if __name__ == "__main__":`` header and takes it together with
-    the indented block beneath it, stopping at the first line that returns to
-    column zero. Matching on the block rather than on a fixed body text keeps the
-    resolver correct for a module ending in ``raise SystemExit(main())`` as well as
-    one ending in ``sys.exit(main())``, and keeps it correct after the file grows.
-
-    Raises ``ValueError`` unless the source carries exactly one such header, and
-    unless the resolved block stays within ``MAX_SHIM_LINES``.
+    Raises ``ValueError`` unless the source carries exactly one such header.
     """
-    lines = source.splitlines()
     headers = [n for n, text in enumerate(lines, 1) if _MAIN_SHIM_RE.match(text)]
     if len(headers) != 1:
         raise ValueError(
             f"{relpath}: expected exactly one __main__ entry shim, "
             f"found {len(headers)} — resolve the OMIT entry by hand."
         )
-    start = headers[0]
+    return headers[0]
+
+
+def _guarded_block(lines: list[str], start: int) -> set[int]:
+    """The 1-based numbers of the header at ``start`` plus its indented block.
+
+    The block ends at the next line that returns to column zero; trailing blank
+    lines are dropped from the result.
+    """
     resolved = {start}
     for offset in range(start, len(lines)):
         text = lines[offset]
@@ -242,6 +242,23 @@ def resolve_main_shim(source: str, relpath: str) -> set[int]:
         resolved.add(offset + 1)
     while resolved and not lines[max(resolved) - 1].strip():
         resolved.discard(max(resolved))
+    return resolved
+
+
+def resolve_main_shim(source: str, relpath: str) -> set[int]:
+    """The 1-based line numbers of a module's ``__main__`` entry shim (PURE).
+
+    Locates the module's single entry-guard header via ``_sole_shim_header`` and
+    takes it together with the indented block beneath it via ``_guarded_block``.
+    Matching on the block rather than on a fixed body text keeps the resolver
+    correct across both spellings of the entry body — ``sys.exit(main())`` and
+    ``raise SystemExit(main())`` — and keeps it correct after the file grows.
+
+    Raises ``ValueError`` unless the source carries exactly one such header, and
+    unless the resolved block stays within ``MAX_SHIM_LINES``.
+    """
+    lines = source.splitlines()
+    resolved = _guarded_block(lines, _sole_shim_header(lines, relpath))
     if len(resolved) > MAX_SHIM_LINES:
         raise ValueError(
             f"{relpath}: __main__ entry shim resolved to {len(resolved)} lines "
