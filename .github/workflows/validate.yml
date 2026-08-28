@@ -79,8 +79,8 @@ jobs:
             echo "FAIL: wave harness exited non-zero (rc=$rc)"; exit "$rc"
           fi
           ran=$(printf '%s\n' "$out" | sed -n 's/^# tests \([0-9][0-9]*\).*/\1/p')
-          if [ "${ran:-0}" -lt 45 ]; then
-            echo "FAIL: only ${ran:-0} wave harness tests ran (expected >= 45)"; exit 1
+          if [ "${ran:-0}" -lt 63 ]; then
+            echo "FAIL: only ${ran:-0} wave harness tests ran (expected >= 63)"; exit 1
           fi
 
       - name: Install Claude Code CLI

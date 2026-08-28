@@ -11,7 +11,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   runWave, waveArgs, sliceFixture, councilSandbox, pipelineWith,
-  SPLIT_OK, SPLIT_EMPTY, ESCALATE_BARE, ESCALATE_FULL,
+  ONE_TASK_PLANNED, SPLIT_OK, SPLIT_EMPTY, ESCALATE_BARE, ESCALATE_FULL,
+  OBJECTION_FIXABLE, RECHECK_CLEAN, RECHECK_OBJECT, RECHECK_SAFETY,
 } from "./slice_wave_harness.mjs";
 
 const T1 = () => [sliceFixture("s1", 1)];
@@ -61,4 +62,76 @@ test("a re-review prompt never interpolates undefined when the fixer omits commi
   assert.equal(rr.prompt.includes("--base undefined"), false);
   assert.equal(rr.prompt.includes("--head undefined"), false);
   assert.match(rr.prompt, /--base 0000000/);
+});
+
+// ── The post-OBJECT replan re-check ───────────────────────────────────────
+// A tier-2 slice runs the critique stage; the council OBJECTs fixably, the
+// planner returns a revision, and the question every test below asks is what
+// the wave does with that revision.
+const T2 = () => [sliceFixture("s1", 2)];
+const objectThenReplan = async (revised, recheck) => {
+  const sandbox = councilSandbox({
+    plan: ONE_TASK_PLANNED,
+    "critic:full-council": OBJECTION_FIXABLE,
+    replan: revised,
+    ...(recheck === undefined ? {} : { "critic:replan": recheck }),
+  });
+  const out = await runWave(waveArgs(T2()), sandbox);
+  return { r: out.results[0], seen: sandbox.seen };
+};
+
+test("a revised plan is re-critiqued before the slice proceeds on it", async () => {
+  const { seen } = await objectThenReplan(ONE_TASK_PLANNED, RECHECK_CLEAN);
+  assert.deepEqual(seen.slice(0, 4), ["plan", "critic:full-council", "replan", "critic:replan"]);
+});
+
+test("a clean re-critique lets the slice proceed to its tasks", async () => {
+  const { seen } = await objectThenReplan(ONE_TASK_PLANNED, RECHECK_CLEAN);
+  assert.equal(seen[4], "task:t1");
+});
+
+test("a re-critique that OBJECTS escalates instead of proceeding", async () => {
+  const { r, seen } = await objectThenReplan(ONE_TASK_PLANNED, RECHECK_OBJECT);
+  assert.equal(r.status, "ESCALATED");
+  assert.equal(r.escalations[0].trigger, "council-objection");
+  assert.equal(seen.includes("task:t1"), false);
+});
+
+test("the escalation carries the reason the REVISION was rejected", async () => {
+  const { r } = await objectThenReplan(ONE_TASK_PLANNED, RECHECK_OBJECT);
+  assert.equal(r.escalations[0].context, "the revision still skips the migration test");
+});
+
+test("an unreadable re-critique fails closed into the same escalation", async () => {
+  const { r } = await objectThenReplan(ONE_TASK_PLANNED, null);
+  assert.equal(r.status, "ESCALATED");
+  assert.equal(r.escalations[0].trigger, "council-objection");
+});
+
+test("a safety flag raised only on the re-check still blocks and is titled SAFETY", async () => {
+  const { r } = await objectThenReplan(ONE_TASK_PLANNED, RECHECK_SAFETY);
+  assert.equal(r.status, "ESCALATED");
+  assert.match(r.escalations[0].title, /^SAFETY — /);
+});
+
+test("a replan that returns no plan escalates without spending a re-critique", async () => {
+  const { r, seen } = await objectThenReplan(null, RECHECK_CLEAN);
+  assert.equal(r.status, "ESCALATED");
+  assert.equal(seen.includes("critic:replan"), false);
+});
+
+test("a replan that returns ESCALATE is not accepted as a plan", async () => {
+  const { r, seen } = await objectThenReplan(ESCALATE_BARE, RECHECK_CLEAN);
+  assert.equal(r.status, "ESCALATED");
+  assert.equal(seen.includes("critic:replan"), false);
+});
+
+test("every re-check records exactly one replan-recheck event with its verdict", async () => {
+  const { r } = await objectThenReplan(ONE_TASK_PLANNED, RECHECK_OBJECT);
+  const evs = r.events.filter((e) => e.type === "replan-recheck");
+  assert.equal(evs.length, 1);
+  assert.equal(evs[0].scope, "s1");
+  assert.equal(evs[0].payload.verdict, "OBJECT");
+  assert.equal(evs[0].payload.safety, false);
+  assert.equal(evs[0].payload.accepted, false);
 });

@@ -246,6 +246,24 @@ export const ESCALATE_FULL = {
   },
 };
 
+// ── Council OBJECT / replan fixtures ──────────────────────────
+// The reasons differ by design: a test asserts WHICH objection reached the
+// human, and two identical strings would pass that assertion by accident.
+export const OBJECTION_FIXABLE = {
+  verdict: "OBJECT", safety: { flag: false, reason: null }, concerns: [],
+  fixable_by_replan: true,
+  objection: { reason: "the plan skips the migration test", question: "Replan or accept?", recommendation: "add the migration test" },
+};
+export const RECHECK_CLEAN = { verdict: "ENDORSE", safety: { flag: false, reason: null }, concerns: [] };
+export const RECHECK_OBJECT = {
+  verdict: "OBJECT", safety: { flag: false, reason: null }, concerns: [],
+  fixable_by_replan: true,
+  objection: { reason: "the revision still skips the migration test", question: "Accept it, or drop the slice?", recommendation: "escalate to a human" },
+};
+export const RECHECK_SAFETY = {
+  verdict: "ENDORSE", safety: { flag: true, reason: "the revision drops the pre-migration backup" }, concerns: [],
+};
+
 // Answers a dispatch from `map`, keyed by the role part of the label
 // (`s1:critic:full-council` -> `critic:full-council`). An unmapped role throws,
 // which terminates the slice right after the stage under test; `seen` is the

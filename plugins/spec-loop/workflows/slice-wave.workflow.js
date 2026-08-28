@@ -867,6 +867,48 @@ function councilObjectionEscalation(slice, state, ob, safety) {
   return escalated(slice, state, esc(slice, 'council-objection', { title: `${safety ? 'SAFETY — ' : ''}council objects: ${ob.objection.reason.slice(0, 60)}`, context: ob.objection.reason, question: ob.objection.question, options: [{ label: ob.objection.recommendation, detail: 'critic-recommended default', recommended: true }] }))
 }
 
+// A revision is a REMEDY CLAIM, not a remedy. Accepting `status: 'PLANNED'` on
+// its own meant one silent retry absorbed the objection: nobody ever re-read
+// the plan the council rejected, so a well-formed revision that fixed nothing
+// reached implementation and the objection never reached the human, while the
+// doctrine described the mechanism as blocking. The revision therefore goes
+// back to ONE plan-critic seat and only a non-OBJECT, non-safety verdict
+// proceeds. HONEST LIMITS, all deliberate: the re-check is a single
+// full-council seat, NOT the original panel (guardian and skeptic do not
+// re-run, so a tier-3 objection is re-checked by one member); it happens once,
+// because state.replanned already vetoes a second replan; and the plan-time
+// refactor-radius gate is NOT re-evaluated on the revised plan - that remains
+// this run's logged, deliberate gap and would mean raising the trigger from a
+// stage other than plan.
+
+// Explicit null/type guards before any comparison: null, a non-object, or any
+// status other than the literal 'PLANNED' is not a plan, and no truthiness
+// shortcut gets to decide that. (PURE)
+const isRevisedPlan = (r) => !!r && typeof r === 'object' && r.status === 'PLANNED'
+
+// The human needs the reason the REVISION was rejected. `objection` is optional
+// on CRITIQUE (required is verdict/safety/concerns), so a verdict without a
+// readable one falls back to the original objection rather than throwing the
+// same class of TypeError this file is closing elsewhere. (PURE)
+const objectionSource = (v, fallback) => (v && v.objection && typeof v.objection.reason === 'string') ? v : fallback
+
+async function recritiqueRevisedPlan(slice, state, plan) {
+  const v = await dispatch(slice, state, 'critic:replan', criticPrompt(slice, plan, null),
+    { agentType: 'spec-loop:plan-critic', schema: CRITIQUE, effort: 'high' })
+  return v || failClosedCritique()
+}
+
+async function acceptRevisedPlan(slice, state, ctx) {
+  const { revised, ob, safety } = ctx
+  if (!isRevisedPlan(revised)) return { stop: councilObjectionEscalation(slice, state, ob, safety) }
+  const rc = await recritiqueRevisedPlan(slice, state, revised)
+  const flagged = !!(rc.safety && rc.safety.flag === true)
+  const accepted = rc.verdict !== 'OBJECT' && !flagged
+  state.events.push({ scope: slice.id, type: 'replan-recheck', payload: { verdict: rc.verdict, safety: flagged, accepted, reason: accepted ? null : objectionSource(rc, ob).objection.reason } })
+  if (accepted) return { plan: revised }
+  return { stop: councilObjectionEscalation(slice, state, objectionSource(rc, ob), flagged || safety) }
+}
+
 // The council OBJECT branch: an unanswered fixable objection gets one replan
 // attempt; anything else (safety, unfixable, or a failed replan) escalates.
 // answered → proceed with the existing plan; the answer is already injected
@@ -878,7 +920,7 @@ async function resolveCouncilObjection(slice, state, ctx) {
   state.replanned = true
   const revised = await dispatch(slice, state, 'replan', replanPrompt(slice, plan, ob),
     { agentType: 'spec-loop:slice-planner', schema: PLAN_RESULT, effort: 'low' })
-  return (revised && revised.status === 'PLANNED') ? { plan: revised } : { stop: councilObjectionEscalation(slice, state, ob, safety) }
+  return acceptRevisedPlan(slice, state, { revised, ob, safety })
 }
 
 // Resolves an OBJECT verdict and records deferrals only if the resolution
