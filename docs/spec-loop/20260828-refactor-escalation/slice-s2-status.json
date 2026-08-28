@@ -1,0 +1,201 @@
+{
+  "schema_version": 2,
+  "id": "s2",
+  "status": "ESCALATED",
+  "branch": "spec-loop/20260828-refactor-escalation/s2",
+  "commits": {
+    "base": "d67cff6e255fc363e93cea410e0d7bc2cff1aae6",
+    "head": "4d1a03d"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 6,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 2,
+  "review": {
+    "confirmed": 5,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": []
+  },
+  "tests": null,
+  "quality": {
+    "status": "FAIL",
+    "detail": "Quality gate exit code 1 (measured failure). All violations are class_lines threshold breaches: dashboard_server.py (1362 lines), run_metrics.py (1852 lines), run_state.py (1078 lines), test_run_state.py (1740 lines), and slice-wave.workflow.js (945 lines) all exceed the 300-line class threshold. Two markdown files were skipped (unsupported file type), and crap_score was skipped (no coverage report)."
+  },
+  "escalations": [
+    {
+      "id": "s2:budget-exhausted",
+      "trigger": "budget-exhausted",
+      "title": "wave interrupted",
+      "context": "undefined is not an object (evaluating 'fix.commits.base')",
+      "question": "The wave hit a hard limit. Raise budget/caps and resume, or accept committed work?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "undefined is not an object (evaluating 'fix.commits.base')",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "OPEN"
+    }
+  ],
+  "agents_used": 11,
+  "wave": 1,
+  "events": [
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 5,
+        "deferred": [
+          "Between this slice and s5/s6 the runtime doctrine an agent reads actively contradicts the enum, in the direction of suppression. plugins/spec-loop/skills/escalation-gate/SKILL.md:50 heads its list 'SURFACE to human (only these five triggers)', :93 states 'There are exactly five JUDGMENT triggers; an over-scope flag is not a sixth', and :119 says the bar stays at 'exactly the five triggers above'; README.md:99 and references/risk-tiers.md:86 repeat the count. This slice makes slice_wave_contract_base.ANSWERABLE_TRIGGERS six members wide. The plan is right that this prose is unpinned and right to assign it to s5/s6, so this is not a defect in s2 — but it is a real exposure if s5/s6 do not land: the escalation-gate skill is the document consulted before surfacing an escalation, and 'only these five' is an instruction not to surface the sixth. Worth carrying as an explicit dependency on s5/s6 rather than as incidental prose cleanup, so a partial run does not publish a doctrine that forbids the trigger this run exists to add."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "deferred",
+      "payload": {
+        "summary": "Between this slice and s5/s6 the runtime doctrine an agent reads actively contradicts the enum, in the direction of suppression. plugins/spec-loop/skills/escalation-gate/SKILL.md:50 heads its list 'SURFACE to human (only these five triggers)', :93 states 'There are exactly five JUDGMENT triggers; an over-scope flag is not a sixth', and :119 says the bar stays at 'exactly the five triggers above'; README.md:99 and references/risk-tiers.md:86 repeat the count. This slice makes slice_wave_contract_base.ANSWERABLE_TRIGGERS six members wide. The plan is right that this prose is unpinned and right to assign it to s5/s6, so this is not a defect in s2 — but it is a real exposure if s5/s6 do not land: the escalation-gate skill is the document consulted before surfacing an escalation, and 'only these five' is an instruction not to surface the sixth. Worth carrying as an explicit dependency on s5/s6 rather than as incidental prose cleanup, so a partial run does not publish a doctrine that forbids the trigger this run exists to add.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2:retry",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 5
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    }
+  ]
+}

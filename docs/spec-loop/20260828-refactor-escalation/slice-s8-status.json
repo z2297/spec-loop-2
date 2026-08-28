@@ -1,0 +1,269 @@
+{
+  "schema_version": 2,
+  "id": "s8",
+  "status": "ESCALATED",
+  "branch": "spec-loop/20260828-refactor-escalation/s8",
+  "commits": {
+    "base": "25b7b6c57fa4a67804578f15c25024cf46cfe184",
+    "head": "18aaf3f3a732800e560ffea6d1358f61e3c35089"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 14,
+    "over_scope": {
+      "flag": false,
+      "reason": "Judged and inside scope. The plan touches three files beyond dag.json's declared s8 set (plugins/spec-loop/references/run-state-v2.md, .github/workflows/validate.yml, and the new plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs), but each is compelled rather than elective: conventions.md's single-home doctrine requires run-state-v2.md to change in the same commit as the payload/state it documents; an unregistered node module never runs in CI, and the ceiling entry bars a new git-hosting/CI *integration*, not registering a test lane in an existing runner list; and the new module exists only because the declared file slice_wave_radius.test.mjs is at 293 non-blank lines against a 300 class_lines ceiling. Nothing in the plan builds a measured/git-diff radius, a second checkpoint, a dashboard rollup, a critique.over_scope or CRITIQUE-schema change, a new trigger enum value, or a plugin version bump. The new WITHIN_PARTIAL state is within the goal clause 'a declared number that had no usable ceiling must never be counted as being under one', since WITHIN literally asserts the comparison it did not make."
+    }
+  },
+  "tasks_completed": 3,
+  "review": {
+    "confirmed": 0,
+    "refuted": 3,
+    "evidence_failed": 0,
+    "fix_rounds": 0,
+    "residual": [
+      "P2: RADIUS_DIMS is a SECOND, parallel list of the maxima dimensions rather than the single source the comment claims: radiusBreaches still hardcodes its two conditions and never reads the table, so nothing in code or test enforces that they agree. Adding or renaming a dimension in radiusBreaches would leave it absent from compared[]/skipped[] — the exact 'they used to disagree, and that disagreement was the defect' failure the comment says the table prevents.",
+      "P2: WITHIN_PARTIAL is also returned when ZERO comparisons happened. A plan that declares only rewrite_ratio against a config whose max_rewrite_ratio is mistyped but whose max_touched_existing_files is valid gets past radiusNoCeiling and past NOT_MEASURED, reaches an empty exceeded[], and is recorded as WITHIN_PARTIAL with compared: [] — a WITHIN-family state token for an evaluation that compared nothing. That is the motivating ratio case. The reason text ('compared: none') and payload.compared are honest, so this is not silent, but any consumer reading `state` alone counts it as checked, and run-state-v2.md's 'the block was usable overall — one ceiling survived' reads as if a comparison occurred. No test covers compared: [].",
+      "P3: radiusCoverage tests `enabled` with a different predicate than the state machine beside it: coverage uses `limits.enabled !== false` while refactorRadiusStatus:386 uses `!limits.enabled`. They diverge for any falsy-but-not-false value (0, '', undefined), which would produce state DISABLED alongside a non-empty compared[] claiming comparisons that never ran. Unreachable today — refactorLimits:245 normalises enabled to `raw.enabled !== false`, a strict boolean, and it is the only producer on both the production path (workflow:822) and the Python driver — so this is latent duplication, not a live bug.",
+      "P3: The worst-case EXCEEDED summary carrying the skip note is 199 characters against run_state.py's SUMMARY_LIMIT of 200, leaving exactly one character of margin on the human-facing decisions-log line. One more character — a slightly longer wording, a third dimension, or a longer ceiling value — makes _one_line truncate, and the part that gets ellipsised is the tail: the 'no usable ceiling: <dim>' note, i.e. precisely the honesty this slice exists to add. Verified by rendering the actual templates: EXCEEDED with one exceeded and one skipped dimension = 199 in both orderings; WITHIN_PARTIAL max = 195.",
+      "P3: test_slice_wave_contract_radius.py now measures exactly 300 non-blank lines against the 300 class_lines threshold. It passes (quality_gate.py:1357 uses `passed = value <= threshold`), but there is zero headroom: the next line added anywhere in this file is a new class_lines violation. This contradicts the implementer's own estimate of 'landing near 297-298', so any downstream claim of remaining margin in this file is wrong.",
+      "P3: The docstring of the very class this diff appends six WITHIN_PARTIAL tests to still says 'Seven states' and enumerates seven cases, while the workflow's own comment was updated to 'Eight states' and the class now executes the eighth. A reader auditing state coverage from this docstring would conclude one state fewer than exists.",
+      "P2: radiusCoverage() (new in this diff) is computed unconditionally on every refactorRadiusStatus() call, including the DISABLED / NOT_CONFIGURED / NO_USABLE_CEILING fail-open branches, and — verified by reading the source — populates `skipped[]` with EVERY declared maxima dimension in those states (e.g. a disabled block with a declared rewrite_ratio and touched_existing_files reports both as skipped, since radiusCoverage's inner `ceiling()` closure returns null whenever `limits.enabled !== false` is false or `limits` itself is null). No test in this diff or the pre-existing suite asserts `compared`/`skipped` for these three already-existing states when the plan has declared numbers, so a later refactor of radiusCoverage's guard conditions could silently change this (e.g. quietly reporting `skipped: []` for a disabled block) with nothing in the suite to catch it — the exact 'silent invisible narrowing' failure mode this run's whole knowledge-graph lesson is about.",
+      "P2: The new payload paragraph documents `compared[]`/`skipped[]` only in terms of WITHIN_PARTIAL and NO_USABLE_CEILING ('the block was usable overall...'), but says nothing about the fact that a DISABLED or NOT_CONFIGURED block with declared numbers also populates `skipped[]` with every declared dimension (verified against radiusCoverage's code, see F1). A reader of a DISABLED event with a non-empty `skipped[]` has no documented reason to distinguish that from a mistyped-ceiling case, and could misread it as an operator-config defect rather than the intended fail-open record. This is the same gap the rolled-up implementer concerns flagged ('Task 3's run-state-v2.md paragraph should say so explicitly') and the shipped paragraph does not appear to address it.",
+      "P2: RADIUS_DIMS's own comment states its purpose is to guarantee radiusCoverage and radiusBreaches 'must never disagree about which dimensions exist: they used to, and that disagreement was the defect', but radiusBreaches (untouched by this diff, lines 283-287) still hardcodes its own separate rewrite_ratio/touched_existing_files pairs rather than iterating RADIUS_DIMS. The table is therefore descriptive, not load-bearing: nothing in the code structure actually prevents the two lists from diverging again if a third dimension is ever added to only one of them — the comment overclaims a guarantee the shipped code does not enforce.",
+      "P3: Verified directly by running quality_gate.py with the exact base/head window this diff uses (25b7b6c5..18aaf3f3a) and separately with s7's own base/head window (40c46d6..25b7b6c5): the mis-attributed phantom `over` function measures identically as cyclomatic_complexity=11 (FAIL, threshold 10), cognitive_complexity=15 (pass, at threshold), method_lines=50 (pass, at threshold) in BOTH windows — i.e. unchanged by this slice's diff. The new helpers radiusList/radiusCoverage/radiusSkipNote/radiusWithin are measured as their own separate, correctly-scoped functions with normal low complexity (radiusList cyclomatic=4, radiusCoverage cyclomatic=3, etc.), not swallowed into `over`. This contradicts the rolled-up implementer concern that 'the mis-attributed phantom `over` function now swallows radiusList/radiusCoverage as well, so its builtin whole-file metrics move from cyclomatic 14 / cognitive 16 / method_lines 40 at base to 15 / 19 / 50 at head' — those specific before/after numbers do not match direct measurement in either direction, and no additional margin was consumed by this slice's diff."
+    ]
+  },
+  "tests": null,
+  "quality": {
+    "status": "FAIL",
+    "detail": "3 violation(s)"
+  },
+  "escalations": [
+    {
+      "id": "s8:quality-gate-block",
+      "trigger": "quality-gate-block",
+      "title": "verification failed",
+      "context": "suite: All 9 suite segments passed: validate_marketplace OK; 126 scripts tests; 1389 plugins/spec-loop/scripts tests; 1515 coverage tests (3 skipped, floors met); 48 dashboard_assets tests; 35 slice_wave_behaviour tests; 38 slice_wave_radius tests; 16 slice_wave_replan tests; claude plugin validation passed.; quality: FAIL (summary_pass=false — Quality gate exit code 1: 3 violations in summary.failures. The `over` function in slice-wave.workflow.js exceeds cyclomatic (15 vs 10) and cognitive (19 vs 15) complexity thresholds. The whole file exceeds class_lines threshold (1327 vs 300). All other function-level checks passed.)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: All 9 suite segments passed: validate_marketplace OK; 126 scripts tests; 1389 plugins/spec-loop/scripts tests; 1515 coverage tests (3 skipped, floors met); 48 dashboard_assets tests; 35 slice_wave_behaviour tests; 38 slice_wave_radius tests; 16 slice_wave_replan tests; claude plugin validation passed.; quality: FAIL (summary_pass=false — Quality gate exit code 1: 3 violations in summary.failures. The `over` function in slice-wave.workflow.js exceeds cyclomatic (15 vs 10) and cognitive (19 vs 15) complexity thresholds. The whole file exceeds class_lines threshold (1327 vs 300). All other function-level checks passed.)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "OPEN"
+    }
+  ],
+  "agents_used": 12,
+  "wave": 5,
+  "events": [
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 12,
+        "deferred": [
+          "WITHIN_PARTIAL ships with no CHANGELOG entry and there is no lane in this run that can add one. The slice-local hard rules correctly forbid s8 from editing CHANGELOG.md (s6 owns it this wave), but dag.json shows s6's deps are [s1,s2,s3,s4,s5,s7] — s8 is not among them, so s6's entry is written without knowledge of the new state or the compared[]/skipped[] payload keys. conventions.md requires CHANGELOG entries to name files in backticks and state honest limits, and this run is otherwise disciplined about it. Do not build it here — editing CHANGELOG.md would violate a binding constraint and reproduce the merge conflict the constraint exists to prevent. Log it so a human or a later slice picks it up.",
+          "Honest-limit gap worth logging rather than fixing here: after this slice a mistyped `max_rewrite_ratio` still produces a completed, non-halting run, and the only signal is a per-slice event line. `quality_gate.py:211 load_config` performs no schema or type validation (it passes unrecognised keys straight through by design), so the string `\"0.5\"` reaches the workflow as null and stays there for every slice of every run until a human happens to read an event payload. `WITHIN_PARTIAL` makes the blind spot visible per evaluation but nothing aggregates it, and the ratio dimension is the one from the motivating 166:1 incident. This is not a defect in the plan - fail-open is the stated invariant and the run scope ceiling explicitly forbids dashboards, run_metrics rollups and threshold work - but the residual exposure should be recorded, not absorbed into the slice's success claim. Mitigation: state it plainly in the slice report's `What this slice does NOT do` section (the plan's fourth bullet is close but stops at `only makes the resulting blind spot visible`), and defer config-shape validation of the refactor_radius block to a later run as its own item."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": "Judged and inside scope. The plan touches three files beyond dag.json's declared s8 set (plugins/spec-loop/references/run-state-v2.md, .github/workflows/validate.yml, and the new plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs), but each is compelled rather than elective: conventions.md's single-home doctrine requires run-state-v2.md to change in the same commit as the payload/state it documents; an unregistered node module never runs in CI, and the ceiling entry bars a new git-hosting/CI *integration*, not registering a test lane in an existing runner list; and the new module exists only because the declared file slice_wave_radius.test.mjs is at 293 non-blank lines against a 300 class_lines ceiling. Nothing in the plan builds a measured/git-diff radius, a second checkpoint, a dashboard rollup, a critique.over_scope or CRITIQUE-schema change, a new trigger enum value, or a plugin version bump. The new WITHIN_PARTIAL state is within the goal clause 'a declared number that had no usable ceiling must never be counted as being under one', since WITHIN literally asserts the comparison it did not make."
+        }
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "deferred",
+      "payload": {
+        "summary": "WITHIN_PARTIAL ships with no CHANGELOG entry and there is no lane in this run that can add one. The slice-local hard rules correctly forbid s8 from editing CHANGELOG.md (s6 owns it this wave), but dag.json shows s6's deps are [s1,s2,s3,s4,s5,s7] — s8 is not among them, so s6's entry is written without knowledge of the new state or the compared[]/skipped[] payload keys. conventions.md requires CHANGELOG entries to name files in backticks and state honest limits, and this run is otherwise disciplined about it. Do not build it here — editing CHANGELOG.md would violate a binding constraint and reproduce the merge conflict the constraint exists to prevent. Log it so a human or a later slice picks it up.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "deferred",
+      "payload": {
+        "summary": "Honest-limit gap worth logging rather than fixing here: after this slice a mistyped `max_rewrite_ratio` still produces a completed, non-halting run, and the only signal is a per-slice event line. `quality_gate.py:211 load_config` performs no schema or type validation (it passes unrecognised keys straight through by design), so the string `\"0.5\"` reaches the workflow as null and stays there for every slice of every run until a human happens to read an event payload. `WITHIN_PARTIAL` makes the blind spot visible per evaluation but nothing aggregates it, and the ratio dimension is the one from the motivating 166:1 incident. This is not a defect in the plan - fail-open is the stated invariant and the run scope ceiling explicitly forbids dashboards, run_metrics rollups and threshold work - but the residual exposure should be recorded, not absorbed into the slice's success claim. Mitigation: state it plainly in the slice report's `What this slice does NOT do` section (the plan's fourth bullet is close but stops at `only makes the resulting blind spot visible`), and defer config-shape validation of the refactor_radius block to a later run as its own item.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 3
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-0 refuted by batched verifier",
+        "rationale": "plugins/spec-loop/workflows/slice-wave.workflow.js:284 shows `const over = (v, max) => v !== null && max !== null && v > max` — a genuinely trivial one-line boolean arrow inside radiusBreaches, matching the run's binding note verbatim: 'the gate currently mis-attributes cyclomatic 14 / cognitive 16 to a one-line arrow named over inside radiusBreaches - its true complexity is about 3... already adjudicated by the controller; do not contort the code to satisfy it.' The finding reports the same function/file/metric (cyclomatic_complexity) with a slightly different tool-run value (15 vs 14) but is the same known builtin-heuristic false positive already adjudicated as out of scope for this run.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-1 refuted by batched verifier",
+        "rationale": "Same as qg-0: `over` at slice-wave.workflow.js:284 is the one-line arrow the run's binding constraints explicitly identify as a known cognitive-complexity false positive of the builtin heuristic ('cognitive 16... its true complexity is about 3'), already adjudicated by the controller and explicitly listed as 'Fixing the quality gate's builtin JS function-span attribution. Real defect, out of scope for this run.'",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-2 refuted by batched verifier",
+        "rationale": "git show 7fdd7e2:plugins/spec-loop/workflows/slice-wave.workflow.js (the pre-slice base commit) is 1353 lines, already well over the 300-line class_lines threshold before this slice's changes. The binding constraint states: 'Whole-file class_lines violations on files already over 300 at base are a human-accepted pre-existing state. Never weaken a threshold to pass.' This is exactly that pre-existing condition, not a new defect introduced by this slice.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "review-summary",
+      "payload": {
+        "findings": 10,
+        "confirmed": 0,
+        "refuted": 3,
+        "fix_rounds": 0,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

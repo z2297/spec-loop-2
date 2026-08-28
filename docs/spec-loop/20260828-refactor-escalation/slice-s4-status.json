@@ -1,0 +1,294 @@
+{
+  "schema_version": 2,
+  "id": "s4",
+  "status": "ESCALATED",
+  "branch": "spec-loop/20260828-refactor-escalation/s4",
+  "commits": {
+    "base": "e5479765c38247df97d5de9571a7f401b8deaff4",
+    "head": "3e03074"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 15,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 4,
+  "review": {
+    "confirmed": 2,
+    "refuted": 1,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: The re-check's own `concerns` are read by nothing and recorded nowhere. `recordDeferrals` in `resolveObjectionAndRecord` is called with the ORIGINAL panel's `concerns` (stageCritique passes them through `ctx`), so a `critic:replan` seat that returns ENDORSE_WITH_CONCERNS with `disposition_hint: 'defer'` items has them dropped without a `deferred` event, and `fold` items are never folded into any downstream prompt. That contradicts the doctrine this same diff restates in plan-critic.md/guardian.md/skeptic.md — 'logged as DEFERRED, never silently dropped' — and it is a fresh seat's output, not a duplicate of the original panel's.",
+      "P2: `usableSplit` accepts any non-empty children array (`length > 0`), but a ONE-child split is exactly as unusable as a zero-child one: `PLAN_RESULT.split.children` declares `minItems: 2`, `run_state.MIN_SPLIT_CHILDREN` is 2 and `_validate_children` rejects it with 'a one-child split is the same slice, not a decomposition', and this file's own `findSplitRecommendation` already uses `(v.split.children || []).length >= 2` for the council-recommended split. So a one-child split still 'writes a sidecar the run-state validator rejects one stage later' — the precise failure `splitResult`'s comment claims it now prevents. The shipped tests only cover 0 children and 2 children, so the boundary is unexercised.",
+      "P2: The re-check dispatch reuses `criticPrompt(slice, plan, null)`, whose text is a from-scratch plan critique ('You are the full council: all five mandates') that never mentions that this plan is a REVISION, never carries the objection it was revised to resolve, and never asks whether that objection was addressed. The seat can therefore endorse a revision that ignored the objection entirely as long as the plan reads well on its own terms — which narrows the leak this slice exists to close rather than closing it. This is what the plan specifies verbatim, so it is a conformant implementation of a weak instruction, not a deviation; and it is distinct from the deferred 'one blind seat' concern, which is about panel composition rather than about the prompt omitting the objection under test.",
+      "P2: A fourth site reads `fix.commits` under its own inline optional-read guard, duplicating exactly the shape check the new `fixCommits()` helper (introduced in this same diff to be the canonical guard for `fix.commits` optionality) already centralizes. `fixCommits()` is not reused here, so the same defect class this slice fixes elsewhere now has two independent homes that can silently drift apart.",
+      "P3: The module docstring still claims 'The three `test_slice_wave_contract*.py` modules that import this one,' but this diff adds the FIFTH importer (`test_slice_wave_contract_replan.py`), widening an already-stale count without correction, even though this same diff edits this docstring for a different paragraph two lines below.",
+      "P2: The new `replan-recheck` event type is not added to run-state-v2.md's event-type list, breaking the repo's own single-home doctrine for this contract and departing from precedent: the prior slice's new `refactor-radius` trigger was added both to this list AND to a pinned contract test. The list is 'extensible; consumers ignore unknown types' so nothing breaks at runtime, but the reference doc is now an incomplete inventory of real event types the loop emits."
+    ]
+  },
+  "tests": null,
+  "quality": {
+    "status": "FAIL",
+    "detail": "1 violation(s)"
+  },
+  "escalations": [
+    {
+      "id": "s4:quality-gate-block",
+      "trigger": "quality-gate-block",
+      "title": "verification failed",
+      "context": "suite: All 8 suite segments passed: validate_marketplace (OK), scripts tests (126 passed), plugins tests (1352 passed), coverage (1478 passed, 3 skipped, all floors met), dashboard_assets tests (48 passed), slice_wave_behaviour tests (35 passed), slice_wave_radius tests (17 passed), plugin validation (OK).; quality: FAIL (summary_pass=false — Quality gate exit code 1 with 3 measured failures: acceptRevisedPlan function exceeds cyclomatic_complexity (12 > 10) and cognitive_complexity (22 > 15) thresholds; slice-wave.workflow.js file exceeds class_lines threshold (1207 > 300).)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: All 8 suite segments passed: validate_marketplace (OK), scripts tests (126 passed), plugins tests (1352 passed), coverage (1478 passed, 3 skipped, all floors met), dashboard_assets tests (48 passed), slice_wave_behaviour tests (35 passed), slice_wave_radius tests (17 passed), plugin validation (OK).; quality: FAIL (summary_pass=false — Quality gate exit code 1 with 3 measured failures: acceptRevisedPlan function exceeds cyclomatic_complexity (12 > 10) and cognitive_complexity (22 > 15) thresholds; slice-wave.workflow.js file exceeds class_lines threshold (1207 > 300).)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "OPEN"
+    }
+  ],
+  "agents_used": 15,
+  "wave": 3,
+  "events": [
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 12,
+        "deferred": [
+          "The honest-limits framing should also name what the re-check does NOT re-examine beyond the radius gate: for a tier-3 slice the ORIGINAL objection may have come from `guardian` (risk lane) or `skeptic` (premise lane), and `plan-critic` re-checking alone means the objecting member never sees the revision. The plan states this, which is good — but the CHANGELOG bullet should also say the mechanism narrows the leak rather than eliminating it, given the re-check is one blind seat.",
+          "The re-check verdict is not human-visible outside events.jsonl. `replan-recheck` is not in run_state.py:90 DECISION_EVENTS ('decision','deferred','council-verdict','quality-gate','integration-check','phase5-gate','refactor-radius'), so on the ACCEPTED path — the path where a revision the council rejected proceeds to implementation — nothing is rendered into decisions-log.md; the only trace is the raw event in the sidecar. Verified safe otherwise: run_state.py:296 requires only a non-empty `type` string and run_metrics.py:313 only that it be a str, so the new type breaks no validator and needs no enum touchpoint. Deferring rather than folding because adding it to DECISION_EVENTS is a new run_state.py branch and this run's binding constraint requires a coverage-executing test in the same change (floor 95, currently 100%).",
+          "One additional dispatch per objected slice against a fixed agent cap. acceptRevisedPlan adds a dispatch inside guard()'s budget (workflow :570-575, CAPS {1:10, 2:18, 3:32}), so a tier-2 slice that objects, replans and then runs tasks/review/fix/re-review/verify/gate loses one unit of headroom. It fails closed (agentCapEscalation, not corruption), so this is availability rather than integrity, and no mitigation is required in this slice — but the plan's honest-limits list should say the re-check is not free against the cap."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "deferred",
+      "payload": {
+        "summary": "The honest-limits framing should also name what the re-check does NOT re-examine beyond the radius gate: for a tier-3 slice the ORIGINAL objection may have come from `guardian` (risk lane) or `skeptic` (premise lane), and `plan-critic` re-checking alone means the objecting member never sees the revision. The plan states this, which is good — but the CHANGELOG bullet should also say the mechanism narrows the leak rather than eliminating it, given the re-check is one blind seat.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "deferred",
+      "payload": {
+        "summary": "The re-check verdict is not human-visible outside events.jsonl. `replan-recheck` is not in run_state.py:90 DECISION_EVENTS ('decision','deferred','council-verdict','quality-gate','integration-check','phase5-gate','refactor-radius'), so on the ACCEPTED path — the path where a revision the council rejected proceeds to implementation — nothing is rendered into decisions-log.md; the only trace is the raw event in the sidecar. Verified safe otherwise: run_state.py:296 requires only a non-empty `type` string and run_metrics.py:313 only that it be a str, so the new type breaks no validator and needs no enum touchpoint. Deferring rather than folding because adding it to DECISION_EVENTS is a new run_state.py branch and this run's binding constraint requires a coverage-executing test in the same change (floor 95, currently 100%).",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "deferred",
+      "payload": {
+        "summary": "One additional dispatch per objected slice against a fixed agent cap. acceptRevisedPlan adds a dispatch inside guard()'s budget (workflow :570-575, CAPS {1:10, 2:18, 3:32}), so a tier-2 slice that objects, replans and then runs tasks/review/fix/re-review/verify/gate loses one unit of headroom. It fails closed (agentCapEscalation, not corruption), so this is availability rather than integrity, and no mitigation is required in this slice — but the plan's honest-limits list should say the re-check is not free against the cap.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t4",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 1
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-0 refuted by batched verifier",
+        "rationale": "Shared constraints explicitly list slice-wave.workflow.js as a file already over 300 lines at base whose whole-file class_lines violation is 'a human-accepted pre-existing state, not a regression to chase.' conventions.md:36-37 states the same: 'Pre-existing class_lines failures on old files are a human-accepted state, not a regression to chase.' The finding flags the whole-file metric (function: null) with no evidence it stems from new code introduced in this diff rather than the pre-existing baseline (file is 1333 lines total, well over 300 before this change).",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260828-refactor-escalation/s4/plugins/spec-loop/workflows/slice-wave.workflow.js, /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260828-refactor-escalation/s4/plugins/spec-loop/scripts/slice_wave_replan.test.mjs",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "review-summary",
+      "payload": {
+        "findings": 8,
+        "confirmed": 2,
+        "refuted": 1,
+        "fix_rounds": 1,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

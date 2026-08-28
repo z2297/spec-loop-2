@@ -1,0 +1,301 @@
+{
+  "schema_version": 2,
+  "id": "s7",
+  "status": "ESCALATED",
+  "branch": "spec-loop/20260828-refactor-escalation/s7",
+  "commits": {
+    "base": "a7c996b19fd1ce36df97939df3499d300aa26762",
+    "head": "40c46d6"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 9,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 6,
+  "review": {
+    "confirmed": 4,
+    "refuted": 3,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: radiusNoCeiling requires BOTH ceilings to be null, so a HALF-mistyped config still produces the exact false-success claim defect (3) was raised to eliminate. With `max_rewrite_ratio: \"0.5\"` (string -> radiusNum -> null) and `max_touched_existing_files: 8`, a plan declaring rewrite_ratio 0.99 / touched_existing_files 2 is reported as `state: 'WITHIN'` with `reason: 'every declared number is at or under its ceiling'` — but 0.99 was never compared against anything, because radiusBreaches short-circuits on `max !== null`. The declared number is neither under a ceiling nor reported as uncompared. The mitigation is real but partial: `thresholds` in the payload does carry `max_rewrite_ratio: null`, so a reader of events.jsonl can derive it — the WITHIN *reason string* is what overclaims. The plan explicitly chose this shape and pins it with a test ('one usable ceiling out of two is still a usable configuration'), so this is flagged for the human rather than as a plan violation; the implementer raised the same point as 'the mirror of the defect being fixed'.",
+      "P3: Switching `answered` from key-presence to answer-truthiness means a controller that writes an empty/null answer permanently consumes a round number without disarming the halt: escRound counts KEYS, so `{\"s1:refactor-scope\": \"\"}` re-raises as `s1:refactor-scope:2`, and a controller that keeps writing blanks mints an unbounded sequence of new escalation records (there is no round cap anywhere). This is the intended direction of the fix and matches the resolveCouncilObjection precedent (`if (latestAnswer(slice.id, 'council-objection')) return { plan }`), which has the same property today, so it is not a regression this diff introduces in isolation — but the previous behaviour terminated and this one does not. Verified by reading escRound/escId/latestAnswer: latestAnswer ranks the bare key as round 1 and returns only the NEWEST round's value, so a truthy round-2 answer does disarm correctly."
+    ]
+  },
+  "tests": null,
+  "quality": {
+    "status": "FAIL",
+    "detail": "Quality gate exit 1: 4 measured failures across complexity and file-size metrics. Gate produced parseable JSON."
+  },
+  "escalations": [
+    {
+      "id": "s7:quality-gate-block",
+      "trigger": "quality-gate-block",
+      "title": "verification failed",
+      "context": "suite: All 9 test segments passed: validate_marketplace OK; 126 tests in scripts; 1382 tests in plugins/spec-loop/scripts; 1508 tests in measure_coverage (3 skipped, all coverage floors met); 48 dashboard tests passed; 35 behaviour tests passed; 38 radius tests passed; 16 replan tests passed; plugin validation passed; quality: FAIL (summary_pass=false — Quality gate produced JSON with exit code 1; summary.pass is false. Three violations found in slice-wave.workflow.js: cyclomatic_complexity 14 (threshold 10), cognitive_complexity 16 (threshold 15), and class_lines 1273 (threshold 300).)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: All 9 test segments passed: validate_marketplace OK; 126 tests in scripts; 1382 tests in plugins/spec-loop/scripts; 1508 tests in measure_coverage (3 skipped, all coverage floors met); 48 dashboard tests passed; 35 behaviour tests passed; 38 radius tests passed; 16 replan tests passed; plugin validation passed; quality: FAIL (summary_pass=false — Quality gate produced JSON with exit code 1; summary.pass is false. Three violations found in slice-wave.workflow.js: cyclomatic_complexity 14 (threshold 10), cognitive_complexity 16 (threshold 15), and class_lines 1273 (threshold 300).)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "OPEN"
+    }
+  ],
+  "agents_used": 17,
+  "wave": 4,
+  "events": [
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 8,
+        "deferred": [
+          "Task 4 changes what suppressed_by_answer MEANS in a payload already persisted to events.jsonl by earlier runs of this repo: pre-change events set it on any answered slice, post-change only on a waived EXCEEDED. Grep confirms no consumer reads it today (no reference in run_metrics.py, dashboard_server.py or run_state.py beyond generic rendering), so nothing needs fixing now — but anyone later counting waived halts across historical runs would mix two semantics. Log this as a known gap rather than building a migration or a rollup in this slice (a run_metrics rollup for this trigger is on the run scope ceiling)."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "deferred",
+      "payload": {
+        "summary": "Task 4 changes what suppressed_by_answer MEANS in a payload already persisted to events.jsonl by earlier runs of this repo: pre-change events set it on any answered slice, post-change only on a waived EXCEEDED. Grep confirms no consumer reads it today (no reference in run_metrics.py, dashboard_server.py or run_state.py beyond generic rendering), so nothing needs fixing now — but anyone later counting waived halts across historical runs would mix two semantics. Log this as a known gap rather than building a migration or a rollup in this slice (a run_metrics rollup for this trigger is on the run scope ceiling).",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t4",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t5",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t6",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 4
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-0 refuted by batched verifier",
+        "rationale": "Re-running python3 plugins/spec-loop/scripts/quality_gate.py --base main --head HEAD --repo-dir . in the worktree shows the 'over' function in plugins/spec-loop/workflows/slice-wave.workflow.js measured at cyclomatic_complexity value=8, threshold=10, pass=True — not value=14 as the finding claims. The finding's cited numbers do not match the actual current gate output.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-1 refuted by batched verifier",
+        "rationale": "Same re-run shows 'over' function cognitive_complexity value=10, threshold=15, pass=True, contradicting the finding's claimed value=16>15. Actual measured gate output at HEAD in the worktree does not reproduce this failure.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: plugins/spec-loop/scripts/slice_wave_contract_radius_driver.py, plugins/spec-loop/scripts/test_slice_wave_contract_radius_basis.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "review-summary",
+      "payload": {
+        "findings": 4,
+        "confirmed": 4,
+        "refuted": 3,
+        "fix_rounds": 1,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}
