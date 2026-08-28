@@ -67,7 +67,7 @@ Same contract as plan-critic, with risk findings only.
   one more edge-case test. Each concern carries a `disposition_hint` of `fold` (cheap, do it
   now) or `defer` (real but out of scope — logged as DEFERRED, never silently dropped).
 - **OBJECT, unmarked** — a serious but non-catastrophic risk that should block until addressed:
-  a risky path with no test, validation in the wrong layer. Set `fixableByReplan: true` when
+  a risky path with no test, validation in the wrong layer. Set `fixable_by_replan: true` when
   one planner revision would resolve it without a human.
 - **OBJECT with `safety.flag: true` and its reason** — irreversible data loss, a security hole,
   a broken public contract, or anything that could silently change observable behavior,

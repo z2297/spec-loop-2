@@ -23,6 +23,31 @@ All notable changes to the spec-loop plugin are documented here. The format is
   replan is not re-evaluated; and a controller that does not thread `ctx.refactor_radius`
   records `NOT_CONFIGURED` and never halts.
 
+### Fixed
+- **A council objection resolved by a replan no longer passes on the revision's status
+  alone.** `slice-wave.workflow.js` used to accept a post-`OBJECT` revision whenever it came
+  back `PLANNED`, so one silent retry absorbed the objection: nobody re-read the plan the
+  council had rejected and the human never saw it, while the doctrine described the mechanism
+  as blocking. `acceptRevisedPlan()` now sends the revision back to one `plan-critic` seat
+  (`critic:replan`), records a `replan-recheck` event carrying the verdict and the reason, and
+  escalates `council-objection` on a second objection, a fresh safety flag, or an unreadable
+  re-critique. Honest limits: the re-check is a SINGLE seat, not the original panel, so a
+  tier-3 objection raised by `guardian` or `skeptic` is re-checked by `plan-critic` alone; it
+  runs once, because `state.replanned` already vetoes a second replan; and the plan-time
+  refactor-radius ceiling is deliberately NOT re-measured on the revised plan.
+- **The last three unguarded optional agent-return reads in the wave are guarded.**
+  `PLAN_RESULT.required` is `['status']` only and `FIX_RESULT.commits` is optional, so
+  `fix.commits.base` (which threw during wave 1 of run 20260828 and was mislabelled a
+  `budget-exhausted` escalation, losing the wave), `plan.escalation.trigger` and the
+  `plan.split` pass-through were each one absent object away from aborting a whole wave.
+  `fixCommits()` falls back to the slice's own shas, `planEscalation()` substitutes a usable
+  record so the slice pauses instead of crashing, and `usableSplit()` escalates a childless
+  SPLIT at the cause instead of writing a sidecar the validator rejects a stage later.
+  `slice_wave_contract_base.py`'s docstring, which recorded two of these as deliberately
+  unfixed, is corrected. Honest limit: the trigger guard is a TYPE check, so an unrecognized
+  trigger string still fails `validate_escalation` downstream exactly as it does today, and
+  the catch-all that mislabels a `TypeError` as `budget-exhausted` is unchanged.
+
 ## [2.2.2] - 2026-08-28
 ### Added
 - **The quality gate counts branch keywords in code, not in prose.** `quality_gate.py` now
