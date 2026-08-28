@@ -34,10 +34,11 @@ All notable changes to the spec-loop plugin are documented here. The format is
   auditable in `events.jsonl` rather than inferable from a larger `agents_used`. The record
   itself now offers three controller-named options and its recommended option names the args
   field to write. `budget-exhausted` remains NOT a judgment trigger — its answer is injected
-  into no agent prompt, pinned by source text and by execution across every prompt of a
-  one-task slice run — the eight pipeline roles plan, critique, task, review, gate, fix,
-  re-review and verify; a slice carrying more tasks builds more prompts, repeating the task
-  and re-review roles — and the
+  into no agent prompt, pinned by source text and by execution across the eight pipeline
+  roles the one-task fixture drives — plan, critique, task, review, gate, fix, re-review
+  and verify. A real slice run builds more prompts than these eight: the tier-3 council
+  dispatches several critics, and the fix loop repeats fix and re-review across rounds —
+  and the
   per-stage token floor is untouched, having no args-level lever at all: its resource is the
   wave budget the host supplies. The controller still translates the human's free-text answer
   into the integer it writes; nothing in the loop parses that text. An override the channel

@@ -171,7 +171,8 @@ best-effort):
   announced once at slice start as a `decision` event whose summary opens `agent cap
   override`, and override keys matching no slice of the dispatched wave are announced the
   same way on the wave's first slice. The value is coerced with `Number()`, so a JSON string
-  reading as a whole number — `"14"` — is accepted and takes effect like the integer.
+  reading as a whole number — `"14"` — is read as the integer 14 and judged against the tier
+  default like any other value.
   The discard is therefore visible without waiting on a second cap record.
 - **`wave-collected`** payload carries the per-wave aggregates the workflow
   completion notification reports: `{index, agent_count, subagent_tokens,

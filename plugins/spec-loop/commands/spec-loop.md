@@ -149,10 +149,10 @@ deadlock is itself an escalation):
    default, not reading as a whole number, or keyed to a slice this wave never dispatched —
    raises nothing and says so: it emits a `decision` event naming the discarded value, so a
    mistyped key surfaces at the dispatch that carried it. The value is coerced with `Number()`,
-   so a JSON string reading as a whole number — `"14"` — is accepted and raises the cap. Two
-   rules bind you. The override is single-dispatch:
-   it belongs to the one re-dispatch the human authorised, so drop it from every later
-   dispatch of the run rather than carrying it forward like `answers`. And it only ever
+   so a JSON string reading as a whole number — `"14"` — is read as the integer 14 and judged
+   against the tier default like any other value. Two rules bind you. The override is
+   single-dispatch: it belongs to the one re-dispatch the human authorised, so drop it from
+   every later dispatch of the run rather than carrying it forward like `answers`. And it only ever
    raises — a value at or below the tier default is discarded by the wave, so it is no
    route to a tighter bound either. The TOKEN-FLOOR variant ("token budget exhausted")
    has no such lever: its resource is the wave budget the host supplies, and no args
