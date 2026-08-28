@@ -180,3 +180,73 @@ test("each escalation id and context is attributed to its own slice", async () =
   assert.deepEqual(recs.map((r) => r.context.startsWith("Error: crash-of-")), [true, true, true, true]);
   FOUR_IDS.forEach((id, i) => assert.ok(recs[i].context.includes("crash-of-" + id + ":plan")));
 });
+
+// ── escalation id rounds (esc/escId) and answer matching (latestAnswer) ──────
+// The round is derived from args.answers, the only channel that survives a
+// re-dispatch, so these tests drive it by handing the wave the answers map a
+// resuming controller would hand it and reading the id the wave actually emits.
+
+const CRASH_KEY = "s1:" + CRASH_TRIGGER;
+const withAnswers = (answers) => waveArgs([sliceFixture("s1")], answers);
+
+test("an unanswered slice keeps the bare id, with no round component", async () => {
+  const out = await runWave(withAnswers({}), THROWS);
+  assert.equal(only(out).id, CRASH_KEY);
+});
+
+test("a second dispatch after an answer to round one raises round two", async () => {
+  const out = await runWave(withAnswers({ [CRASH_KEY]: "retry it" }), THROWS);
+  assert.equal(only(out).id, CRASH_KEY + ":2");
+  assert.equal(only(out).trigger, CRASH_TRIGGER);
+});
+
+test("a third round follows the bare and the round-two answers", async () => {
+  const answers = { [CRASH_KEY]: "retry it", [CRASH_KEY + ":2"]: "retry again" };
+  const out = await runWave(withAnswers(answers), THROWS);
+  assert.equal(only(out).id, CRASH_KEY + ":3");
+});
+
+test("the same answers map reproduces the same id across dispatches", async () => {
+  const answers = { [CRASH_KEY]: "retry it" };
+  const first = await runWave(withAnswers(answers), THROWS);
+  const second = await runWave(withAnswers(answers), THROWS);
+  assert.equal(only(first).id, only(second).id);
+  assert.equal(only(second).id, CRASH_KEY + ":2");
+});
+
+test("an answer to one trigger does not advance another trigger's round", async () => {
+  const out = await runWave(withAnswers({ "s1:ambiguity": "do this" }), THROWS);
+  assert.equal(only(out).id, CRASH_KEY);
+});
+
+// Answer MATCHING, observed where it is observable: the planner prompt. A
+// round-suffixed id whose answer no longer reaches the prompt is the dead end
+// this slice exists to avoid, so it is pinned by execution, not by inspection.
+const capturePrompts = () => {
+  const seen = [];
+  return {
+    seen,
+    agent: async (prompt) => { seen.push(prompt); throw new Error("BOOM"); },
+  };
+};
+
+test("an answer keyed without a round still reaches the prompt", async () => {
+  const cap = capturePrompts();
+  await runWave(withAnswers({ "s1:ambiguity": "ANSWER-ONE" }), { agent: cap.agent });
+  assert.ok(cap.seen[0].includes("ANSWER-ONE"));
+  assert.ok(cap.seen[0].includes('HUMAN ANSWER to your earlier "ambiguity" escalation'));
+});
+
+test("an answer keyed with a round reaches the prompt too", async () => {
+  const cap = capturePrompts();
+  await runWave(withAnswers({ "s1:ambiguity:2": "ANSWER-TWO" }), { agent: cap.agent });
+  assert.ok(cap.seen[0].includes("ANSWER-TWO"));
+});
+
+test("the newest answered round wins with several rounds answered", async () => {
+  const cap = capturePrompts();
+  const answers = { "s1:ambiguity": "ANSWER-ONE", "s1:ambiguity:2": "ANSWER-TWO" };
+  await runWave(withAnswers(answers), { agent: cap.agent });
+  assert.ok(cap.seen[0].includes("ANSWER-TWO"));
+  assert.ok(!cap.seen[0].includes("ANSWER-ONE"));
+});

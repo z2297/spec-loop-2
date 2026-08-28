@@ -142,8 +142,10 @@ human, so:
    (`run_state.py open-escalations`), runs the precedent check on each, and surfaces everything that
    survives as ONE `AskUserQuestion` round — recommended default first.
 3. Answers are written back (`escalation-answered` events) and the wave is re-dispatched with
-   `answers["<slice-id>:<trigger>"]` filled in; completed stages replay from the workflow journal,
-   so only the answered stage runs live.
+   the answer keyed by the escalation's `id` verbatim (`answers["<slice-id>:<trigger>"]`, or
+   `answers["<slice-id>:<trigger>:<round>"]` from the second round of that trigger onward)
+   filled in; completed stages replay from the workflow journal, so only the answered stage
+   runs live.
 
 The wave boundary is the only seam where a human is asked anything — unchanged from v1; only the
 transport moved from prose files to structured returns.
@@ -159,8 +161,9 @@ rendered from the records. Two rules the shape cannot enforce:
 - **`context` explains why the loop cannot decide**, not merely what happened — the human reads it
   cold, alongside other questions.
 
-The `id` is `<slice-id>:<trigger>`, stable across resumes: that stability is what lets an answer be
-injected back into exactly the stage that raised it.
+The `id` is `<slice-id>:<trigger>`, plus `:<round>` from the second round of that trigger in that
+slice onward, stable across resumes: that stability is what lets an answer be injected back into
+exactly the stage that raised it.
 
 ## Violations of the contract
 

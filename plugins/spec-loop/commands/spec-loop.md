@@ -128,7 +128,15 @@ deadlock is itself an escalation):
    `escalation-gate` precedent check (prior runs' answered escalations + runbook decision
    summaries); squarely-resolved → answer it yourself with a `decision` event citing the
    precedent. Everything else: ONE `AskUserQuestion` round for ALL open escalations
-   (recommended defaults first). Write answers back (`escalation-answered` events), then
+   (recommended defaults first). Write answers back (`escalation-answered` events), keying
+   each answer by the escalation's `id` verbatim — a round-suffixed id keeps its suffix in
+   the `answers` map, and the wave reads the newest answered round. The wave derives a
+   dispatch's round number solely from the keys already present in `answers`, so every
+   re-dispatch this run makes — same session or after a `--resume` — must hand the wave an
+   `answers` map carrying EVERY answered escalation of the run, all rounds included, not
+   just the newest: dropping an earlier round's key reissues the id that round already
+   answered. Retaining the older keys surfaces no stale text to a slice, since the wave
+   still reads only the newest answered round. Then
    **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
    whose sidecars are not DONE/SPLIT (merged work never re-enters a wave; its worktree is
    already gone) — same `ctx`, `answers` filled in, and `resumeFromRunId: <wf_id>` so the
@@ -159,8 +167,10 @@ Executive Readout, verbatim.
 
 `--resume <run-id>`: read `dag.json` (recover branch, mode, wave history), recreate
 `.active`, checkout the integration branch (clean-tree guard), `worktrees.py prepare
---resume` for the incomplete wave's slices, drain ANSWERED-but-undispatched escalations into
-the `answers` map, and re-enter the wave loop at the first incomplete wave — same-session
+--resume` for the incomplete wave's slices, drain EVERY answered escalation of the run into
+the `answers` map (every round, already-dispatched ones included, per step 7's
+cumulative-map invariant), and re-enter the wave loop at the first incomplete wave —
+same-session
 with `resumeFromRunId`, fresh invocation otherwise. All slices terminal → straight to
 Phase 5 (regenerating `runbook.md` is safe).
 

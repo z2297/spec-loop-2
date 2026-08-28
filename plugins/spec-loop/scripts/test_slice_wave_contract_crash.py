@@ -39,6 +39,17 @@ from slice_wave_contract_base import (
     WorkflowSourceTestCase,
 )
 
+def collapsed(text):
+    """Runs of whitespace become a single space.
+
+    A hard-wrap of markdown prose splits a pinned literal across a
+    newline and drops its match count to zero. Both sides of every
+    prose match below pass through here, so line breaks stay invisible
+    to the pin and the prose stays free to rewrap.
+    """
+    return re.sub(r"\s+", " ", text)
+
+
 # A real crash message from run 20260825-scope-ceiling, and the LONGEST stage
 # text the fallback can interpolate (the no-dispatch phrase, longer than any
 # role name), so the render check below measures the worst realistic case.
@@ -178,10 +189,13 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         self.assertLess(stage_at, prose_at)
 
     def crash_context(self):
-        """The shipped context template literal, backticks stripped."""
+        r"""The shipped context template literal, backticks stripped. The
+        literal is its own statement (`const context = \`...\``), so its
+        closing backtick is followed by a newline, not the trailing comma an
+        inline call argument would carry."""
         fallback = self.crash_fallback()
         start = fallback.index(CRASH_ERROR_FIRST)
-        return fallback[start + 1:fallback.index("`,", start)]
+        return fallback[start + 1:fallback.index("`\n", start)]
 
     def rendered_crash_context(self, message, stage_text):
         """The `- Context:` line escalations.md actually receives, produced by
@@ -275,19 +289,40 @@ class TestTheTriggerEnumAgreesAcrossAllSixHomes(WorkflowSourceTestCase):
     def test_the_fallback_agent_prose_lists_exactly_those_triggers(self):
         # The escalation section of the slice-worker fallback agent is the
         # enumeration a worker reads before it names a trigger. Located by
-        # TRIGGER_PROSE_LEAD, whose own count word is pinned by the literal.
-        text = FALLBACK_MD.read_text(encoding="utf-8")
-        self.assertEqual(text.count(TRIGGER_PROSE_LEAD), 1)
-        listed = text.split(TRIGGER_PROSE_LEAD, 1)[1].split(")", 1)[0]
-        self.assertEqual(tuple(re.findall(r"`([^`]+)`", listed)), self.triggers())
+        # TRIGGER_PROSE_LEAD, whose own count word is pinned by the
+        # literal. Both sides are whitespace-collapsed, so a rewrap of the
+        # sentence leaves the pin intact.
+        text = collapsed(FALLBACK_MD.read_text(encoding="utf-8"))
+        lead = collapsed(TRIGGER_PROSE_LEAD)
+        self.assertEqual(text.count(lead), 1)
+        listed = text.split(lead, 1)[1].split(")", 1)[0]
+        self.assertEqual(tuple(re.findall(r"`([^`]+)`", listed)),
+            self.triggers())
 
     def test_the_contract_reference_union_lists_exactly_those_triggers(self):
         # references/run-state-v2.md is the authoritative shape doc for the
         # EscalationRecord; its trigger field is a pipe-separated union.
-        text = RUN_STATE_MD.read_text(encoding="utf-8")
-        self.assertEqual(text.count(TRIGGER_UNION_PREFIX), 1)
-        union = text.split(TRIGGER_UNION_PREFIX, 1)[1].split('"', 1)[0]
+        # Whitespace-collapsed on both sides, same as the pin above.
+        text = collapsed(RUN_STATE_MD.read_text(encoding="utf-8"))
+        prefix = collapsed(TRIGGER_UNION_PREFIX)
+        self.assertEqual(text.count(prefix), 1)
+        union = text.split(prefix, 1)[1].split('"', 1)[0]
         self.assertEqual(tuple(part.strip() for part in union.split("|")),
+            self.triggers())
+
+    def test_the_prose_pin_survives_a_hard_wrap_of_the_fallback_sentence(self):
+        # Every space becomes a line break: the harshest rewrap there is.
+        rewrapped = FALLBACK_MD.read_text(encoding="utf-8").replace(" ", "\n")
+        self.assertEqual(
+            collapsed(rewrapped).count(collapsed(TRIGGER_PROSE_LEAD)), 1)
+
+    def test_the_union_pin_survives_a_hard_wrap_of_the_contract_line(self):
+        rewrapped = RUN_STATE_MD.read_text(encoding="utf-8").replace(" ", "\n")
+        text = collapsed(rewrapped)
+        prefix = collapsed(TRIGGER_UNION_PREFIX)
+        self.assertEqual(text.count(prefix), 1)
+        union = text.split(prefix, 1)[1].split('"', 1)[0]
+        self.assertEqual(tuple(p.strip() for p in union.split("|")),
             self.triggers())
 
 

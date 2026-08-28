@@ -121,9 +121,12 @@ export function sliceFixture(id) {
   };
 }
 
-export function waveArgs(slices) {
+// `answers` is the controller's resume channel, keyed by escalation id. It is a
+// parameter so a test can drive the round the workflow computes from it, rather
+// than asserting the id scheme against a copy of the rule.
+export function waveArgs(slices, answers) {
   return {
-    run_id: "20260827-harness", wave_index: 0, slices, answers: {},
+    run_id: "20260827-harness", wave_index: 0, slices, answers: answers || {},
     ctx: {
       run_dir: "/tmp/run", plugin_root: "/tmp/plugin", base_ref: "main",
       test_command: "true", conventions_path: "/tmp/run/conventions.md",

@@ -341,6 +341,17 @@ def _events_without(*payload_keys):
         for obj in V2_EVENT_OBJECTS)
 
 
+def _escalation_record(**overrides):
+    """One escalation record as `merge_escalation_records` consumes it, with
+    the fields a round-2 `s1:internal-error` record shares held as defaults so
+    a test states only what makes it distinct."""
+    record = {"id": "s1:internal-error", "scope": "s1", "trigger": "internal-error",
+              "title": None, "status": "OPEN", "opened": "2026-07-30T10:00:00Z",
+              "answered_at": None}
+    record.update(overrides)
+    return record
+
+
 # ---------------------------------------------------------------------------
 # events.jsonl parsing
 # ---------------------------------------------------------------------------
@@ -496,18 +507,50 @@ class EscalationPairingTests(unittest.TestCase):
                          rm.BASIS_BOTH)
 
     def test_sidecar_answer_survives_an_events_channel_that_only_opened(self):
-        from_events = [{"id": "s1:x", "scope": "s1", "trigger": "ambiguity",
-                        "title": None, "status": "OPEN",
-                        "opened": "2026-07-30T10:00:00Z", "answered_at": None}]
-        from_sidecars = [{"id": "s1:x", "scope": "s1", "trigger": None,
-                          "title": "t", "status": "ANSWERED", "opened": None,
-                          "answered_at": "2026-07-30T10:05:00Z"}]
+        from_events = [_escalation_record(id="s1:x", trigger="ambiguity", title=None)]
+        from_sidecars = [_escalation_record(
+            id="s1:x", trigger=None, title="t", status="ANSWERED", opened=None,
+            answered_at="2026-07-30T10:05:00Z")]
         merged = rm.merge_escalation_records(from_events, from_sidecars)
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["status"], "ANSWERED")
         self.assertEqual(merged[0]["answered_at"], "2026-07-30T10:05:00Z")
         self.assertEqual(merged[0]["opened"], "2026-07-30T10:00:00Z")
         self.assertEqual(merged[0]["trigger"], "ambiguity")
+
+    def test_two_rounds_of_one_trigger_stay_two_records(self):
+        first_id, second_id = "s1:internal-error", "s1:internal-error:2"
+        first = _escalation_record(
+            id=first_id, title="round one", status="ANSWERED",
+            answered_at="2026-07-30T10:05:00Z")
+        second = _escalation_record(
+            id=second_id, title="round two", status="OPEN", answered_at=None)
+        merged = rm.merge_escalation_records([], [first, second])
+        ids = [r["id"] for r in merged]
+        titles = [r["title"] for r in merged]
+        statuses = [r["status"] for r in merged]
+        self.assertEqual(ids, [first_id, second_id])
+        self.assertEqual(titles, ["round one", "round two"])
+        self.assertEqual(statuses, ["ANSWERED", "OPEN"])
+
+    def test_one_round_seen_in_both_channels_stays_one_record(self):
+        round_id = "s1:internal-error:2"
+        events = [_escalation_record(id=round_id, title=None, status="OPEN")]
+        sidecars = [_escalation_record(
+            id=round_id, trigger=None, title="round two", status="ANSWERED",
+            opened=None, answered_at="2026-07-30T10:05:00Z")]
+        merged = rm.merge_escalation_records(events, sidecars)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["status"], "ANSWERED")
+        self.assertEqual(merged[0]["title"], "round two")
+
+    def test_scope_survives_a_round_suffixed_id(self):
+        parsed = rm._parse_embedded_escalations(
+            [{"id": "s1:internal-error:2", "trigger": "internal-error",
+              "title": "round two", "status": "OPEN"}])
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["scope"], "s1")
+        self.assertEqual(parsed[0]["id"], "s1:internal-error:2")
 
 
 # ---------------------------------------------------------------------------

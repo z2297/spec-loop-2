@@ -22,10 +22,22 @@ All notable changes to the spec-loop plugin are documented here. The format is
   matching re-emit that carries no answer leaves an already-answered section untouched rather
   than resetting it. `answer_escalation` now writes into the last section for an id that is still
   marked `(status: OPEN)`, which is a no-op for an id owning a single section and stops the second
-  round's answer landing under the first round's question. Escalation ids still carry no round
-  component, so two rounds of one id remain distinguishable on the page only by their rendered
-  question and context, or — where those render identically — by the identity fingerprint comment
-  alone.
+  round's answer landing under the first round's question. Escalation ids now carry a round
+  component from the second round onward (see below), so two rounds are two ids; the identity
+  fingerprint stays load-bearing because it also covers records this workflow did not write and
+  rounds whose id is shared.
+- **Two escalations of one trigger in one slice no longer collide on a single id.** `esc()`
+  (`workflows/slice-wave.workflow.js`) now builds the id through `escId`, which appends the
+  `:<round>` component the `EscalationRecord` contract already documented: round 1 keeps the
+  bare `<slice-id>:<trigger>`, and every later round is suffixed. The round is counted from the
+  answers already recorded for that slice and trigger — the one counter that survives a
+  re-dispatch — so an id is stable across resumes and the same `answers` map always reproduces
+  it. Answer lookup moved with the scheme: `latestAnswer` matches the whole key family and
+  returns the newest answered round, so an answer keyed without a round still matches and no
+  judgment trigger becomes unanswerable. The planner-`ESCALATE` branch no longer overwrites the
+  id it was handed. `run_metrics.merge_escalation_records` needed no logic change — it keys on
+  the whole id, so distinct rounds were already distinct records and are now pinned by test —
+  and its docstring says so.
 
 ## [2.2.1] - 2026-08-27
 ### Added

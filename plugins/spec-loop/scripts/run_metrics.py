@@ -452,26 +452,37 @@ def _normalize_trigger(value):
 
 
 def merge_escalation_records(from_events, from_sidecars):
-    """Union the two escalation channels by id, events winning on conflict.
+    """Union the two escalation channels by the whole id, events winning on conflict.
+
+    The id carries a round component from the second escalation of one trigger in
+    one slice onward (``escId`` in slice-wave.workflow.js), so two rounds are two
+    ids and stay two records here; only a genuine re-emit of one round, seen in
+    both channels, merges.
 
     Sidecars are authoritative about a slice, but a run that escalated at
     intake has no sidecar at all, and an interrupted run may have events with
     no persisted sidecar yet — so neither channel alone is complete."""
     merged, order = {}, []
     for record in list(from_sidecars) + list(from_events):
-        key = record["id"]
-        if key not in merged:
-            order.append(key)
-            merged[key] = dict(record)
-            continue
-        existing = merged[key]
-        answered = "ANSWERED" in (existing["status"], record["status"])
-        existing.update({k: v for k, v in record.items() if v is not None})
-        # An answer recorded in either channel happened; a channel that only
-        # saw the open must not walk the escalation back to OPEN.
-        if answered:
-            existing["status"] = "ANSWERED"
+        _fold_escalation_record_into(merged, order, record)
     return [merged[key] for key in order]
+
+
+def _fold_escalation_record_into(merged, order, record):
+    """Fold one escalation record into the accumulating ``merged``/``order``
+    pair, in place. A key seen for the first time is recorded verbatim and
+    its arrival order preserved; a repeat key is unioned onto the existing
+    entry, non-``None`` fields winning, with an answer recorded in either
+    channel never walked back to OPEN by the other."""
+    key = record["id"]
+    if key not in merged:
+        order.append(key)
+        merged[key] = dict(record)
+        return
+    existing = merged[key]
+    answered = "ANSWERED" in (existing["status"], record["status"])
+    existing.update({k: v for k, v in record.items() if v is not None})
+    existing["status"] = "ANSWERED" if answered else existing["status"]
 
 
 # ==========================================================================
