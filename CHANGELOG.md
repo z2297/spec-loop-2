@@ -49,6 +49,18 @@ All notable changes to the spec-loop plugin are documented here. The format is
   exactly equal — no file passes a threshold it was failing on those. And it does not rescue
   `globToRe`, whose cognitive complexity measured 25 before the mask and measures 17 after,
   against a threshold of 15: still over.
+- **A behavioural test harness that executes `slice-wave.workflow.js`.** The workflow cannot be
+  imported as a module — the host wraps the whole script in an implicit async function, so the
+  file legally carries a top-level `return` and a top-level `await`. `slice_wave_harness.mjs`
+  loads it through the wrapper that already existed on the Python side,
+  `slice_wave_contract_base.wrapped_source()`, shelling out to it rather than re-implementing
+  it, so the repo holds exactly one wrapper and the two sides cannot drift. The wrapped source
+  becomes an `AsyncFunction` driven with mock sandbox globals, and
+  `slice_wave_behaviour.test.mjs` asserts on behaviour the workflow really executed instead of
+  on its source text. The honest limit, stated plainly: those mock globals are an ASSUMED host
+  contract, which this repo documents nowhere, so the harness verifies deterministic control
+  flow against an assumption. It cannot verify behaviour against the real Workflow host, and a
+  green run here is no evidence about that host.
 
 ### Changed
 - **The lost-slice escalation asks the three-way question its options already offered.** The
