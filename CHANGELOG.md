@@ -99,10 +99,9 @@ All notable changes to the spec-loop plugin are documented here. The format is
   matching re-emit that carries no answer leaves an already-answered section untouched rather
   than resetting it. `answer_escalation` now writes into the last section for an id that is still
   marked `(status: OPEN)`, which is a no-op for an id owning a single section and stops the second
-  round's answer landing under the first round's question. Escalation ids now carry a round
-  component from the second round onward (see below), so two rounds are two ids; the identity
-  fingerprint stays load-bearing because it also covers records this workflow did not write and
-  rounds whose id is shared.
+  round's answer landing under the first round's question. The round component the ids now
+  carry (below) makes two rounds two ids; the identity fingerprint stays load-bearing because
+  it also covers records this workflow did not write and rounds whose id is shared.
 - **Two escalations of one trigger in one slice no longer collide on a single id.** `esc()`
   (`workflows/slice-wave.workflow.js`) now builds the id through `escId`, which appends the
   `:<round>` component the `EscalationRecord` contract already documented: round 1 keeps the
