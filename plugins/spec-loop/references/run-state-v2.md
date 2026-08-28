@@ -166,7 +166,11 @@ best-effort):
   `agent_cap_overrides` (`{"<slice-id>": <integer>}`), belongs to the single dispatch the
   controller hands it to, and can only raise: a value at or below the tier default is
   discarded. `tier` is the review tier at slice start, which a later tier promotion can
-  move.
+  move. A supplied override that does NOT take effect emits no `agent-cap-override` event: a
+  value at or below the tier default, or a non-integer value, is announced once at slice
+  start as a `decision` event whose summary opens `agent cap override`, and override keys
+  matching no slice of the dispatched wave are announced the same way on the wave's first
+  slice. The discard is therefore visible without waiting on a second cap record.
 - **`wave-collected`** payload carries the per-wave aggregates the workflow
   completion notification reports: `{index, agent_count, subagent_tokens,
   duration_ms}` — the honest wave-level token/duration channel while

@@ -19,10 +19,16 @@ All notable changes to the spec-loop plugin are documented here. The format is
   auditable in `events.jsonl` rather than inferable from a larger `agents_used`. The record
   itself now offers three controller-named options and its recommended option names the args
   field to write. `budget-exhausted` remains NOT a judgment trigger — its answer is injected
-  into no agent prompt, pinned now by execution as well as by source text — and the per-stage
+  into no agent prompt, pinned by source text and by execution across
+  all eight prompts one slice builds running plan, critique, task, review, gate, fix, re-review
+  and verify — and the per-stage
   token floor is untouched, having no args-level lever at all: its resource is the wave budget
   the host supplies. The controller still translates the human's free-text answer into the
-  integer it writes; nothing in the loop parses that text. Documented in `commands/spec-loop.md`
+  integer it writes; nothing in the loop parses that text. An override the channel cannot use
+  is no longer discarded in silence: a value at or below the tier default, a non-integer value,
+  or a key naming no slice of the wave emits a `decision` event naming the discarded value, so
+  a mistyped lever is visible at the dispatch that carried it rather than only at the next cap
+  record. Documented in `commands/spec-loop.md`
   step 7 and `references/run-state-v2.md`.
 
 ### Changed
@@ -36,6 +42,12 @@ All notable changes to the spec-loop plugin are documented here. The format is
   `test_slice_wave_contract_crash.py`.
 
 ### Fixed
+- **The escalation-gate skill describes the lost-slice ask the wave actually emits.**
+  `skills/escalation-gate/SKILL.md` still said the lost-slice record "asks only whether to re-run
+  the wave" after that record widened to the three-way retry/skip/stop question. The sentence now
+  names the three-way ask and its own tail, and `test_slice_wave_contract.py` holds the doc
+  against the wave's real question text, so the next change to the ask breaks the doc pin instead
+  of drifting past it.
 - **`escalations.md` renders one section per distinct escalation question.** An
   `escalation-opened` event whose raw `id`, `context` and `question` match a section already on
   the page now rewrites that section in place (`run_state.place_escalation_section`) instead of
