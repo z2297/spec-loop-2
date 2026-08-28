@@ -248,6 +248,19 @@ def resolve_main_shim(source: str, relpath: str) -> set[int]:
     return resolved
 
 
+@dataclass
+class OmitSpec:
+    """One target's manifest omission: literal line numbers plus symbolic tokens.
+
+    A literal range stays a literal range. ``main_shim`` records that the manifest
+    asked for the module's entry shim by name, to be turned into line numbers by
+    ``resolve_omit`` against the file's own source at measure time.
+    """
+
+    lines: set[int] = field(default_factory=set)
+    main_shim: bool = False
+
+
 def _parse_line_range(line_range: str, raw: str) -> tuple[int, int]:
     """Parse ``START`` or ``START-END`` into an inclusive (start, end) pair."""
     try:
@@ -263,8 +276,8 @@ def _parse_line_range(line_range: str, raw: str) -> tuple[int, int]:
     return start, end
 
 
-def _parse_omit_line(raw: str) -> tuple[str, range] | None:
-    """Parse one manifest line into ``(relpath, line_range)``, or None to skip.
+def _parse_omit_line(raw: str) -> tuple[str, OmitSpec] | None:
+    """Parse one manifest line into ``(relpath, OmitSpec)``, or None to skip.
 
     Raises ``ValueError`` on a malformed entry or one missing a rationale.
     """
@@ -280,26 +293,46 @@ def _parse_omit_line(raw: str) -> tuple[str, range] | None:
     if ":" not in spec:
         raise ValueError(f"malformed OMIT entry (expected path:range): {raw!r}")
     relpath, line_range = spec.rsplit(":", 1)
+    line_range = line_range.strip()
+    if line_range == MAIN_SHIM_TOKEN:
+        return relpath.strip(), OmitSpec(main_shim=True)
     start, end = _parse_line_range(line_range, raw)
-    return relpath.strip(), range(start, end + 1)
+    return relpath.strip(), OmitSpec(lines=set(range(start, end + 1)))
 
 
-def parse_omit(text: str) -> dict[str, set[int]]:
-    """Parse the OMIT manifest into ``{relpath: {lineno, ...}}``.
+def parse_omit(text: str) -> dict[str, OmitSpec]:
+    """Parse the OMIT manifest into ``{relpath: OmitSpec}``.
 
-    Each data line must be ``scripts/<file>.py:START[-END]  # rationale``.
-    Blank lines and full-line ``#`` comments are ignored. A malformed entry, or
-    one missing a rationale, raises ``ValueError`` — the manifest must stay
-    auditable and cannot silently grow into a place to hide untested code.
+    Each data line is either ``scripts/<file>.py:START[-END]  # rationale`` (a
+    literal line range) or ``scripts/<file>.py:__main__  # rationale`` (the
+    symbolic entry-shim token, resolved later by ``resolve_omit``). Blank lines
+    and full-line ``#`` comments are ignored. A malformed entry, one missing a
+    rationale, or an unrecognised symbolic token falls through to the numeric
+    parser and raises ``ValueError`` — the manifest must stay auditable and
+    cannot silently grow into a place to hide untested code.
     """
-    result: dict[str, set[int]] = {}
+    result: dict[str, OmitSpec] = {}
     for raw in text.splitlines():
         parsed = _parse_omit_line(raw)
         if parsed is None:
             continue
-        relpath, lines = parsed
-        result.setdefault(relpath, set()).update(lines)
+        relpath, spec = parsed
+        merged = result.setdefault(relpath, OmitSpec())
+        merged.lines |= spec.lines
+        merged.main_shim = merged.main_shim or spec.main_shim
     return result
+
+
+def resolve_omit(spec: OmitSpec, source: str, relpath: str) -> set[int]:
+    """The concrete omitted line numbers for one target file (PURE).
+
+    Literal ranges pass through untouched. A ``main_shim`` spec is resolved against
+    the source given, so the omission tracks the shim wherever it now sits.
+    """
+    resolved = set(spec.lines)
+    if spec.main_shim:
+        resolved |= resolve_main_shim(source, relpath)
+    return resolved
 
 
 def apply_omit(
