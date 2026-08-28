@@ -202,6 +202,28 @@ def longer_scan(text, lang):
     return text + "\nextra"
 
 
+# refactor_radius config fixtures. A multi-line dict literal passed inline to
+# a helper call forces a deep hanging indent when the continuation aligns with
+# the opening brace, and the gate's nesting-depth heuristic reads that
+# indentation as block nesting -- so these live at module level for the same
+# reason as the fixtures above.
+OVERLAY_SIBLINGS_BASE_RADIUS = {
+    "refactor_radius": {
+        "enabled": True,
+        "max_rewrite_ratio": 0.4,
+        "max_touched_existing_files": 6,
+        "min_rewritten_lines": 120,
+    },
+}
+
+OVERLAY_SIBLINGS_EXPECTED_RADIUS = {
+    "enabled": True,
+    "max_rewrite_ratio": 0.3,
+    "max_touched_existing_files": 6,
+    "min_rewritten_lines": 120,
+}
+
+
 # --------------------------------------------------------------------------
 # parse_diff — pure, embedded fixtures
 # --------------------------------------------------------------------------
@@ -338,27 +360,26 @@ class TestLoadConfig(unittest.TestCase):
         self.assertTrue(cfg["refactor_radius"]["enabled"])
 
     def test_a_partial_refactor_radius_block_keeps_its_unmentioned_sibling_keys(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
-            json.dump({"refactor_radius": {"max_rewrite_ratio": 0.25}}, fh)
-            path = fh.name
-        self.addCleanup(os.unlink, path)
+        path = self._tmp_json({"refactor_radius": {"max_rewrite_ratio": 0.25}})
         cfg, _ = qg.load_config(path)
-        self.assertEqual(cfg["refactor_radius"]["max_rewrite_ratio"], 0.25)
-        self.assertEqual(cfg["refactor_radius"]["max_touched_existing_files"],
-                         qg.DEFAULT_REFACTOR_RADIUS["max_touched_existing_files"])
-        self.assertEqual(cfg["refactor_radius"]["min_rewritten_lines"],
-                         qg.DEFAULT_REFACTOR_RADIUS["min_rewritten_lines"])
-        self.assertTrue(cfg["refactor_radius"]["enabled"])
+        radius = cfg["refactor_radius"]
+        default = qg.DEFAULT_REFACTOR_RADIUS
+        self.assertEqual(radius["max_rewrite_ratio"], 0.25)
+        self.assertEqual(
+            radius["max_touched_existing_files"],
+            default["max_touched_existing_files"])
+        self.assertEqual(
+            radius["min_rewritten_lines"], default["min_rewritten_lines"])
+        self.assertTrue(radius["enabled"])
 
     def test_a_refactor_radius_block_can_be_switched_off_by_the_operator(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
-            json.dump({"refactor_radius": {"enabled": False}}, fh)
-            path = fh.name
-        self.addCleanup(os.unlink, path)
+        path = self._tmp_json({"refactor_radius": {"enabled": False}})
         cfg, _ = qg.load_config(path)
-        self.assertFalse(cfg["refactor_radius"]["enabled"])
-        self.assertEqual(cfg["refactor_radius"]["max_rewrite_ratio"],
-                         qg.DEFAULT_REFACTOR_RADIUS["max_rewrite_ratio"])
+        radius = cfg["refactor_radius"]
+        self.assertFalse(radius["enabled"])
+        self.assertEqual(
+            radius["max_rewrite_ratio"],
+            qg.DEFAULT_REFACTOR_RADIUS["max_rewrite_ratio"])
 
     def test_a_non_object_refactor_radius_in_the_config_is_a_hard_error(self):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
@@ -419,30 +440,21 @@ class TestLoadConfig(unittest.TestCase):
             qg.load_config(base, fh.name)
 
     def test_an_overlay_tuning_one_radius_number_does_not_drop_its_siblings(self):
-        base = self._tmp_json({
-            "refactor_radius": {"enabled": True, "max_rewrite_ratio": 0.4,
-                                "max_touched_existing_files": 6,
-                                "min_rewritten_lines": 120},
-        })
+        base = self._tmp_json(OVERLAY_SIBLINGS_BASE_RADIUS)
         overlay = self._tmp_json({"refactor_radius": {"max_rewrite_ratio": 0.3}})
         cfg, src = qg.load_config(base, overlay)
         self.assertEqual(src, "loaded+overlay")
-        self.assertEqual(cfg["refactor_radius"], {
-            "enabled": True,
-            "max_rewrite_ratio": 0.3,
-            "max_touched_existing_files": 6,
-            "min_rewritten_lines": 120,
-        })
+        self.assertEqual(cfg["refactor_radius"], OVERLAY_SIBLINGS_EXPECTED_RADIUS)
 
     def test_an_overlay_radius_key_over_a_global_without_the_block_keeps_defaults(self):
         base = self._tmp_json({"thresholds": {"method_lines": 40}})
         overlay = self._tmp_json({"refactor_radius": {"max_touched_existing_files": 4}})
         cfg, _ = qg.load_config(base, overlay)
-        self.assertEqual(cfg["refactor_radius"]["max_touched_existing_files"], 4)
-        self.assertEqual(cfg["refactor_radius"]["max_rewrite_ratio"],
-                         qg.DEFAULT_REFACTOR_RADIUS["max_rewrite_ratio"])
-        self.assertEqual(cfg["refactor_radius"]["min_rewritten_lines"],
-                         qg.DEFAULT_REFACTOR_RADIUS["min_rewritten_lines"])
+        radius = cfg["refactor_radius"]
+        default = qg.DEFAULT_REFACTOR_RADIUS
+        self.assertEqual(radius["max_touched_existing_files"], 4)
+        self.assertEqual(radius["max_rewrite_ratio"], default["max_rewrite_ratio"])
+        self.assertEqual(radius["min_rewritten_lines"], default["min_rewritten_lines"])
 
     def test_a_non_object_refactor_radius_in_the_overlay_is_a_hard_error(self):
         base = self._tmp_json({"refactor_radius": {"max_rewrite_ratio": 0.4}})
