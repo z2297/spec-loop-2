@@ -653,6 +653,38 @@ function doneResult(slice, state, status, extra) {
   }
 }
 
+// Every evaluation is recorded, including the ones that decline to fire. A
+// threshold that silently declines is a permanent invisible narrowing — the
+// exact silent-exclusion defect this repo's knowledge graph already names —
+// so the payload carries the measured numbers AND the thresholds they were
+// compared against, in every state, and a reader never has to re-derive why
+// nothing happened. `summary` is the FIRST key because run_state.py's
+// decisions-log renderer reads the first text-ish field of a payload
+// (SUMMARY_TEXT_KEYS), so the line is prose rather than a JSON blob. (PURE)
+function radiusEvent(slice, verdict, answered) {
+  return {
+    scope: slice.id, type: 'refactor-radius',
+    payload: {
+      summary: `refactor radius ${verdict.state}: ${verdict.reason}`,
+      state: verdict.state, exceeded: verdict.exceeded,
+      measured: verdict.measured, thresholds: verdict.thresholds,
+      ...(answered ? { suppressed_by_answer: true } : {}),
+    },
+  }
+}
+
+// Fail OPEN on absence, CLOSED on a measured breach — the two halves have
+// opposite answers and are never collapsed. HONEST LIMITS, both deliberate:
+// this runs ONCE, on the plan the planner returned, so a replan after a
+// council OBJECT is not re-evaluated; and the numbers are pre-execution
+// declarations, so a blowup discovered mid-implementation is invisible here.
+function refactorRadiusGate(slice, state, plan) {
+  const verdict = refactorRadiusStatus(plan.refactor_radius, refactorLimits(CTX))
+  const answered = answerKeysFor(slice.id, 'refactor-scope').length > 0
+  state.events.push(radiusEvent(slice, verdict, answered))
+  return null
+}
+
 // Stage P — plan (+ right-size gate inside the planner)
 async function stagePlan(slice, state) {
   const plan = await dispatch(slice, state, 'plan', planPrompt(slice),
@@ -660,6 +692,8 @@ async function stagePlan(slice, state) {
   if (!plan) return { stop: escalated(slice, state, esc(slice, 'ambiguity', { title: 'planner returned no result', context: 'The planner dispatch failed terminally.', question: 'Retry the slice, or drop it?', options: [] })) }
   if (plan.status === 'SPLIT') return { stop: doneResult(slice, state, 'SPLIT', { split: plan.split }) }
   if (plan.status === 'ESCALATE') return { stop: escalated(slice, state, esc(slice, plan.escalation.trigger, plan.escalation)) }
+  const radius = refactorRadiusGate(slice, state, plan)
+  if (radius) return { stop: escalated(slice, state, radius) }
   return { plan }
 }
 
