@@ -8,32 +8,6 @@ All notable changes to the spec-loop plugin are documented here. The format is
 ## [Unreleased]
 
 ### Added
-- **A `budget-exhausted` answer that actually raises the cap.** The wave args gain one optional
-  top-level field, `agent_cap_overrides: {"<slice-id>": <integer>}`. `agentCap` in
-  `slice-wave.workflow.js` reads it and the per-slice structural guard enforces the number it
-  returns, so a human who authorises a raise now has a lever instead of prose. The channel is
-  deliberately narrow: it can only RAISE (a value at or below the review tier's own cap in
-  `CAPS` is discarded), it is keyed per slice, it lives in the args object of the single
-  re-dispatch the controller hands it to, and it moves no default. An applied raise emits an
-  `agent-cap-override` event carrying `{tier, default_cap, effective_cap}`, so the exception is
-  auditable in `events.jsonl` rather than inferable from a larger `agents_used`. The record
-  itself now offers three controller-named options and its recommended option names the args
-  field to write. `budget-exhausted` remains NOT a judgment trigger — its answer is injected
-  into no agent prompt, pinned by source text and by execution across
-  all eight prompts one slice builds running plan, critique, task, review, gate, fix, re-review
-  and verify — and the per-stage
-  token floor is untouched, having no args-level lever at all: its resource is the wave budget
-  the host supplies. The controller still translates the human's free-text answer into the
-  integer it writes; nothing in the loop parses that text. An override the channel cannot use
-  is no longer discarded in silence: a value at or below the tier default and a value that does
-  not coerce to a whole number each emit a `decision` event naming the discarded value, and a
-  key naming no slice of the wave emits one naming the key, so a mistyped lever is visible at
-  the dispatch that carried it rather than only at the next cap record. The coercion is
-  `Number()`, so a JSON string reading as a whole number — `"14"` — becomes `14` and the raise
-  IS applied, emitting `agent-cap-override` and no discard event. What remains discarded is a
-  value that fails that coercion, plus a value that coerces cleanly and lands at or below the
-  tier default. Documented in `commands/spec-loop.md`
-  step 7 and `references/run-state-v2.md`.
 - **The quality gate counts branch keywords in code, not in prose.** `quality_gate.py` now
   masks the content of string literals and comments before it scans a source, so a branch word
   or an operator character inside a docstring, a comment or a message string no longer inflates
@@ -49,6 +23,29 @@ All notable changes to the spec-loop plugin are documented here. The format is
   exactly equal — no file passes a threshold it was failing on those. And it does not rescue
   `globToRe`, whose cognitive complexity measured 25 before the mask and measures 17 after,
   against a threshold of 15: still over.
+- **A `budget-exhausted` answer that actually raises the cap.** The wave args gain one optional
+  top-level field, `agent_cap_overrides: {"<slice-id>": <integer>}`. `agentCap` in
+  `slice-wave.workflow.js` reads it and the per-slice structural guard enforces the number it
+  returns, so a human who authorises a raise now has a lever instead of prose. The channel is
+  deliberately narrow: it can only RAISE (a value at or below the review tier's own cap in
+  `CAPS` is discarded), it is keyed per slice, it lives in the args object of the single
+  re-dispatch the controller hands it to, and it moves no default. An applied raise emits an
+  `agent-cap-override` event carrying `{tier, default_cap, effective_cap}`, so the exception is
+  auditable in `events.jsonl` rather than inferable from a larger `agents_used`. The record
+  itself now offers three controller-named options and its recommended option names the args
+  field to write. `budget-exhausted` remains NOT a judgment trigger — its answer is injected
+  into no agent prompt, pinned by source text and by execution across all eight prompts one
+  slice builds running plan, critique, task, review, gate, fix, re-review and verify — and the
+  per-stage token floor is untouched, having no args-level lever at all: its resource is the
+  wave budget the host supplies. The controller still translates the human's free-text answer
+  into the integer it writes; nothing in the loop parses that text. An override the channel
+  cannot use is no longer discarded in silence: a value at or below the tier default and one
+  that does not coerce to a whole number each emit a `decision` event naming the discarded
+  value, and a key naming no slice of the wave emits one naming the key, so a mistyped lever is
+  visible at the dispatch that carried it rather than only at the next cap record. The coercion
+  is `Number()`, so a JSON string reading as a whole number — `"14"` — becomes `14` and the
+  raise IS applied, emitting `agent-cap-override` and no discard event. Documented in
+  `commands/spec-loop.md` step 7 and `references/run-state-v2.md`.
 - **A behavioural test harness that executes `slice-wave.workflow.js`.** The workflow cannot be
   imported as a module — the host wraps the whole script in an implicit async function, so the
   file legally carries a top-level `return` and a top-level `await`. `slice_wave_harness.mjs`
@@ -56,13 +53,20 @@ All notable changes to the spec-loop plugin are documented here. The format is
   `slice_wave_contract_base.wrapped_source()`, shelling out to it rather than re-implementing
   it, so the repo holds exactly one wrapper and the two sides cannot drift. The wrapped source
   becomes an `AsyncFunction` driven with mock sandbox globals, and
-  `slice_wave_behaviour.test.mjs` asserts on behaviour the workflow really executed instead of
-  on its source text. The honest limit, stated plainly: those mock globals are an ASSUMED host
-  contract, which this repo documents nowhere, so the harness verifies deterministic control
-  flow against an assumption. It cannot verify behaviour against the real Workflow host, and a
-  green run here is no evidence about that host.
+  `slice_wave_behaviour.test.mjs` asserts on behaviour the workflow really executed rather than
+  on its source text — its loader-integrity tests excepted, which hold the wrapper and its name
+  honest. The honest limit, stated plainly: those mock globals are an ASSUMED host contract,
+  which this repo documents nowhere, so the harness verifies deterministic control flow against
+  an assumption. It cannot verify behaviour against the real Workflow host, and a green run
+  here is no evidence about that host.
 
 ### Changed
+- **Gate figures either side of this release are not comparable.** The masking above changes
+  what a scan counts, so the `cyclomatic` and `cognitive` values a run writes to `metrics.json`
+  drop on source that did not change. Recorded runs dated 2026-08-25 and 2026-08-26 were
+  measured under the old semantics, against unmasked text. Reading a later run's numbers as a
+  trend against either of those reads a measurement change as a code change. Compare
+  like against like: post-release runs against post-release runs.
 - **The lost-slice escalation asks the three-way question its options already offered.** The
   record widened to `Retry this slice` / `Skip this slice` / `Stop the run` but still asked
   "Re-run the wave to retry this slice?", so a human answering "no" had chosen none of the
@@ -71,32 +75,8 @@ All notable changes to the spec-loop plugin are documented here. The format is
   record's shape with its own tail — the lost-slice record has no exception text to diagnose.
   Pinned by execution in `slice_wave_behaviour.test.mjs` and by source text in
   `test_slice_wave_contract_crash.py`.
-- **Gate figures either side of this release are not comparable.** The masking above changes
-  what a scan counts, so the `cyclomatic` and `cognitive` values a run writes to `metrics.json`
-  drop on source that did not change. Recorded runs dated 2026-08-25 and 2026-08-26 were
-  measured under the old semantics, against unmasked text. Reading a later run's numbers as a
-  trend against either of those reads a measurement change as a code change. Compare
-  like against like: post-release runs against post-release runs.
 
 ### Fixed
-- **Two prose surfaces now describe the escalation records the wave really raises.** One
-  `internal-error` trigger raises two records that carry different evidence, and
-  `skills/escalation-gate/SKILL.md` gave a single account of both in two places: it said the
-  lost-slice record announces the evidence it lacks, and it gave the exception record's
-  retry/skip/stop ask as the ask of the trigger at large. The lost-slice context announces no
-  gap — it states that a null result proves nothing about which guard ran, and that the cause
-  is unknown. The skill now separates the two by what each record carries and what each one
-  asks, and `test_slice_wave_contract.py` holds its account of the lost-slice ask against the
-  wave's own question text, so a later change to that ask breaks the doc pin instead of
-  drifting past it. The inline-mode twin's step 3 in `agents/slice-worker-fallback.md` now
-  states the trigger the workflow really raises on a spent task retry: `ambiguity`,
-  unconditionally, whatever the last status was, and never `internal-error` — a dispatch that
-  returned nothing, a second `NEEDS_CONTEXT`, and a `BLOCKED` naming a real blocker all
-  collapse into that one record, whose context carries the blocker text or the questions
-  returned. The twin is a behavioural spec rather than commentary: an agent driving a slice
-  inline reads it and writes the record it describes, and its earlier mapping of a real
-  blocker to `material-assumption` or `review-block` had the two modes filing one failure
-  under different triggers.
 - **`escalations.md` renders one section per distinct escalation question.** An
   `escalation-opened` event whose raw `id`, `context` and `question` match a section already on
   the page now rewrites that section in place (`run_state.place_escalation_section`) instead of
@@ -126,6 +106,24 @@ All notable changes to the spec-loop plugin are documented here. The format is
   id it was handed. `run_metrics.merge_escalation_records` needed no logic change — it keys on
   the whole id, so distinct rounds were already distinct records and are now pinned by test —
   and its docstring says so.
+- **Two prose surfaces now describe the escalation records the wave really raises.** One
+  `internal-error` trigger raises two records that carry different evidence, and
+  `skills/escalation-gate/SKILL.md` gave a single account of both in two places: it said the
+  lost-slice record announces the evidence it lacks, and it gave the exception record's
+  retry/skip/stop ask as the ask of the trigger at large. The lost-slice context announces no
+  gap — it states that a null result proves nothing about which guard ran, and that the cause
+  is unknown. The skill now separates the two by what each record carries and what each one
+  asks, and `test_slice_wave_contract.py` holds its account of the lost-slice ask against the
+  wave's own question text, so a later change to that ask breaks the doc pin instead of
+  drifting past it. The inline-mode twin's step 3 in `agents/slice-worker-fallback.md` now
+  states the trigger the workflow really raises on a spent task retry: `ambiguity`,
+  unconditionally, whatever the last status was, and never `internal-error` — a dispatch that
+  returned nothing, a second `NEEDS_CONTEXT`, and a `BLOCKED` naming a real blocker all
+  collapse into that one record, whose context carries the blocker text or the questions
+  returned. The twin is a behavioural spec rather than commentary: an agent driving a slice
+  inline reads it and writes the record it describes, and its earlier mapping of a real
+  blocker to `material-assumption` or `review-block` had the two modes filing one failure
+  under different triggers.
 - **Three guards that did not exercise what they claimed to cover.** The crash-context
   truncation test renders through the real `run_state.render_escalation()` instead of
   re-implementing its collapse-and-truncate, and the duplicated copy of the render limit is
