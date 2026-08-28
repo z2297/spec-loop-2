@@ -117,3 +117,4 @@ Rendered from the run's events; append-only, and nothing parses it back.
 [s14] QUALITY-GATE: PASS — AT: 2026-08-28T05:39:27Z
 [s14] DEFERRED: slice_wave_behaviour.test.mjs drives numeric 14, 5, 10, 10.5 and the non-numeric string lots, but never a numeric STRING, so the documented "14" example rests on reading Number() rather than on a pas… — AT: 2026-08-28T05:41:12Z
 [phase5] PHASE5-GATE: PASS — AT: 2026-08-28T05:41:12Z
+[run] DECISION: Published: merged onto main with --no-ff, then cut and tagged release 2.2.2. NOT pushed. — AT: 2026-08-28T12:54:32Z
