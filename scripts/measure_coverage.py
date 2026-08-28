@@ -29,10 +29,12 @@ same freshly-traced module objects (single module identity — the ordering is
 load-bearing; discovering before the re-import splits identity and breaks the
 patches). A module's percentage therefore reflects lines the suite actually
 reaches, and a fully-exercised module reads at ~100%. The only lines that remain
-uncounted are ones that genuinely never run under a unit test — the
-``if __name__ == "__main__"`` process-entry shims and the blocking
-``serve_forever()`` daemon tail — which the audited OMIT manifest removes from both
-numerator and denominator (it may not zero out a file; see ``validate_omit``).
+uncounted are ones that genuinely never run under a unit test: each module's
+process-entry shim, which the audited OMIT manifest removes from both numerator
+and denominator. The manifest names that shim symbolically rather than by line
+number, and ``resolve_main_shim`` locates it in the module's own source at
+measure time, so a file that grows can never repoint the omission at ordinary
+executed code. An omission may not zero out a file; see ``validate_omit``.
 
 Anti-false-green guards: the gate refuses to report coverage unless the suite
 actually ran a plausible number of tests (``MIN_TESTS``), and the OMIT manifest
@@ -516,7 +518,7 @@ def _build_stats(counts: dict) -> dict[str, FileStat]:
         source = _target_source_path(relpath).read_text()
         executable = executable_lines(source, relpath)
         run = executed[relpath] & executable
-        file_omit = omit.get(relpath, set())
+        file_omit = resolve_omit(omit.get(relpath, OmitSpec()), source, relpath)
         validate_omit(
             FileLines(relpath, executable, source.count("\n") + 1), file_omit
         )

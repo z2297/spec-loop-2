@@ -364,5 +364,40 @@ class EvaluateTests(unittest.TestCase):
         self.assertTrue(result.passed)
 
 
+class ManifestIntegrityTests(unittest.TestCase):
+    """The shipped manifest, parsed and resolved by the real code paths."""
+
+    def setUp(self):
+        self.omit = mc.parse_omit(mc.OMIT_FILE.read_text())
+
+    def test_every_target_names_its_shim_symbolically(self):
+        for relpath in mc.TARGET_FILES:
+            self.assertIn(relpath, self.omit)
+            self.assertTrue(self.omit[relpath].main_shim, relpath)
+            self.assertEqual(self.omit[relpath].lines, set(), relpath)
+
+    def test_no_manifest_key_is_outside_the_target_set(self):
+        self.assertEqual(set(self.omit) - set(mc.TARGET_FILES), set())
+
+    def test_each_resolved_omission_is_the_files_own_shim_header(self):
+        for relpath, spec in self.omit.items():
+            source = mc._target_source_path(relpath).read_text()
+            resolved = mc.resolve_omit(spec, source, relpath)
+            header = source.splitlines()[min(resolved) - 1]
+            # The real module pattern, not a copy of it: a numeric entry that has
+            # drifted off its shim points its lowest line at other code and fails.
+            self.assertRegex(header, mc._MAIN_SHIM_RE)
+
+    def test_each_resolved_omission_passes_validate_omit(self):
+        for relpath, spec in self.omit.items():
+            source = mc._target_source_path(relpath).read_text()
+            resolved = mc.resolve_omit(spec, source, relpath)
+            target = mc.FileLines(
+                relpath, mc.executable_lines(source, relpath),
+                source.count("\n") + 1,
+            )
+            mc.validate_omit(target, resolved)
+
+
 if __name__ == "__main__":
     unittest.main()
