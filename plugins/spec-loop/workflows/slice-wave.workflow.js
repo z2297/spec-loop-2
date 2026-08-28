@@ -205,6 +205,96 @@ function qualityStatus(q) {
   return q.summary_pass === true ? 'PASS' : 'FAIL'
 }
 
+// ── Refactor radius: the plan-time ceiling on churn to EXISTING code ────────
+//
+// The second instance of qualityStatus()'s pattern: the PLANNER reports
+// numbers, this file judges them. The numbers are DECLARED before any
+// implementation runs, which is the whole point (the incident that motivated
+// this was "it asked, but too late") and also its honest limit: a declared
+// ratio is a PROXY, not a measured diff, and it cannot catch a blowup
+// discovered mid-implementation. No second, post-implementation measurement
+// exists — that was deliberately deferred, not forgotten.
+const RADIUS_NULL = { rewrite_ratio: null, touched_existing_files: null, rewritten_lines: null }
+
+// A real finite number, or null. Deliberately NOT Number(v): a string "0.9"
+// from a sloppy return is not a measurement, and coercing it would let a
+// typo halt or fail to halt an installation. NaN and Infinity are not
+// measurements either. (PURE)
+const radiusNum = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : null
+
+// Type-tolerant read of ctx.refactor_radius — the ONLY channel by which a
+// threshold reaches this file. The workflow has no fs and no process access
+// by design; the controller resolves the effective config once through
+// quality_gate.py --print-config and threads this block into ctx, the same
+// path tier3_surfaces takes. Anything that is not a plain object is "not
+// configured" rather than a guessed default: hardcoding the shipped numbers
+// here would give the repo two sources of truth for a value the operator is
+// invited to tune, and the two would drift in silence. (PURE)
+function refactorLimits(ctx) {
+  const raw = ctx.refactor_radius
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  return {
+    enabled: raw.enabled !== false,
+    max_rewrite_ratio: radiusNum(raw.max_rewrite_ratio),
+    max_touched_existing_files: radiusNum(raw.max_touched_existing_files),
+    min_rewritten_lines: radiusNum(raw.min_rewritten_lines),
+  }
+}
+
+// The plan's OPTIONAL refactor_radius block normalised to three explicit
+// nulls. PLAN_RESULT.required is ['status'] only, so every field here is an
+// optional agent-return read — the defect class that aborted a whole wave of
+// this very run. Absent stays null and NEVER becomes 0: a 0 ratio is a claim
+// that nothing is rewritten, which is not what silence means. (PURE)
+function radiusNumbers(radius) {
+  if (!radius || typeof radius !== 'object' || Array.isArray(radius)) return { ...RADIUS_NULL }
+  return {
+    rewrite_ratio: radiusNum(radius.rewrite_ratio),
+    touched_existing_files: radiusNum(radius.touched_existing_files),
+    rewritten_lines: radiusNum(radius.rewritten_lines),
+  }
+}
+
+// Which measured metrics sit ABOVE their ceiling. Both sides are checked for
+// null before the one comparison, so no comparison is ever reached by
+// coercion. Strictly greater-than: both settings are MAXIMA, so a plan
+// exactly at max_touched_existing_files: 8 is at the ceiling, not over it.
+// (PURE)
+function radiusBreaches(m, limits) {
+  const over = (v, max) => v !== null && max !== null && v > max
+  const out = []
+  if (over(m.rewrite_ratio, limits.max_rewrite_ratio)) out.push('rewrite_ratio')
+  if (over(m.touched_existing_files, limits.max_touched_existing_files)) out.push('touched_existing_files')
+  return out
+}
+
+// The noise floor. It can only SUPPRESS a fire, never cause one, and it
+// applies only when BOTH the declared line count and the configured floor
+// are real numbers: an unmeasured rewritten_lines cannot be read as "small",
+// so a measured breach beside it still stands. (PURE)
+function radiusBelowFloor(m, limits) {
+  const known = m.rewritten_lines !== null && limits.min_rewritten_lines !== null
+  return known && m.rewritten_lines < limits.min_rewritten_lines
+}
+
+// Six states, none collapsed into another, and only EXCEEDED halts anything.
+// The two halves of this check have opposite answers on purpose: a
+// measurement that is missing, unconfigured or disabled FAILS OPEN (proceed,
+// and the caller records it loudly), while a measurement that succeeded and
+// is over its ceiling FAILS CLOSED (halt and ask). Collapsing them would
+// either halt every run with an old controller or halt none of them. (PURE)
+function refactorRadiusStatus(radius, limits) {
+  const measured = radiusNumbers(radius)
+  const base = { measured, thresholds: limits, exceeded: [] }
+  if (!limits) return { ...base, thresholds: null, state: 'NOT_CONFIGURED', reason: 'ctx.refactor_radius is absent or is not an object, so no ceiling was compared' }
+  if (!limits.enabled) return { ...base, state: 'DISABLED', reason: 'refactor_radius.enabled is false in the effective gate config' }
+  if (measured.rewrite_ratio === null && measured.touched_existing_files === null) return { ...base, state: 'NOT_MEASURED', reason: 'the plan declared no usable refactor-radius number' }
+  const exceeded = radiusBreaches(measured, limits)
+  if (!exceeded.length) return { ...base, state: 'WITHIN', reason: 'every declared number is at or under its ceiling' }
+  if (radiusBelowFloor(measured, limits)) return { ...base, exceeded, state: 'BELOW_FLOOR', reason: `over a ceiling but under the ${limits.min_rewritten_lines}-line noise floor` }
+  return { ...base, exceeded, state: 'EXCEEDED', reason: `declared rewrite of existing code is over the configured ceiling (${exceeded.join(', ')})` }
+}
+
 // The panel's over-scope record for the council-verdict payload and the
 // sidecar, or null when no member recorded one (absent ≠ flag:false). A
 // flagged record wins over a clean one; the reason is KEPT — unlike
