@@ -67,14 +67,14 @@ All notable changes to the spec-loop plugin are documented here. The format is
   measured under the old semantics, against unmasked text. Reading a later run's numbers as a
   trend against either of those reads a measurement change as a code change. Compare
   like against like: post-release runs against post-release runs.
-- **The lost-slice escalation asks the three-way question its options already offered.** The
-  record widened to `Retry this slice` / `Skip this slice` / `Stop the run` but still asked
-  "Re-run the wave to retry this slice?", so a human answering "no" had chosen none of the
-  three and the stored free text bound to no option. It now asks "Retry this slice, skip it and
-  continue the run, or stop the run to investigate the silent failure?", matching the crash
-  record's shape with its own tail — the lost-slice record has no exception text to diagnose.
-  Pinned by execution in `slice_wave_behaviour.test.mjs` and by source text in
-  `test_slice_wave_contract_crash.py`.
+- **The lost-slice escalation now names its options and asks a matching question.** At 2.2.1
+  the record carried an empty options list and a single yes/no ask, "Re-run the wave to retry
+  this slice?", so a human's stored free text bound to no option. The record now carries the
+  three controller-named options `Retry this slice` / `Skip this slice` / `Stop the run` and
+  asks "Retry this slice, skip it and continue the run, or stop the run to investigate the
+  silent failure?", matching the crash record's shape with its own tail — the lost-slice record
+  has no exception text to diagnose. Pinned by execution in `slice_wave_behaviour.test.mjs` and
+  by source text in `test_slice_wave_contract_crash.py`.
 
 ### Fixed
 - **`escalations.md` renders one section per distinct escalation question.** An
