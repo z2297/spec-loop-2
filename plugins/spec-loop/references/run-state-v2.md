@@ -184,13 +184,14 @@ best-effort):
   The discard is therefore visible without waiting on a second cap record.
 - **`refactor-radius`** payload: `{summary, state, exceeded[], measured{rewrite_ratio,
   touched_existing_files, rewritten_lines}, thresholds{enabled, max_rewrite_ratio,
-  max_touched_existing_files, min_rewritten_lines}|null, basis}`, plus `suppressed_by_answer: true`
+  max_touched_existing_files, min_rewritten_lines}|null, basis, compared[], skipped[]}`, plus
+  `suppressed_by_answer: true`
   when — and only when — the state is `EXCEEDED` and a truthy human answer to this slice's
   `refactor-scope` escalation kept it from halting; the key is absent, never `false`, in every
   other case, so counting it counts real waived halts. Emitted by
   the wave's PLAN stage on EVERY evaluation — `state` is one of `NOT_CONFIGURED`,
-  `DISABLED`, `NO_USABLE_CEILING`, `NOT_MEASURED`, `WITHIN`, `BELOW_FLOOR`, `EXCEEDED`,
-  and only `EXCEEDED` halts. The no-fire cases are emitted precisely because a ceiling that silently declines
+  `DISABLED`, `NO_USABLE_CEILING`, `NOT_MEASURED`, `WITHIN`, `WITHIN_PARTIAL`, `BELOW_FLOOR`,
+  `EXCEEDED`, and only `EXCEEDED` halts. The no-fire cases are emitted precisely because a ceiling that silently declines
   to fire is invisible narrowing: `measured` and `thresholds` are both present in every
   state so a reader never re-derives why nothing happened. `measured` is null-honest —
   an undeclared number is `null`, never `0`, and `0` is a real measurement. The numbers
@@ -205,6 +206,15 @@ best-effort):
   nor `max_touched_existing_files` survived as a number — a mistyped ceiling. It fails open
   like the other no-fire states, and it is separate from `WITHIN` because a plan cannot be
   "under a ceiling" that was never compared.
+  `compared[]` and `skipped[]` name, per dimension, which DECLARED maxima numbers
+  (`rewrite_ratio`, `touched_existing_files`) were actually judged against a usable ceiling and
+  which were not; a number the plan never declared appears in neither. `WITHIN_PARTIAL` is
+  `NO_USABLE_CEILING`'s per-dimension twin: the block was usable overall — one ceiling survived —
+  but at least one declared number had no ceiling of its own, so nothing compared was over and
+  `WITHIN` would have claimed a comparison that never ran. It fails open exactly like `WITHIN`:
+  an unusable ceiling never causes a halt, it only stops the record claiming a comparison it did
+  not make. HONEST LIMIT: this says which numbers were compared, not whether the declared
+  numbers were true — they remain planner declarations, and no measured diff is taken anywhere.
 - **`wave-collected`** payload carries the per-wave aggregates the workflow
   completion notification reports: `{index, agent_count, subagent_tokens,
   duration_ms}` — the honest wave-level token/duration channel while

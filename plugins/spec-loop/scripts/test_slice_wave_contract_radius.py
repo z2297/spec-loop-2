@@ -338,6 +338,8 @@ ONE_DOOR = "--print-config"
 EVENT_IN_LIST = "`refactor-radius`"
 PAYLOAD_BULLET = "**`refactor-radius`** payload"
 PROXY_LIMIT = "a proxy declared before implementation, not a measured diff"
+PARTIAL_STATE_DOC = "`WITHIN_PARTIAL`"
+COVERAGE_KEYS_DOC = "compared[], skipped[]"
 
 
 class TestTheThresholdsReachTheWorkflowOnlyThroughCtx(WorkflowSourceTestCase):
@@ -358,6 +360,13 @@ class TestTheThresholdsReachTheWorkflowOnlyThroughCtx(WorkflowSourceTestCase):
 
     def test_the_contract_states_the_pre_execution_proxy_limit_plainly(self):
         self.assertIn(PROXY_LIMIT, RUN_STATE_MD.read_text(encoding="utf-8"))
+
+    def test_the_partial_coverage_state_is_documented_in_its_single_home(self):
+        # A state a reader of the event cannot look up is a state that gets
+        # read as a typo for WITHIN.
+        text = RUN_STATE_MD.read_text(encoding="utf-8")
+        self.assertIn(PARTIAL_STATE_DOC, text)
+        self.assertIn(COVERAGE_KEYS_DOC, text)
 
 
 if __name__ == "__main__":  # pragma: no cover
