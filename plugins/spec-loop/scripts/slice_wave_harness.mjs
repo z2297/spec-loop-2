@@ -166,3 +166,50 @@ const TASK_DONE = {
 export const capAgent = () => ({
   agent: async (prompt, opts) => (String(opts.label).indexOf(":task:") > 0 ? TASK_DONE : PLAN_TWELVE),
 });
+
+// A one-task plan whose review returns a single P0 finding. Driving a tier-2
+// slice with it runs plan, critique, task, review, gate, fix, re-review and
+// verify - the eight dispatches PIPELINE_LABELS names - and ends the slice DONE.
+const ONE_TASK_PLAN = {
+  status: "PLANNED", plan_path: "/tmp/plan.md",
+  tasks: [{ id: "t1", title: "task t1", lane: "standard", files: ["a.py"] }],
+};
+const P0_FINDING = {
+  id: "f1", severity: "P0", category: "correctness", file: "a.py", line: 1,
+  claim: "a claim", evidence: { quote: "q" }, remedy: "change it",
+  confidence: "high", outside_diff: false,
+};
+const VERIFY_PASS = {
+  suite: { command: "true", passed: true, summary: "ok" },
+  quality: { summary_pass: true, violations: [], detail: "clean" },
+  head_sha: "c0ffee0", tree_sha: "tree000",
+};
+const PIPELINE = {
+  "plan": ONE_TASK_PLAN,
+  "critic:full-council": { verdict: "ENDORSE", safety: { flag: false, reason: null }, concerns: [] },
+  "task:t1": TASK_DONE,
+  "review:full": { verdict: "APPROVE_WITH_FINDINGS", findings: [P0_FINDING], aspects_examined: {}, summary: "one finding" },
+  "gate": VERIFY_PASS,
+  "fix:1": { status: "DONE", touched_files: ["a.py"], addressed: ["r0-f1"], refuted: [], commits: { base: "0000000", head: "f1x0000" } },
+  "re-review:1": { verdicts: [{ finding_id: "r0-f1", verdict: "ADDRESSED" }], new_breakage: [] },
+  "verify:1": VERIFY_PASS,
+};
+
+export const PIPELINE_LABELS = Object.keys(PIPELINE).map((role) => "s1:" + role);
+
+// Records the label and the prompt of every dispatch and answers each one with
+// the return above. An unmapped role throws under its own name: a new stage
+// must be mapped here rather than degrading a run into a fail-closed path in
+// silence, which would quietly narrow whatever a test built on this asserts.
+export const fullPipeline = () => {
+  const seen = [];
+  const agent = async (prompt, opts) => {
+    const label = String(opts.label);
+    const role = label.slice(label.indexOf(":") + 1);
+    const mapped = PIPELINE[role];
+    if (mapped === undefined) throw new Error("slice_wave_harness: no mock return mapped to role " + role);
+    seen.push({ label, prompt });
+    return mapped;
+  };
+  return { seen, agent };
+};
