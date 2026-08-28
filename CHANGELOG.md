@@ -79,12 +79,24 @@ All notable changes to the spec-loop plugin are documented here. The format is
   like against like: post-release runs against post-release runs.
 
 ### Fixed
-- **The escalation-gate skill describes the lost-slice ask the wave actually emits.**
-  `skills/escalation-gate/SKILL.md` still said the lost-slice record "asks only whether to re-run
-  the wave" after that record widened to the three-way retry/skip/stop question. The sentence now
-  names the three-way ask and its own tail, and `test_slice_wave_contract.py` holds the doc
-  against the wave's real question text, so the next change to the ask breaks the doc pin instead
-  of drifting past it.
+- **Two prose surfaces now describe the escalation records the wave really raises.** One
+  `internal-error` trigger raises two records that carry different evidence, and
+  `skills/escalation-gate/SKILL.md` gave a single account of both in two places: it said the
+  lost-slice record announces the evidence it lacks, and it gave the exception record's
+  retry/skip/stop ask as the ask of the trigger at large. The lost-slice context announces no
+  gap — it states that a null result proves nothing about which guard ran, and that the cause
+  is unknown. The skill now separates the two by what each record carries and what each one
+  asks, and `test_slice_wave_contract.py` holds its account of the lost-slice ask against the
+  wave's own question text, so a later change to that ask breaks the doc pin instead of
+  drifting past it. The inline-mode twin's step 3 in `agents/slice-worker-fallback.md` now
+  states the trigger the workflow really raises on a spent task retry: `ambiguity`,
+  unconditionally, whatever the last status was, and never `internal-error` — a dispatch that
+  returned nothing, a second `NEEDS_CONTEXT`, and a `BLOCKED` naming a real blocker all
+  collapse into that one record, whose context carries the blocker text or the questions
+  returned. The twin is a behavioural spec rather than commentary: an agent driving a slice
+  inline reads it and writes the record it describes, and its earlier mapping of a real
+  blocker to `material-assumption` or `review-block` had the two modes filing one failure
+  under different triggers.
 - **`escalations.md` renders one section per distinct escalation question.** An
   `escalation-opened` event whose raw `id`, `context` and `question` match a section already on
   the page now rewrites that section in place (`run_state.place_escalation_section`) instead of
