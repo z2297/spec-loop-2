@@ -123,8 +123,11 @@ export function sliceFixture(id) {
 
 // `answers` is the controller's resume channel, keyed by escalation id. It is a
 // parameter so a test can drive the round the workflow computes from it, rather
-// than asserting the id scheme against a copy of the rule.
-export function waveArgs(slices, answers) {
+// than asserting the id scheme against a copy of the rule. `extra` carries any
+// additional TOP-LEVEL wave arg a test needs to drive, such as the per-slice
+// agent cap override map, so the harness never hand-builds a second args shape
+// that could drift from this one.
+export function waveArgs(slices, answers, extra) {
   return {
     run_id: "20260827-harness", wave_index: 0, slices, answers: answers || {},
     ctx: {
@@ -134,5 +137,6 @@ export function waveArgs(slices, answers) {
       quality_gate_cmd: "true", models: { reviewer: "inherit" },
       thorough: false, polish: false,
     },
+    ...(extra || {}),
   };
 }

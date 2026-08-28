@@ -250,3 +250,75 @@ test("the newest answered round wins with several rounds answered", async () => 
   assert.ok(cap.seen[0].includes("ANSWER-TWO"));
   assert.ok(!cap.seen[0].includes("ANSWER-ONE"));
 });
+
+// ── the per-slice agent cap and its human-authorised raise (guard/agentCap) ──
+// Driven by EXECUTION, not by inspection: a plan of twelve standard tasks makes
+// the wave spend one dispatch per task, so the tier-1 default of ten is reached
+// inside stageTasks and a raised cap is reached later, in stageReviewGate. The
+// caps themselves are the workflow's own CAPS values; nothing here restates the
+// rule, it reads the record the guard actually produced.
+
+const TASK_IDS = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12"];
+const PLAN_TWELVE = {
+  status: "PLANNED",
+  plan_path: "/tmp/plan.md",
+  tasks: TASK_IDS.map((id) => ({ id, title: "task " + id, lane: "standard", files: ["a.py"] })),
+};
+const TASK_DONE = {
+  status: "DONE", touched_files: [], concerns: [], deviations: [],
+  commits: { base: "0000000", head: "c0ffee0" },
+};
+const CAP_AGENT = {
+  agent: async (prompt, opts) => {
+    const isTask = String(opts.label).indexOf(":task:") > 0;
+    return isTask ? TASK_DONE : PLAN_TWELVE;
+  },
+};
+const capWave = (overrides) => waveArgs([sliceFixture("s1")], {}, overrides);
+
+test("the tier default agent cap stops the slice with a budget-exhausted record", async () => {
+  const out = await runWave(capWave(undefined), CAP_AGENT);
+  assert.equal(out.results[0].status, "ESCALATED");
+  assert.equal(only(out).trigger, "budget-exhausted");
+  assert.equal(only(out).id, "s1:budget-exhausted");
+  assert.equal(only(out).title, "agent cap reached (10)");
+  assert.ok(only(out).context.includes("tier 1 default 10, effective cap 10"));
+  assert.equal(out.results[0].agents_used, 10);
+});
+
+test("an authorised override raises the cap the guard enforces", async () => {
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: 14 } }), CAP_AGENT);
+  assert.equal(only(out).trigger, "budget-exhausted");
+  assert.equal(only(out).title, "agent cap reached (14)");
+  assert.ok(only(out).context.includes("tier 1 default 10, effective cap 14"));
+  assert.equal(out.results[0].agents_used, 14);
+  assert.equal(out.results[0].tasks_completed, 12);
+});
+
+test("an override at or below the tier default is ignored", async () => {
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: 5 } }), CAP_AGENT);
+  assert.equal(only(out).title, "agent cap reached (10)");
+  assert.equal(out.results[0].agents_used, 10);
+});
+
+test("a non-numeric override is ignored rather than trusted", async () => {
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: "lots" } }), CAP_AGENT);
+  assert.equal(only(out).title, "agent cap reached (10)");
+});
+
+test("an override keyed to another slice does not raise this slice's cap", async () => {
+  const out = await runWave(capWave({ agent_cap_overrides: { s2: 30 } }), CAP_AGENT);
+  assert.equal(only(out).title, "agent cap reached (10)");
+  assert.equal(out.results[0].agents_used, 10);
+});
+
+test("the cap record's options name the controller action that applies a raise", async () => {
+  const rec = only(await runWave(capWave(undefined), CAP_AGENT));
+  assert.deepEqual(rec.options.map((o) => o.label), [
+    "Raise the agent cap and resume", "Accept the slice as-is", "Drop the slice",
+  ]);
+  assert.equal(rec.options[0].recommended, true);
+  assert.ok(rec.options[0].detail.includes("agent_cap_overrides"));
+  rec.options.forEach((o) => assert.ok(o.detail.includes("CONTROLLER")));
+  assert.equal(rec.question, "Raise the cap and resume, accept the slice as-is, or drop it?");
+});
