@@ -546,8 +546,8 @@ class TestPlaceEscalationSection(unittest.TestCase):
         first = escalation()
         body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", first)
         stolen = rs.IDENTITY_ANCHOR % rs.escalation_identity(first)
-        intruder = escalation(id="s2:ambiguity",
-                              context="unrelated question mentioning " + stolen)
+        quoting = "unrelated question mentioning " + stolen
+        intruder = escalation(id="s2:ambiguity", context=quoting)
         body = rs.place_escalation_section(body, "s2", intruder)
         self.assertEqual(len(self.sections(body)), 2)
         self.assertIn("## [s2]", body)
