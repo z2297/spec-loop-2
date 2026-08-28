@@ -98,7 +98,7 @@ ESCALATIONS_HEADER = ("# Escalations\n\n"
 ID_ANCHOR = "<!-- escalation-id: %s -->"
 ID_ANCHOR_PREFIX = ID_ANCHOR.split("%s")[0]
 IDENTITY_ANCHOR = "<!-- escalation-identity: %s -->"
-_IDENTITY_RE = re.compile(r"<!-- escalation-identity: (\w+) -->")
+_IDENTITY_RE = re.compile(r"^<!-- escalation-identity: (\w+) -->\s*$", re.MULTILINE)
 STATUS_OPEN_MARK = "(status: OPEN)"
 STATUS_ANSWERED_MARK = "(status: ANSWERED)"
 SUMMARY_LIMIT = 200
@@ -560,6 +560,10 @@ def _section_identity(section):
     A section rendered before the fingerprint existed carries none and
     yields the empty string, which equals no record's fingerprint. Such a
     section is left exactly as it stands and a re-emit is appended beside it.
+    The anchor is matched as a line of its own, since `render_escalation`
+    emits it that way: anchor text quoted inside a rendered body line belongs
+    to the prose, and a section carrying no anchor line of its own still
+    yields the empty string.
     """
     found = _IDENTITY_RE.search(section)
     return found.group(1) if found else ""
