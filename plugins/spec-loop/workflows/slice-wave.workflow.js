@@ -733,7 +733,13 @@ function radiusEvent(slice, verdict, answered) {
 // declarations, so a blowup discovered mid-implementation is invisible here.
 function refactorRadiusGate(slice, state, plan) {
   const verdict = refactorRadiusStatus(plan.refactor_radius, refactorLimits(CTX))
-  const answered = answerKeysFor(slice.id, 'refactor-scope').length > 0
+  // A truthy ANSWER, not the presence of an answer KEY. The same map reaches
+  // the planner through answerFor()/latestAnswer(), which both require a
+  // truthy value, so an empty or null entry used to disarm this halt
+  // permanently for the slice while injecting nothing into the prompt the
+  // halt exists to change — the question disappeared and the answer never
+  // arrived. This is the shape resolveCouncilObjection already uses.
+  const answered = !!latestAnswer(slice.id, 'refactor-scope')
   state.events.push(radiusEvent(slice, verdict, answered))
   // Answered means the human already ruled on this slice's radius. Raising
   // the same question again would deadlock the slice at the same stage

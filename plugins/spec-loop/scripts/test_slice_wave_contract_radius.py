@@ -277,6 +277,8 @@ GATE_STOP = "if (radius) return { stop: escalated(slice, state, radius) }"
 GATE_TRIGGER = "return esc(slice, 'refactor-scope', refactorAsk(slice, verdict))"
 GATE_SUPPRESSION = "if (verdict.state !== 'EXCEEDED' || answered) return null"
 GATE_ALWAYS_EMITS = "state.events.push(radiusEvent(slice, verdict, answered))"
+GATE_ANSWERED = "const answered = !!latestAnswer(slice.id, 'refactor-scope')"
+GATE_KEY_COUNT = "answerKeysFor(slice.id, 'refactor-scope').length"
 STAGE_PLAN_START = "async function stagePlan(slice, state) {"
 STAGE_PLAN_END = "// Stage C helpers"
 GATE_FN_START = "function refactorRadiusGate(slice, state, plan) {"
@@ -294,6 +296,12 @@ class TestOnlyAMeasuredBreachHaltsAndOnlyAtPlanTime(WorkflowSourceTestCase):
 
     def test_only_the_exceeded_state_and_only_an_unanswered_slice_halts(self):
         self.assertIn(GATE_SUPPRESSION, self.src)
+
+    def test_the_halt_is_disarmed_by_a_truthy_answer_and_not_by_a_key(self):
+        self.assertIn(GATE_ANSWERED, self.between(GATE_FN_START, GATE_FN_END))
+
+    def test_no_answer_key_count_decides_anything_in_the_gate(self):
+        self.assertNotIn(GATE_KEY_COUNT, self.src)
 
     def test_the_record_is_minted_with_the_refactor_scope_trigger(self):
         self.assertIn(GATE_TRIGGER, self.src)

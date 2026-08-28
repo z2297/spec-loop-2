@@ -213,3 +213,40 @@ test("the basis never moves a verdict: the same numbers reach the same state", a
   assert.deepEqual(withB.payload.exceeded, withoutB.payload.exceeded);
   assert.deepEqual(withB.payload.measured, withoutB.payload.measured);
 });
+
+// ── an answer only counts when it says something ──────────────────────────
+// The same answers map reaches the planner through answerFor/latestAnswer,
+// which both require a TRUTHY value. Gating the halt on KEY presence let an
+// empty or null entry disarm the halt permanently for that slice while
+// injecting nothing into the planner's prompt: the question vanished and the
+// answer never arrived. resolveCouncilObjection's `if (latestAnswer(...))`
+// is the precedent this now matches.
+const EMPTY_ANSWERS = [
+  { "s1:refactor-scope": "" },
+  { "s1:refactor-scope": null },
+];
+
+test("an empty answer value does not disarm the halt", async () => {
+  const result = await evaluate(BIG, RADIUS_DEFAULTS, EMPTY_ANSWERS[0]);
+  assert.equal(result.status, "ESCALATED");
+  assert.equal(record(result).trigger, "refactor-scope");
+});
+
+test("a null answer value does not disarm the halt", async () => {
+  const result = await evaluate(BIG, RADIUS_DEFAULTS, EMPTY_ANSWERS[1]);
+  assert.equal(result.status, "ESCALATED");
+  assert.equal(record(result).trigger, "refactor-scope");
+});
+
+test("an empty answer leaves no suppression claim on the event either", async () => {
+  const result = await evaluate(BIG, RADIUS_DEFAULTS, EMPTY_ANSWERS[0]);
+  assert.equal(radiusEvents(result)[0].payload.suppressed_by_answer, undefined);
+});
+
+test("an empty round-1 answer still lets a real round-2 answer disarm the halt", async () => {
+  // The empty key still counts a ROUND (escRound reads keys, not values), so
+  // the re-raised record is round 2 and its answer is keyed with the suffix.
+  const answers = { "s1:refactor-scope": "", "s1:refactor-scope:2": "approved" };
+  const result = await evaluate(BIG, RADIUS_DEFAULTS, answers);
+  assert.equal(record(result), undefined);
+});
