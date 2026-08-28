@@ -308,7 +308,58 @@ function radiusNoCeiling(limits) {
   return limits.max_rewrite_ratio === null && limits.max_touched_existing_files === null
 }
 
-// Seven states, none collapsed into another, and only EXCEEDED halts anything.
+// The two MAXIMA dimensions paired with the ceiling key each is judged
+// against. A table rather than two more inline conditions, because the
+// coverage split and radiusBreaches must never disagree about which
+// dimensions exist: they used to, and that disagreement was the defect.
+const RADIUS_DIMS = [['rewrite_ratio', 'max_rewrite_ratio'], ['touched_existing_files', 'max_touched_existing_files']]
+
+// A list rendered for a reason sentence, or the word none. An empty join
+// would render "compared: " and read as a truncated sentence rather than as
+// an empty set. Explicit === 0 rather than a falsy length test, to keep the
+// whole block free of decisions reached by coercion. (PURE)
+const radiusList = (xs) => xs.length === 0 ? 'none' : xs.join(', ')
+
+// Per-dimension split of the DECLARED numbers into the ones this evaluation
+// actually compared and the ones it SKIPPED for want of a usable ceiling.
+// radiusNoCeiling only catches the BOTH-null config; one usable ceiling
+// beside one mistyped one let radiusBreaches short-circuit on the null side
+// and the verdict then claimed "every declared number is at or under its
+// ceiling" about a number nothing had compared - the same silent narrowing
+// NO_USABLE_CEILING was added to end, one config away. A ceiling of 0 is a
+// real ceiling, so usability is an explicit radiusNum() !== null and never a
+// falsy test. (PURE)
+function radiusCoverage(m, limits) {
+  const ceiling = (key) => (limits && limits.enabled !== false) ? radiusNum(limits[key]) : null
+  const declared = RADIUS_DIMS.filter((d) => m[d[0]] !== null)
+  return {
+    compared: declared.filter((d) => ceiling(d[1]) !== null).map((d) => d[0]),
+    skipped: declared.filter((d) => ceiling(d[1]) === null).map((d) => d[0]),
+  }
+}
+
+// The sentence fragment naming what was NOT compared, or an empty string
+// when every declared number had a ceiling. Appended to the reason of every
+// state that DID compare something, so a reader of the event never has to
+// re-derive the coverage from `thresholds` by hand. The phrase "no usable
+// ceiling" is deliberate and load-bearing: it is the same wording
+// NO_USABLE_CEILING's own reason uses, so one search finds every record in
+// which a ceiling failed to be a number. (PURE)
+const radiusSkipNote = (cover) => cover.skipped.length === 0 ? '' : ` Not compared, because these declared numbers had no usable ceiling: ${radiusList(cover.skipped)}.`
+
+// The no-breach verdict, split by coverage. WITHIN keeps exactly its old
+// meaning - every declared number was compared, none was over - and
+// WITHIN_PARTIAL is its honest sibling: nothing compared was over, and at
+// least one declared number was never compared at all. Both FAIL OPEN, and
+// only EXCEEDED halts, so this can never turn a WITHIN into a halt: it only
+// stops claiming a comparison that did not happen. (PURE)
+function radiusWithin(cover) {
+  const compared = `compared: ${radiusList(cover.compared)}`
+  if (cover.skipped.length === 0) return { state: 'WITHIN', reason: `every declared number is at or under its ceiling (${compared})` }
+  return { state: 'WITHIN_PARTIAL', reason: `no compared number is over its ceiling (${compared}).${radiusSkipNote(cover)}` }
+}
+
+// Eight states, none collapsed into another, and only EXCEEDED halts anything.
 // The two halves of this check have opposite answers on purpose: a
 // measurement that is missing, unconfigured, unusable or disabled FAILS OPEN
 // (proceed, and the caller records it loudly), while a measurement that
@@ -320,18 +371,25 @@ function radiusNoCeiling(limits) {
 // WITHIN, because "every declared number is at or under its ceiling" is a
 // claim no comparison supported when there is no ceiling to compare against —
 // a mistyped threshold used to report success while silently never firing.
+// WITHIN_PARTIAL is NO_USABLE_CEILING's per-dimension twin, and the last
+// instance of the same defect: a config with one valid ceiling and one
+// mistyped one is USABLE, so it got past radiusNoCeiling, and the declared
+// number on the null side was then reported as being under a ceiling that
+// was never compared. It fails open exactly like WITHIN - an unusable
+// ceiling never causes a halt, it only stops claiming a comparison.
 // (PURE)
 function refactorRadiusStatus(radius, limits) {
   const measured = radiusNumbers(radius)
-  const base = { measured, basis: radiusBasis(radius), thresholds: limits, exceeded: [] }
+  const cover = radiusCoverage(measured, limits)
+  const base = { measured, basis: radiusBasis(radius), thresholds: limits, exceeded: [], compared: cover.compared, skipped: cover.skipped }
   if (!limits) return { ...base, thresholds: null, state: 'NOT_CONFIGURED', reason: 'ctx.refactor_radius is absent or is not an object, so no ceiling was compared' }
   if (!limits.enabled) return { ...base, state: 'DISABLED', reason: 'refactor_radius.enabled is false in the effective gate config' }
   if (radiusNoCeiling(limits)) return { ...base, state: 'NO_USABLE_CEILING', reason: 'refactor_radius is configured and enabled but neither ceiling is a usable number, so nothing was compared' }
   if (measured.rewrite_ratio === null && measured.touched_existing_files === null) return { ...base, state: 'NOT_MEASURED', reason: 'the plan declared no usable refactor-radius number' }
   const exceeded = radiusBreaches(measured, limits)
-  if (!exceeded.length) return { ...base, state: 'WITHIN', reason: 'every declared number is at or under its ceiling' }
-  if (radiusBelowFloor(measured, limits)) return { ...base, exceeded, state: 'BELOW_FLOOR', reason: `over a ceiling but under the ${limits.min_rewritten_lines}-line noise floor` }
-  return { ...base, exceeded, state: 'EXCEEDED', reason: `declared rewrite of existing code is over the configured ceiling (${exceeded.join(', ')})` }
+  if (!exceeded.length) return { ...base, ...radiusWithin(cover) }
+  if (radiusBelowFloor(measured, limits)) return { ...base, exceeded, state: 'BELOW_FLOOR', reason: `over a ceiling but under the ${limits.min_rewritten_lines}-line noise floor.${radiusSkipNote(cover)}` }
+  return { ...base, exceeded, state: 'EXCEEDED', reason: `declared rewrite of existing code is over the configured ceiling (${exceeded.join(', ')}).${radiusSkipNote(cover)}` }
 }
 
 // The panel's over-scope record for the council-verdict payload and the
@@ -702,7 +760,7 @@ function doneResult(slice, state, status, extra) {
 // human answering this needs the measurements AND the ceilings they were
 // judged against in the record itself, not a pointer to a config file they
 // would have to resolve by hand. (PURE)
-const radiusPhrase = (v) => `declared rewrite ratio ${v.measured.rewrite_ratio}, touched existing files ${v.measured.touched_existing_files}, rewritten lines ${v.measured.rewritten_lines}; ceilings ${v.thresholds.max_rewrite_ratio} ratio / ${v.thresholds.max_touched_existing_files} files, noise floor ${v.thresholds.min_rewritten_lines} lines; the planner counted this as: ${v.basis === null ? 'not stated' : v.basis}`
+const radiusPhrase = (v) => `declared rewrite ratio ${v.measured.rewrite_ratio}, touched existing files ${v.measured.touched_existing_files}, rewritten lines ${v.measured.rewritten_lines}; ceilings ${v.thresholds.max_rewrite_ratio} ratio / ${v.thresholds.max_touched_existing_files} files, noise floor ${v.thresholds.min_rewritten_lines} lines; the planner counted this as: ${v.basis === null ? 'not stated' : v.basis}; compared: ${radiusList(v.compared)}; not compared for want of a usable ceiling: ${radiusList(v.skipped)}`
 
 // The trade-off ask. Three options because a yes/no would leave a human who
 // wants neither with nothing to pick, and because each of the three costs
@@ -748,6 +806,7 @@ function radiusEvent(slice, verdict, answered) {
       summary: `refactor radius ${verdict.state}: ${verdict.reason}`,
       state: verdict.state, exceeded: verdict.exceeded,
       measured: verdict.measured, thresholds: verdict.thresholds,
+      compared: verdict.compared, skipped: verdict.skipped,
       basis: verdict.basis,
       ...(suppressed ? { suppressed_by_answer: true } : {}),
     },
