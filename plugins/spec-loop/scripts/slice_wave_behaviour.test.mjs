@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import {
   HOST_CONTRACT, countExportConst, countWrapperName, WRAPPER_NAME, rawSource,
   wrappedSource, makeWave, runWave, sliceFixture, waveArgs,
-  capturePrompts, capAgent } from "./slice_wave_harness.mjs";
+  capturePrompts, capAgent, fullPipeline, PIPELINE_LABELS } from "./slice_wave_harness.mjs";
 
 test("the export-const rewrite matches exactly once", () => {
   assert.equal(countExportConst(rawSource()), 1);
@@ -306,15 +306,20 @@ test("an ignored override records nothing, matching the cap it left alone", asyn
   assert.equal(capEvents(out).length, 0);
 });
 
-// budget-exhausted asks for a resource, so its answer is deliberately not injected
-// into any agent prompt. The source-text twin of this lives in
-// test_slice_wave_contract.py; this one drives a real answer through the wave and
-// reads every prompt the workflow actually built.
-test("a budget-exhausted answer reaches no agent prompt", async () => {
-  const cap = capturePrompts();
-  const args = waveArgs([sliceFixture("s1")], { "s1:budget-exhausted": "RAISE-IT-TO-40" });
-  await runWave(args, { agent: cap.agent });
-  assert.ok(cap.seen.length > 0);
-  cap.seen.forEach((p) => assert.ok(!p.includes("RAISE-IT-TO-40")));
-  cap.seen.forEach((p) => assert.ok(!p.includes("budget-exhausted")));
+// budget-exhausted requests a resource, so its answer is deliberately injected
+// into no agent prompt. The source-text twin of this lives in
+// test_slice_wave_contract.py; this one drives a real answer through a slice
+// that runs plan through verify and reads all eight prompts that run built.
+// The label set is asserted too, so the pin cannot narrow in silence, and the
+// ambiguity answer alongside it proves injection was live at the same time.
+test("a budget-exhausted answer reaches no prompt of a whole slice run", async () => {
+  const cap = fullPipeline();
+  const answers = { "s1:budget-exhausted": "RAISE-IT-TO-40", "s1:ambiguity": "ANSWER-CTL" };
+  const out = await runWave(waveArgs([sliceFixture("s1", 2)], answers), { agent: cap.agent });
+  const prompts = cap.seen.map((s) => s.prompt);
+  assert.equal(out.results[0].status, "DONE");
+  assert.deepEqual(cap.seen.map((s) => s.label).sort(), [...PIPELINE_LABELS].sort());
+  assert.ok(prompts.some((p) => p.includes("ANSWER-CTL")));
+  prompts.forEach((p) => assert.ok(!p.includes("RAISE-IT-TO-40")));
+  prompts.forEach((p) => assert.ok(!p.includes("budget-exhausted")));
 });
