@@ -83,10 +83,12 @@ EVENTS_FILE = "events.jsonl"
 DECISIONS_LOG = "decisions-log.md"
 ESCALATIONS_MD = "escalations.md"
 
-# Event types whose payload is also rendered for humans.
+# Event types whose payload is also rendered for humans. refactor-radius is
+# here for its NO-FIRE cases as much as its halts: a ceiling that silently
+# declines to fire is invisible narrowing.
 ESCALATION_EVENTS = ("escalation-opened", "escalation-answered")
 DECISION_EVENTS = ("decision", "deferred", "council-verdict", "quality-gate",
-                   "integration-check", "phase5-gate")
+                   "integration-check", "phase5-gate", "refactor-radius")
 
 DECISIONS_HEADER = ("# Decisions log\n\n"
                     "Rendered from the run's events; append-only, and nothing "

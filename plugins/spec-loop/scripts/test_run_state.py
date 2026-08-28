@@ -822,6 +822,12 @@ class TestDecisionLine(unittest.TestCase):
         self.assertIn("DECISION: use the CSV writer", line)
         self.assertNotIn("SCOPE", line)
 
+    def test_refactor_radius_summary(self):
+        summary = "refactor radius EXCEEDED: over the ceiling"
+        payload = {"summary": summary, "state": "EXCEEDED"}
+        line = self.line("refactor-radius", payload)
+        self.assertIn(summary, line)
+
 
 class TestRenderReport(unittest.TestCase):
     def test_done_report(self):
@@ -1042,6 +1048,20 @@ class TestAppendEvent(RunStateTestCase):
                   "INTEGRATION-CHECK", "PHASE5-GATE")
         for marker in logged:
             self.assertIn(marker, body)
+
+    def test_a_refactor_radius_event_renders_a_log_line(self):
+        # A threshold that declines to fire is the silent-exclusion defect
+        # this event exists to prevent, so the NO-FIRE case has to reach the
+        # human surface too, not only the machine-readable events.jsonl.
+        summary = (
+            "refactor radius WITHIN: every declared number "
+            "is at or under its ceiling"
+        )
+        payload = {"summary": summary, "state": "WITHIN"}
+        event = rs.build_event(TS, "s1", "refactor-radius", payload)
+        rs.append_event(self.run_dir, event)
+        body = self.read("decisions-log.md")
+        self.assertIn("REFACTOR-RADIUS: refactor radius WITHIN", body)
 
     def test_escalation_opened_writes_a_full_entry(self):
         event = rs.build_event(TS, "s1", "escalation-opened", escalation())
