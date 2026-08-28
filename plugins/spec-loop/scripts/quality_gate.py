@@ -16,9 +16,12 @@ Pipeline:
      {file: [(start, end), ...]} added/modified line ranges. Deleted files and
      binary hunks are skipped so only surviving, changed code is measured.
   2. Config -- read the JSON config (schema in commands/quality-gate.md). A
-     missing file falls back to DEFAULT_THRESHOLDS and records
-     "config": "defaults"; `enabled: false` short-circuits to
-     {"skipped": "gate disabled"} and exit 0.
+     missing file falls back to DEFAULT_THRESHOLDS + DEFAULT_REFACTOR_RADIUS
+     and records "config": "defaults"; `enabled: false` short-circuits to
+     {"skipped": "gate disabled"} and exit 0. `refactor_radius` is carried
+     through as configuration only -- this script never evaluates it; it is the
+     plan stage's pre-execution ceiling, read by the controller through
+     --print-config.
   3. Backends -- detected via shutil.which (never installed). `lizard`
      (multi-language) is preferred for CCN / NLOC / parameter count / function
      spans; for .py files, `radon cc -j` is used when lizard is absent. A
@@ -75,6 +78,19 @@ DEFAULT_THRESHOLDS = {
     "nesting_depth": 3,
     "class_lines": 300,
     "crap_score": 30,
+}
+
+# The planner-declared refactor-radius proxy. These are NOT measured metrics:
+# they are the ceiling the plan stage declares it will stay under, checked
+# before implementation effort is spent. Shipped default-ON with deliberately
+# conservative numbers -- a checkpoint that fires on an ordinary slice would be
+# trained away within a run, so the floor (min_rewritten_lines) exists to keep
+# small slices entirely out of the check rather than to soften its answer.
+DEFAULT_REFACTOR_RADIUS = {
+    "enabled": True,
+    "max_rewrite_ratio": 0.5,
+    "max_touched_existing_files": 8,
+    "min_rewritten_lines": 150,
 }
 
 # Metrics measured per changed function (as opposed to per file/class).
@@ -208,6 +224,22 @@ def _read_config_object(path, what):
     return raw
 
 
+def _radius_object(value, what):
+    """Coerce a raw `refactor_radius` config value to a plain dict. (PURE)
+
+    An absent block yields {} so the defaults stand. A PRESENT non-object is a
+    hard error rather than a silently ignored value: dropping a list or a bare
+    number here would leave the operator believing they had set a ceiling they
+    had not, which is exactly the silent-exclusion failure this block exists to
+    avoid.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise GateError(f"{what} key 'refactor_radius' must be a JSON object")
+    return dict(value)
+
+
 def load_config(path, overlay_path=None):
     """Load the gate config, returning (config_dict, source). source is
     "defaults", "loaded", or "loaded+overlay". A missing file (or None path)
@@ -237,9 +269,12 @@ def load_config(path, overlay_path=None):
         source = ("loaded+overlay" if source == "loaded" else "defaults+overlay")
     thresholds = dict(DEFAULT_THRESHOLDS)
     thresholds.update(raw.get("thresholds") or {})
+    refactor_radius = dict(DEFAULT_REFACTOR_RADIUS)
+    refactor_radius.update(_radius_object(raw.get("refactor_radius"), "config"))
     config = {
         "enabled": raw.get("enabled", True),
         "thresholds": thresholds,
+        "refactor_radius": refactor_radius,
         "custom_gates": raw.get("custom_gates") or [],
     }
     # Pass through controller-consumed keys (tier3_surfaces, models, …) so

@@ -331,6 +331,44 @@ class TestLoadConfig(unittest.TestCase):
         with self.assertRaises(qg.GateError):
             qg.load_config(path)
 
+    def test_defaults_carry_the_full_default_on_refactor_radius_block(self):
+        cfg, src = qg.load_config(None)
+        self.assertEqual(src, "defaults")
+        self.assertEqual(cfg["refactor_radius"], qg.DEFAULT_REFACTOR_RADIUS)
+        self.assertTrue(cfg["refactor_radius"]["enabled"])
+
+    def test_a_partial_refactor_radius_block_keeps_its_unmentioned_sibling_keys(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump({"refactor_radius": {"max_rewrite_ratio": 0.25}}, fh)
+            path = fh.name
+        self.addCleanup(os.unlink, path)
+        cfg, _ = qg.load_config(path)
+        self.assertEqual(cfg["refactor_radius"]["max_rewrite_ratio"], 0.25)
+        self.assertEqual(cfg["refactor_radius"]["max_touched_existing_files"],
+                         qg.DEFAULT_REFACTOR_RADIUS["max_touched_existing_files"])
+        self.assertEqual(cfg["refactor_radius"]["min_rewritten_lines"],
+                         qg.DEFAULT_REFACTOR_RADIUS["min_rewritten_lines"])
+        self.assertTrue(cfg["refactor_radius"]["enabled"])
+
+    def test_a_refactor_radius_block_can_be_switched_off_by_the_operator(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump({"refactor_radius": {"enabled": False}}, fh)
+            path = fh.name
+        self.addCleanup(os.unlink, path)
+        cfg, _ = qg.load_config(path)
+        self.assertFalse(cfg["refactor_radius"]["enabled"])
+        self.assertEqual(cfg["refactor_radius"]["max_rewrite_ratio"],
+                         qg.DEFAULT_REFACTOR_RADIUS["max_rewrite_ratio"])
+
+    def test_a_non_object_refactor_radius_in_the_config_is_a_hard_error(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump({"refactor_radius": [0.5]}, fh)
+            path = fh.name
+        self.addCleanup(os.unlink, path)
+        with self.assertRaises(qg.GateError) as ctx:
+            qg.load_config(path)
+        self.assertIn("refactor_radius", str(ctx.exception))
+
     def _tmp_json(self, obj):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
             json.dump(obj, fh)
