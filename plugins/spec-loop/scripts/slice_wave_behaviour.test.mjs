@@ -108,6 +108,13 @@ test("a crash before any dispatch yields the no-stage title", async () => {
 
 const LOST = { parallel: async () => [null] };
 
+// Three-way, matching the crash record's shape: the record offers three
+// controller-named options, so a yes/no ask would leave a human answering "no"
+// bound to none of them. The tail differs from the crash record's on purpose —
+// this record carries no exception text to diagnose.
+const LOST_QUESTION =
+  "Retry this slice, skip it and continue the run, or stop the run to investigate the silent failure?";
+
 test("a lost slice escalates with the same trigger and its own title", async () => {
   const out = await runWave(ONE_SLICE(), LOST);
   assert.equal(out.results[0].status, "ESCALATED");
@@ -117,15 +124,14 @@ test("a lost slice escalates with the same trigger and its own title", async () 
   assert.equal(only(out).id, "s1:" + CRASH_TRIGGER);
   assert.equal(only(out).trigger, CRASH_TRIGGER);
   assert.equal(only(out).title, "slice lost");
-  assert.ok(only(out).question.startsWith("Re-run the wave to retry this slice"));
+  assert.equal(only(out).question, LOST_QUESTION);
 });
 
 // The lost-slice record used to rely on esc()'s empty-array substitution, which
 // yields ONE option labelled "Proceed with the recommended default" whose detail
 // repeats the whole context. The human ruled that widening this record to the same
-// three controller-named labels as the crash record is the fix. The record's own
-// question stays binary on purpose, so this test pins the OPTION SET by execution
-// and claims nothing about the ask.
+// three controller-named labels as the crash record is the fix. This test pins the
+// OPTION SET by execution; the ask itself is pinned separately, above.
 test("the lost-slice record carries the same three controller-named options", async () => {
   const rec = only(await runWave(ONE_SLICE(), LOST));
   assert.deepEqual(rec.options.map((o) => o.label), RECORD_OPTIONS);
@@ -139,7 +145,7 @@ test("the lost-slice record carries the same three controller-named options", as
 // The two internal-error records now share the trigger, the id shape and the three
 // option labels. What still separates them is the evidence and the ask: the crash
 // record carries exception text plus a stage attribution and asks which of the three
-// to take; the lost-slice record carries neither and asks the binary re-run question.
+// to take; the lost-slice record carries neither and asks the same three-way question with its own tail.
 // A future edit that collapses them into one indistinguishable record fails here.
 test("the crash and lost-slice records stay distinguishable after the widening", async () => {
   const crash = only(await runWave(ONE_SLICE(), THROWS));
