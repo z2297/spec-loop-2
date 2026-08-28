@@ -114,6 +114,23 @@ test("a safety flag raised only on the re-check still blocks and is titled SAFET
   assert.match(r.escalations[0].title, /^SAFETY — /);
 });
 
+// RECHECK_SAFETY carries no `objection` block (schema-legal: CRITIQUE only
+// requires verdict/safety/concerns) and its safety reason deliberately differs
+// from OBJECTION_FIXABLE's objection reason, so this catches a silent fallback
+// to the stale, pre-replan objection instead of the re-check's own new risk.
+test("the escalation describes the re-check's OWN safety reason, not the stale original objection", async () => {
+  const { r } = await objectThenReplan(ONE_TASK_PLANNED, RECHECK_SAFETY);
+  assert.match(r.escalations[0].title, /the revision drops the pre-migration backup/);
+  assert.equal(r.escalations[0].context, "the revision drops the pre-migration backup");
+  assert.equal(r.escalations[0].context.includes("migration test"), false);
+});
+
+test("a re-check safety reason is carried in the replan-recheck event payload", async () => {
+  const { r } = await objectThenReplan(ONE_TASK_PLANNED, RECHECK_SAFETY);
+  const ev = r.events.find((e) => e.type === "replan-recheck");
+  assert.equal(ev.payload.safety_reason, "the revision drops the pre-migration backup");
+});
+
 test("a replan that returns no plan escalates without spending a re-critique", async () => {
   const { r, seen } = await objectThenReplan(null, RECHECK_CLEAN);
   assert.equal(r.status, "ESCALATED");

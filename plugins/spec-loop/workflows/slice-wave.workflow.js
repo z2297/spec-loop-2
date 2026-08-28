@@ -867,6 +867,23 @@ function councilObjectionEscalation(slice, state, ob, safety) {
   return escalated(slice, state, esc(slice, 'council-objection', { title: `${safety ? 'SAFETY — ' : ''}council objects: ${ob.objection.reason.slice(0, 60)}`, context: ob.objection.reason, question: ob.objection.question, options: [{ label: ob.objection.recommendation, detail: 'critic-recommended default', recommended: true }] }))
 }
 
+// The re-check itself is a CRITIQUE, not an objection: `objection` is optional
+// on that schema (required is verdict/safety/concerns), so a re-check that
+// flags a NEW safety risk on a clean ENDORSE verdict — RECHECK_SAFETY's exact
+// shape — carries no `objection` block at all. Falling back to the ORIGINAL
+// council objection in that case would describe the wrong risk to the human:
+// the concern the revision was written to fix, not the one the re-check just
+// raised. This builds the escalation straight from the re-check's own
+// `safety.reason` so that text — otherwise written nowhere — reaches the
+// human and the events log. (PURE)
+function safetyRecheckEscalation(slice, state, reason) {
+  return escalated(slice, state, esc(slice, 'council-objection', {
+    title: `SAFETY — re-check flags: ${reason.slice(0, 60)}`,
+    context: reason,
+    question: 'The revised plan raises a new safety risk. Accept it, revise by hand, or drop the slice?',
+  }))
+}
+
 // A revision is a REMEDY CLAIM, not a remedy. Accepting `status: 'PLANNED'` on
 // its own meant one silent retry absorbed the objection: nobody ever re-read
 // the plan the council rejected, so a well-formed revision that fixed nothing
@@ -903,9 +920,12 @@ async function acceptRevisedPlan(slice, state, ctx) {
   if (!isRevisedPlan(revised)) return { stop: councilObjectionEscalation(slice, state, ob, safety) }
   const rc = await recritiqueRevisedPlan(slice, state, revised)
   const flagged = !!(rc.safety && rc.safety.flag === true)
+  const safetyReason = flagged && rc.safety && typeof rc.safety.reason === 'string' ? rc.safety.reason : null
   const accepted = rc.verdict !== 'OBJECT' && !flagged
-  state.events.push({ scope: slice.id, type: 'replan-recheck', payload: { verdict: rc.verdict, safety: flagged, accepted, reason: accepted ? null : objectionSource(rc, ob).objection.reason } })
+  const reason = accepted ? null : (safetyReason || objectionSource(rc, ob).objection.reason)
+  state.events.push({ scope: slice.id, type: 'replan-recheck', payload: { verdict: rc.verdict, safety: flagged, accepted, reason, safety_reason: safetyReason } })
   if (accepted) return { plan: revised }
+  if (safetyReason) return { stop: safetyRecheckEscalation(slice, state, safetyReason) }
   return { stop: councilObjectionEscalation(slice, state, objectionSource(rc, ob), flagged || safety) }
 }
 
