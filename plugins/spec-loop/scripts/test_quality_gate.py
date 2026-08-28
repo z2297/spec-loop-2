@@ -496,6 +496,41 @@ class TestLoadConfig(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# Command-doc single-home pin. commands/quality-gate.md is the ONE operator-
+# facing home of the config schema; when it and the defaults disagree, one of
+# them is wrong, and this catches the drift in the same suite that owns the
+# defaults.
+# --------------------------------------------------------------------------
+
+COMMAND_DOC = (Path(__file__).resolve().parents[1] / "commands" / "quality-gate.md")
+
+
+class TestCommandDocDocumentsRefactorRadius(unittest.TestCase):
+    def setUp(self):
+        self.doc = COMMAND_DOC.read_text(encoding="utf-8")
+
+    def test_every_refactor_radius_key_is_named_in_the_command_doc(self):
+        for key in qg.DEFAULT_REFACTOR_RADIUS:
+            with self.subTest(key=key):
+                self.assertIn(key, self.doc)
+
+    def test_the_step_one_key_list_names_the_block(self):
+        step_one = self.doc.split("2. **Choose a quality level**")[0]
+        self.assertIn("refactor_radius", step_one)
+
+    def test_the_written_schema_carries_the_shipped_default_numbers(self):
+        schema = self.doc.split("```json")[1].split("```")[0]
+        self.assertIn('"refactor_radius"', schema)
+        for key, value in qg.DEFAULT_REFACTOR_RADIUS.items():
+            with self.subTest(key=key):
+                literal = {True: "true", False: "false"}.get(value, str(value))
+                self.assertIn(f'"{key}": {literal}', schema)
+
+    def test_the_doc_states_the_block_is_a_declared_proxy_not_a_measured_diff(self):
+        self.assertIn("proxy", self.doc.lower())
+
+
+# --------------------------------------------------------------------------
 # Pure metric primitives
 # --------------------------------------------------------------------------
 
