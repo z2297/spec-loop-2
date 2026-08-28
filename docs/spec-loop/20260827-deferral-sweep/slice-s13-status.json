@@ -1,0 +1,210 @@
+{
+  "schema_version": 2,
+  "id": "s13",
+  "status": "DONE",
+  "branch": "spec-loop/20260827-deferral-sweep/s13",
+  "commits": {
+    "base": "35409a84ff41b3fe139b62182a36e01cc08c8901",
+    "head": "b7a5d806ee709ac118c9dfba5f07e1e61f71f35a"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 7,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 5,
+  "review": {
+    "confirmed": 2,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: The same added sentence in the state reference asserts `\"14\"` \"is accepted and takes effect\". The trailing comparison (\"like the integer\") is true, but the leading assertion that it takes effect is false at tiers 2 and 3, where the tier defaults are 18 and 32 and 14 is discarded as at-or-below-default — the condition named in the very same bullet.",
+      "P3: The edit leaves a ragged mid-paragraph wrap: line 153 is 51 characters where the surrounding paragraph wraps at 84-95. The same happens in the CHANGELOG edit, where line 40 is the 33-character fragment `and re-review roles — and the`. The inserted text was appended without reflowing the remainder of the paragraph."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs ; claude plugin validate .",
+    "result": "All 7 suite segments passed. Segment 1: marketplace validation OK. Segment 2: 126 tests passed. Segment 3: 1292 tests passed. Segment 4: 1418 tests passed with 3 skipped, coverage floors met (96.9% total, 90% floor). Segment 5: 48 tests passed. Segment 6: 35 tests passed. Segment 7: plugin validation passed.",
+    "scope": "full",
+    "tree_sha": "364f0c9579e9f0a06536b8988b4dc173ea14db0b"
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "Quality gate produced parseable JSON with summary.pass: true and an empty failures array. Three markdown files (CHANGELOG.md, plugins/spec-loop/commands/spec-loop.md, plugins/spec-loop/references/run-state-v2.md) were skipped as unsupported file types. crap_score metric was skipped due to no coverage report. No violations found."
+  },
+  "escalations": [],
+  "agents_used": 12,
+  "wave": 7,
+  "events": [
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council"
+        ],
+        "safety": false,
+        "concerns_folded": 7,
+        "deferred": [],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t4",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t5",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:full",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "quality-gate",
+      "payload": {
+        "status": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260827-deferral-sweep/s13/plugins/spec-loop/commands/spec-loop.md, /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260827-deferral-sweep/s13/plugins/spec-loop/references/run-state-v2.md, /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260827-deferral-sweep/s13/CHANGELOG.md",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "review-summary",
+      "payload": {
+        "findings": 4,
+        "confirmed": 2,
+        "refuted": 0,
+        "fix_rounds": 1,
+        "reviewers": 1
+      }
+    },
+    {
+      "scope": "s13",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

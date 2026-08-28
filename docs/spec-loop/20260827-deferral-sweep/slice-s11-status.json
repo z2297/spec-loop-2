@@ -1,0 +1,261 @@
+{
+  "schema_version": 2,
+  "id": "s11",
+  "status": "DONE",
+  "branch": "spec-loop/20260827-deferral-sweep/s11",
+  "commits": {
+    "base": "32c68bebf566524f3aad16e711a19f856957a71f",
+    "head": "e01f82df9400bc3390e80605ada0ef587b4e5a1f"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "OBJECT",
+    "concerns": 5,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 9,
+  "review": {
+    "confirmed": 1,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: The corrected cap-override bullet closes by pointing the reader at the two documents that still carry the over-claim the bullet just corrected. `commands/spec-loop.md:148-150` says a `non-integer` override \"raises nothing and says so\", and `references/run-state-v2.md:169-170` says \"a value at or below the tier default, or a non-integer value, is announced once at slice start as a `decision` event\". Both are untrue of a JSON string reading as a whole number, which is exactly the case the new sentence two lines above documents. The release ships a note and a pointer that contradict each other. The slice's ceiling forbids editing those two files, so this is correctly reported rather than fixed here, but it should not ship unnoticed.",
+      "P3: \"`run_metrics.merge_escalation_records` needed no logic change\" is true of the merge semantics but reads as \"was not touched\", and the function was edited during this cycle: `git diff 299f0db..13525a4 -- plugins/spec-loop/scripts/run_metrics.py` reports 24 insertions and 13 deletions, with the loop body extracted into a new `_fold_escalation_record_into` helper. The surrounding bullet is inside the diff's rewritten Fixed section, so it was in the Task 9 sweep's range.",
+      "P3: \"all eight prompts one slice builds\" is true of the single-task pipeline the test drives, where `PIPELINE_LABELS` names eight roles, but a slice with more than one task dispatches the task and re-review roles more than once and so builds more than eight prompts. The eight named roles are the accurate unit, not the prompt count of an arbitrary slice."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs ; claude plugin validate .",
+    "result": "All 7 segments passed: validate_marketplace OK; scripts tests: 126 pass; plugins/spec-loop/scripts tests: 1292 pass; coverage: 1418 tests pass, 96.9% coverage (6230/6426), all floors met; index.test.mjs: 48 pass; slice_wave_behaviour.test.mjs: 35 pass; plugin validation passed",
+    "scope": "full",
+    "tree_sha": "97d492936a738694f824674d17e0f0058b794299"
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "Quality gate passed. CHANGELOG.md skipped (unsupported file type). No coverage report metric. No findings."
+  },
+  "escalations": [],
+  "agents_used": 17,
+  "wave": 6,
+  "events": [
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "OBJECT",
+        "panel": [
+          "full-council"
+        ],
+        "safety": false,
+        "concerns_folded": 5,
+        "deferred": [],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "replan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t4",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t5",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t6",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t7",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t8",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t9",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:full",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "quality-gate",
+      "payload": {
+        "status": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260827-deferral-sweep/s11/CHANGELOG.md",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "review-summary",
+      "payload": {
+        "findings": 4,
+        "confirmed": 1,
+        "refuted": 0,
+        "fix_rounds": 1,
+        "reviewers": 1
+      }
+    },
+    {
+      "scope": "s11",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}
