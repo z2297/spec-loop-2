@@ -962,18 +962,41 @@ async function recritiqueRevisedPlan(slice, state, plan) {
   return v || failClosedCritique()
 }
 
+// The five judgements a re-check produces, computed once in one place: was a
+// safety flag raised, is there a readable reason for it, does the revision
+// proceed, and which reason does the human get. Split out of
+// acceptRevisedPlan, which carried all of it plus two escalation shapes at
+// cyclomatic 12 / cognitive 22 against thresholds of 10 and 15 — a function a
+// reviewer had to hold entirely in their head to check any one of its
+// branches. `rc` travels back out in the result so the caller never has to
+// pass both the outcome and the critique to the next helper. (PURE)
+function recheckOutcome(rc, ob) {
+  const flagged = !!(rc.safety && rc.safety.flag === true)
+  const safetyReason = flagged && typeof rc.safety.reason === 'string' ? rc.safety.reason : null
+  const accepted = rc.verdict !== 'OBJECT' && !flagged
+  const reason = accepted ? null : (safetyReason || objectionSource(rc, ob).objection.reason)
+  return { rc, flagged, safetyReason, accepted, reason }
+}
+
+// Which of the two escalation shapes a rejected revision gets. The re-check's
+// OWN safety reason wins whenever it exists, because falling back to the
+// original council objection would describe the wrong risk to the human: the
+// concern the revision was written to fix, not the one the re-check just
+// raised. `o` and `ctx` travel as objects because parameter_count's threshold
+// is 4 and this decision genuinely needs five values.
+function recheckStop(slice, state, o, ctx) {
+  if (o.safetyReason) return safetyRecheckEscalation(slice, state, o.safetyReason)
+  return councilObjectionEscalation(slice, state, objectionSource(o.rc, ctx.ob), o.flagged || ctx.safety)
+}
+
 async function acceptRevisedPlan(slice, state, ctx) {
   const { revised, ob, safety } = ctx
   if (!isRevisedPlan(revised)) return { stop: councilObjectionEscalation(slice, state, ob, safety) }
   const rc = await recritiqueRevisedPlan(slice, state, revised)
-  const flagged = !!(rc.safety && rc.safety.flag === true)
-  const safetyReason = flagged && rc.safety && typeof rc.safety.reason === 'string' ? rc.safety.reason : null
-  const accepted = rc.verdict !== 'OBJECT' && !flagged
-  const reason = accepted ? null : (safetyReason || objectionSource(rc, ob).objection.reason)
-  state.events.push({ scope: slice.id, type: 'replan-recheck', payload: { verdict: rc.verdict, safety: flagged, accepted, reason, safety_reason: safetyReason } })
-  if (accepted) return { plan: revised }
-  if (safetyReason) return { stop: safetyRecheckEscalation(slice, state, safetyReason) }
-  return { stop: councilObjectionEscalation(slice, state, objectionSource(rc, ob), flagged || safety) }
+  const o = recheckOutcome(rc, ob)
+  state.events.push({ scope: slice.id, type: 'replan-recheck', payload: { verdict: rc.verdict, safety: o.flagged, accepted: o.accepted, reason: o.reason, safety_reason: o.safetyReason } })
+  if (o.accepted) return { plan: revised }
+  return { stop: recheckStop(slice, state, o, ctx) }
 }
 
 // The council OBJECT branch: an unanswered fixable objection gets one replan

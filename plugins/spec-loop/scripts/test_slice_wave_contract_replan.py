@@ -56,6 +56,14 @@ SAFETY_GUARD = "const flagged = !!(rc.safety && rc.safety.flag === true)"
 ACCEPTED_GUARD = "const accepted = rc.verdict !== 'OBJECT' && !flagged"
 LEAKY_ACCEPT = "revised.status === 'PLANNED'"
 RADIUS_GATE_CALL = "refactorRadiusGate("
+OUTCOME_FN = "function recheckOutcome(rc, ob) {"
+OUTCOME_CALL = "const o = recheckOutcome(rc, ob)"
+STOP_FN = "function recheckStop(slice, state, o, ctx) {"
+STOP_CALL = "return { stop: recheckStop(slice, state, o, ctx) }"
+STOP_SAFETY_FIRST = ("if (o.safetyReason) return "
+                     "safetyRecheckEscalation(slice, state, o.safetyReason)")
+STOP_FALLBACK = ("return councilObjectionEscalation(slice, state, "
+                 "objectionSource(o.rc, ctx.ob), o.flagged || ctx.safety)")
 
 
 # ---- the three optional-read guards ----
@@ -145,6 +153,33 @@ class TestTheRadiusGateIsNotReRunOnARevision(WorkflowSourceTestCase):
 
     def test_the_acceptance_helper_does_not_call_the_radius_gate(self):
         self.assertNotIn(RADIUS_GATE_CALL, self.between(ACCEPT_FN, ACCEPT_END))
+
+
+# ---- the acceptance path, decomposed ----
+class TestTheAcceptanceHelperDelegatesItsJudgements(WorkflowSourceTestCase):
+    """acceptRevisedPlan carried the whole post-OBJECT decision — plan-shape,
+    safety, acceptance, reason selection and two escalation shapes — at
+    cyclomatic 12 / cognitive 22 against thresholds of 10 and 15. The verdict
+    arithmetic now lives in one PURE helper and the two escalation shapes in
+    another, so each is separately readable and separately reviewable. This
+    is a decomposition, not a behaviour change: slice_wave_replan.test.mjs is
+    unchanged and still green."""
+
+    def test_the_outcome_of_a_recheck_is_computed_by_one_named_helper(self):
+        self.assertIn(OUTCOME_FN, self.src)
+        self.assertIn(OUTCOME_CALL, self.between(ACCEPT_FN, ACCEPT_END))
+
+    def test_the_two_escalation_shapes_are_chosen_by_one_named_helper(self):
+        self.assertIn(STOP_FN, self.src)
+        self.assertIn(STOP_CALL, self.between(ACCEPT_FN, ACCEPT_END))
+
+    def test_the_recheck_safety_reason_still_wins_over_the_stale_objection(self):
+        body = self.between(STOP_FN, ACCEPT_END)
+        self.assertIn(STOP_SAFETY_FIRST, body)
+        self.assertIn(STOP_FALLBACK, body)
+
+    def test_the_acceptance_helper_still_records_the_event_itself(self):
+        self.assertIn(RECHECK_EVENT, self.between(ACCEPT_FN, ACCEPT_END))
 
 
 if __name__ == "__main__":  # pragma: no cover
