@@ -67,5 +67,35 @@ class TestTheReadmeNamesSixJudgmentTriggers(unittest.TestCase):
         self.assertIn(README_ARITHMETIC, self.text)
 
 
+# ---- risk-tiers: which of the six the tier actually funnels into ----
+
+TIERS_SIX = "exactly two of `escalation-gate`'s six triggers"
+TIERS_NOT_TIERED = "`refactor-scope` is not one of them"
+TIERS_PLAN_TIME = "it fires at plan time against a run-level ceiling, and no tier setting moves it"
+TIERS_STALE_FIVE = "exactly two of `escalation-gate`'s five triggers"
+TIERS_OVER_SCOPE_KEPT = "An over-scope record (`critique.over_scope`) is **not** in that funnel."
+
+
+class TestRiskTiersSeparatesTierTriggersFromThePlanTimeOne(unittest.TestCase):
+    """risk-tiers.md is the single home of tier -> review shape. Its funnel
+    sentence is a claim about which triggers a tier CAN cause; adding a
+    trigger the tier does not affect must widen the count without widening
+    the funnel, or the file over-promises what a tier buys."""
+
+    def setUp(self):
+        self.text = prose(RISK_TIERS_MD)
+
+    def test_the_funnel_sentence_counts_six_triggers(self):
+        self.assertIn(TIERS_SIX, self.text)
+        self.assertNotIn(TIERS_STALE_FIVE, self.text)
+
+    def test_refactor_scope_is_named_as_outside_the_tier_funnel(self):
+        self.assertIn(TIERS_NOT_TIERED, self.text)
+        self.assertIn(TIERS_PLAN_TIME, self.text)
+
+    def test_the_over_scope_record_is_still_called_record_only(self):
+        self.assertIn(TIERS_OVER_SCOPE_KEPT, self.text)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
