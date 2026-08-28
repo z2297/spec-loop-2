@@ -140,6 +140,18 @@ All notable changes to the spec-loop plugin are documented here. The format is
   doc. It previously held four surfaces against each other and named five. The prose pins
   collapse whitespace on both sides, so a whitespace re-flow of either document leaves them
   intact.
+- **The coverage manifest names its `__main__` shims symbolically.** Entries in
+  `scripts/coverage_omit.txt` read `scripts/<file>.py:__main__` instead of an absolute line
+  range, and `measure_coverage.resolve_main_shim` locates the guard header and its indented
+  block in the file's own source at measure time. A pinned range went stale the moment the
+  file grew: the omission then pointed at ordinary code further up, with its rationale still
+  claiming the shim, quietly excusing lines the manifest never meant to excuse. Three of the
+  thirteen entries had already drifted that way — the `quality_gate.py`, `run_metrics.py` and
+  `run_state.py` ranges each named lines other than their own file's guard. Symbolic entries
+  carry no line numbers to renumber, so growth cannot repoint them.
+  `test_measure_coverage_manifest.py` pins the resolved block size of every target, so a
+  statement added beneath a guard grows the block and fails the suite until the new size is
+  deliberately accepted.
 
 ## [2.2.1] - 2026-08-27
 ### Added
