@@ -733,6 +733,15 @@ function refactorAsk(slice, verdict) {
 // decisions-log renderer reads the first text-ish field of a payload
 // (SUMMARY_TEXT_KEYS), so the line is prose rather than a JSON blob. (PURE)
 function radiusEvent(slice, verdict, answered) {
+  // A suppression is a fire that did NOT happen. The flag used to be set from
+  // `answered` alone, so an ordinary post-answer success — the human says
+  // narrow it, the planner narrows, the verdict comes back WITHIN — emitted an
+  // event claiming a suppression that never occurred, and anyone auditing
+  // which halts a human had waived would have counted it. Only EXCEEDED can be
+  // suppressed, because only EXCEEDED halts. The key stays ABSENT rather than
+  // false when nothing was suppressed: `false` would be an explicit claim
+  // about a state in which suppression is not even possible.
+  const suppressed = answered && verdict.state === 'EXCEEDED'
   return {
     scope: slice.id, type: 'refactor-radius',
     payload: {
@@ -740,7 +749,7 @@ function radiusEvent(slice, verdict, answered) {
       state: verdict.state, exceeded: verdict.exceeded,
       measured: verdict.measured, thresholds: verdict.thresholds,
       basis: verdict.basis,
-      ...(answered ? { suppressed_by_answer: true } : {}),
+      ...(suppressed ? { suppressed_by_answer: true } : {}),
     },
   }
 }

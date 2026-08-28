@@ -185,7 +185,9 @@ best-effort):
 - **`refactor-radius`** payload: `{summary, state, exceeded[], measured{rewrite_ratio,
   touched_existing_files, rewritten_lines}, thresholds{enabled, max_rewrite_ratio,
   max_touched_existing_files, min_rewritten_lines}|null, basis}`, plus `suppressed_by_answer: true`
-  when a human has already answered this slice's `refactor-scope` escalation. Emitted by
+  when — and only when — the state is `EXCEEDED` and a truthy human answer to this slice's
+  `refactor-scope` escalation kept it from halting; the key is absent, never `false`, in every
+  other case, so counting it counts real waived halts. Emitted by
   the wave's PLAN stage on EVERY evaluation — `state` is one of `NOT_CONFIGURED`,
   `DISABLED`, `NO_USABLE_CEILING`, `NOT_MEASURED`, `WITHIN`, `BELOW_FLOOR`, `EXCEEDED`,
   and only `EXCEEDED` halts. The no-fire cases are emitted precisely because a ceiling that silently declines

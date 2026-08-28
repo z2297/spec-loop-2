@@ -301,3 +301,39 @@ test("a missing noise floor alone never makes a ceiling unusable", async () => {
   const ev = await only(BIG, { ...RADIUS_DEFAULTS, min_rewritten_lines: null });
   assert.equal(ev.payload.state, "EXCEEDED");
 });
+
+// ── suppression is a fire that did not happen ─────────────────────────────
+// The flag was set from `answered` alone, so an ordinary post-answer success —
+// human says narrow it, planner narrows, verdict WITHIN — emitted an event
+// claiming a suppression that never occurred, and a reader auditing which
+// halts a human had waived would have counted it.
+const APPROVED = { "s1:refactor-scope": "approved, go ahead" };
+
+test("a within-ceiling replan after an answer claims no suppression", async () => {
+  const ev = await only(SMALL, RADIUS_DEFAULTS, APPROVED);
+  assert.equal(ev.payload.state, "WITHIN");
+  assert.equal(ev.payload.suppressed_by_answer, undefined);
+});
+
+test("a below-floor breach after an answer claims no suppression either", async () => {
+  const ev = await only(TINY, RADIUS_DEFAULTS, APPROVED);
+  assert.equal(ev.payload.state, "BELOW_FLOOR");
+  assert.equal(ev.payload.suppressed_by_answer, undefined);
+});
+
+test("an unconfigured evaluation after an answer claims no suppression", async () => {
+  const ev = await only(BIG, undefined, APPROVED);
+  assert.equal(ev.payload.state, "NOT_CONFIGURED");
+  assert.equal(ev.payload.suppressed_by_answer, undefined);
+});
+
+test("only a real breach an answer waived is marked suppressed", async () => {
+  const ev = await only(BIG, RADIUS_DEFAULTS, APPROVED);
+  assert.equal(ev.payload.state, "EXCEEDED");
+  assert.equal(ev.payload.suppressed_by_answer, true);
+});
+
+test("the suppression key is absent rather than false when nothing was suppressed", async () => {
+  const ev = await only(SMALL, RADIUS_DEFAULTS, APPROVED);
+  assert.equal(Object.keys(ev.payload).includes("suppressed_by_answer"), false);
+});

@@ -311,6 +311,9 @@ STAGE_PLAN_START = "async function stagePlan(slice, state) {"
 STAGE_PLAN_END = "// Stage C helpers"
 GATE_FN_START = "function refactorRadiusGate(slice, state, plan) {"
 GATE_FN_END = "\n}\n"
+SUPPRESSED_GUARD = "const suppressed = answered && verdict.state === 'EXCEEDED'"
+SUPPRESSED_SPREAD = "...(suppressed ? { suppressed_by_answer: true } : {}),"
+EVENT_FN_START = "function radiusEvent(slice, verdict, answered) {"
 
 
 class TestOnlyAMeasuredBreachHaltsAndOnlyAtPlanTime(WorkflowSourceTestCase):
@@ -330,6 +333,14 @@ class TestOnlyAMeasuredBreachHaltsAndOnlyAtPlanTime(WorkflowSourceTestCase):
 
     def test_no_answer_key_count_decides_anything_in_the_gate(self):
         self.assertNotIn(GATE_KEY_COUNT, self.src)
+
+    def test_a_suppression_is_only_claimed_for_a_breach_an_answer_waived(self):
+        body = self.between(EVENT_FN_START, GATE_FN_END)
+        self.assertIn(SUPPRESSED_GUARD, body)
+        self.assertIn(SUPPRESSED_SPREAD, body)
+
+    def test_no_suppression_flag_is_set_from_answeredness_alone(self):
+        self.assertNotIn("...(answered ? { suppressed_by_answer: true } : {})", self.src)
 
     def test_the_record_is_minted_with_the_refactor_scope_trigger(self):
         self.assertIn(GATE_TRIGGER, self.src)
