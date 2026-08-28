@@ -78,11 +78,12 @@ BOTH_CEILINGS = ["rewrite_ratio", "touched_existing_files"]
 # ---- the predicate, executed ----
 
 class TestTheRadiusPredicateDecidesAndNotJustExists(WorkflowSourceTestCase):
-    """Seven states, none collapsed into another. A substring assertion can
-    prove the word NOT_MEASURED appears in the file and nothing about which
-    inputs reach it, so this class runs the real helpers under real node and
-    reads the verdicts back: absence, disablement, an unusable ceiling, an
-    unmeasured plan, a plan at its ceiling, a breach, and a noise-floor one."""
+    """Eight states, none collapsed into another, matching the workflow's own
+    count at slice-wave.workflow.js:362. A substring assertion can prove the
+    word NOT_MEASURED appears in the file and nothing about which inputs
+    reach it, so this class runs the real helpers under real node and reads
+    the verdicts back: NOT_CONFIGURED, DISABLED, NO_USABLE_CEILING,
+    NOT_MEASURED, WITHIN, WITHIN_PARTIAL, BELOW_FLOOR and EXCEEDED."""
 
     def test_an_absent_ctx_block_is_not_configured_and_compares_nothing(self):
         # In order: no block at all, a string where an object belongs, and an

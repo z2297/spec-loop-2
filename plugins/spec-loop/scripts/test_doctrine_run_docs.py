@@ -105,7 +105,8 @@ INVENTORY_COUNTS = (
     ("skills", "**Skills (%d)**"),
 )
 RADIUS_DRIVER = "`slice_wave_contract_radius_driver`"
-THREE_HARNESS_MODULES = "three Node harness modules"
+NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+                6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
 
 
 def _counted(kind):
@@ -115,6 +116,19 @@ def _counted(kind):
     if kind == "agents":
         return len(list((PLUGIN_ROOT / "agents").glob("*.md")))
     return len([p for p in (PLUGIN_ROOT / "skills").iterdir() if p.is_dir()])
+
+
+def _harness_modules():
+    """Node harness-module names actually on disk, sorted. (PURE)
+
+    `scripts/*.test.mjs` is a non-recursive glob, so it never descends into
+    scripts/dashboard_assets/, which is exactly the exclusion this needs:
+    the README counts dashboard_assets/index.test.mjs as part of the
+    dashboard_assets script bundle, not as a harness module, so no separate
+    exclusion list is needed to keep it out of this count.
+    """
+    return sorted(p.name[: -len(".test.mjs")]
+                  for p in (PLUGIN_ROOT / "scripts").glob("*.test.mjs"))
 
 
 class TestTheComponentInventoryIsCountedNotRemembered(unittest.TestCase):
@@ -138,7 +152,12 @@ class TestTheComponentInventoryIsCountedNotRemembered(unittest.TestCase):
 
     def test_the_inventory_names_this_runs_new_test_support_modules(self):
         self.assertIn(RADIUS_DRIVER, self.text)
-        self.assertIn(THREE_HARNESS_MODULES, self.text)
+        modules = _harness_modules()
+        word = NUMBER_WORDS[len(modules)]
+        self.assertIn("back %s Node harness modules" % word, self.text)
+        for module in modules:
+            with self.subTest(module=module):
+                self.assertIn("`%s`" % module, self.text)
 
 
 if __name__ == "__main__":  # pragma: no cover

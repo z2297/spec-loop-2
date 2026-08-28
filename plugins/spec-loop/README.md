@@ -156,8 +156,9 @@ sidecar closed rather than reading as clean.
   quality_gate, knowledge_graph, run_metrics, pr_resolver, spec_loop_guard,
   dashboard_server, dashboard_launcher (+ dashboard_assets, and the
   `slice_wave_contract_base` and `slice_wave_contract_radius_driver`
-  test-support modules, which back three Node harness modules:
-  `slice_wave_behaviour`, `slice_wave_radius` and `slice_wave_replan`).
+  test-support modules, which back four Node harness modules:
+  `slice_wave_behaviour`, `slice_wave_radius`, `slice_wave_radius_partial`
+  and `slice_wave_replan`).
 
 ## Migrating from v1
 

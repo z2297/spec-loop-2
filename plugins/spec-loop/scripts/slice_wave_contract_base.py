@@ -58,9 +58,9 @@ stays under the quality gate's 300-line class_lines threshold; this file
 carries no tests of its own (its class exposes no `test_*` method), so
 `unittest discover -p 'test_*.py'` never collects it directly.
 
-Usage: imported by test_slice_wave_contract.py,
-test_slice_wave_contract_scope.py, and test_slice_wave_contract_crash.py;
-not runnable on its own.
+Usage: imported by the `test_slice_wave_contract*.py` family of modules, not
+enumerated by name here since a per-module list drifts the moment a new one
+splits out; not runnable on its own.
 """
 
 import unittest
