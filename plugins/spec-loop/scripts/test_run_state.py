@@ -524,6 +524,43 @@ class TestPlaceEscalationSection(unittest.TestCase):
         parsed = run_metrics.legacy_parse_escalations(body)
         self.assertEqual([item["id"] for item in parsed], ["s1", "s2"])
 
+    def test_a_legacy_section_quoting_an_anchor_is_left_standing(self):
+        # The reproduction. A section rendered before the fingerprint existed
+        # carries no anchor line of its own, so an unanchored match over the
+        # whole section reached into its prose and handed the record's own
+        # fingerprint back. place_escalation_section then rewrote that
+        # unrelated section in place and the older render was lost.
+        record = escalation()
+        stolen = rs.IDENTITY_ANCHOR % rs.escalation_identity(record)
+        legacy = (rs.ESCALATIONS_HEADER
+                  + "## [s9] Older render   (status: OPEN)\n"
+                  + (rs.ID_ANCHOR % "s9:ambiguity") + "\n"
+                  + "- Context: an unrelated note quoting " + stolen + " inline\n"
+                  + "- Answer:\n- Answered-at:\n\n")
+        body = rs.place_escalation_section(legacy, "s1", record)
+        self.assertEqual(len(self.sections(body)), 2)
+        self.assertIn("## [s9] Older render   (status: OPEN)", body)
+        self.assertIn(rs.IDENTITY_ANCHOR % rs.escalation_identity(record), body)
+
+    def test_an_anchor_embedded_in_prose_does_not_claim_another_section(self):
+        first = escalation()
+        body = rs.place_escalation_section(rs.ESCALATIONS_HEADER, "s1", first)
+        stolen = rs.IDENTITY_ANCHOR % rs.escalation_identity(first)
+        quoting = "unrelated question mentioning " + stolen
+        intruder = escalation(id="s2:ambiguity", context=quoting)
+        body = rs.place_escalation_section(body, "s2", intruder)
+        self.assertEqual(len(self.sections(body)), 2)
+        self.assertIn("## [s2]", body)
+        self.assertIn(rs.IDENTITY_ANCHOR % rs.escalation_identity(first), body)
+
+    def test_a_section_carrying_only_an_embedded_anchor_has_no_identity(self):
+        first = escalation()
+        stolen = rs.IDENTITY_ANCHOR % rs.escalation_identity(first)
+        section = ("## [s9] Legacy render   (status: OPEN)\n"
+                   + (rs.ID_ANCHOR % "s9:ambiguity") + "\n"
+                   + "- Context: prose containing " + stolen + " inline\n")
+        self.assertEqual(rs._section_identity(section), "")
+
 
 class TestAnswerWriteBack(unittest.TestCase):
     def setUp(self):

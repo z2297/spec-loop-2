@@ -1,42 +1,46 @@
 # coverage_omit.txt — lines excluded from measure_coverage.py's ratios.
 #
-# Format (one exclusion per line):   scripts/<file>.py:START[-END]  # rationale
-# Blank lines and full-line '#' comments are ignored. Every data entry MUST
-# carry a '# rationale'; measure_coverage.py refuses to run on a malformed or
-# rationale-less entry so this manifest stays auditable and cannot silently
-# grow into a place to hide genuinely-untested code. A range is also rejected if
-# it overshoots end-of-file or would remove more than 25% of a file's executable
-# lines (see validate_omit) — so it cannot collapse a file to a false 0/0 = 100%.
+# Format (one exclusion per line):
+#   scripts/<file>.py:START[-END]   # rationale     (literal line range)
+#   scripts/<file>.py:__main__      # rationale     (symbolic, resolved from source)
 #
-# Only two legitimate categories are excluded, and both are inherent to running
-# the suite under `trace` rather than gaps in the tests:
-#   1. `if __name__ == "__main__": sys.exit(main())` process-entry shims — the
-#      module is imported (not run as __main__) under unittest, so this branch and
-#      its sys.exit line never execute. Each is the file's last two lines.
-#   2. The blocking serve_forever() daemon tail in dashboard_server — the server
-#      loop plus its KeyboardInterrupt/finally shutdown cannot run to completion
-#      inside a unit test (it would block forever), so those lines never execute.
+# Blank lines and full-line '#' comments are ignored. Every data entry MUST carry
+# a '# rationale'; measure_coverage.py refuses to run on a malformed or
+# rationale-less entry, so this manifest stays auditable and cannot silently grow
+# into a place to hide genuinely-untested code.
+# Each symbolic entry resolves to the guard header plus its indented body.
+# scripts/test_measure_coverage_manifest.py pins the resolved block size of
+# every target, so a statement added beneath a guard grows the block and fails
+# the suite until the new size is deliberately accepted in that test.
+# An entry is also rejected by validate_omit on overshooting end-of-file, or on
+# removing more than 25% of a file's executable lines, so it cannot collapse a
+# file to a false 0/0 = 100%.
 #
-# Line numbers verified against source on 2026-08-25 (run 20260825-scope-ceiling
-# s3): every entry re-read against its file's own `if __name__` / exit lines, not
-# against any number quoted in a plan or a report. That check found two stale
-# ranges (quality_gate.py 1104-1105 and spec_loop_guard.py 240-241 had drifted
-# from their shims at 1118-1119 and 250-251) and corrected them; validate_omit
-# cannot catch that class of error, because it never asserts an omitted line is
-# unhit. Re-verify whenever these files change length. Plugin scripts live
-# in plugins/spec-loop/scripts/ but keys stay scripts/<name>.py because
-# measure_coverage.normalize_key canonicalizes either scripts/ dir.
+# WHY THE SYMBOLIC TOKEN EXISTS. Every entry below names a process-entry shim: the
+# module is imported rather than run as __main__ under unittest, so the shim header
+# and its body never execute. Those omissions used to be pinned by absolute line
+# range, and a pinned range goes wrong the moment the file grows — the omission
+# then silently points at ordinary executed code further up, with its rationale
+# still claiming the shim. That happened to three entries during run
+# 20260827-deferral-sweep. The token '__main__' is resolved instead by
+# measure_coverage.resolve_main_shim, which locates the header and its indented
+# block in the file's own source at measure time, so growth can never repoint it
+# and these entries never need renumbering again.
+#
+# Plugin scripts live in plugins/spec-loop/scripts/ but keys stay
+# scripts/<name>.py because measure_coverage.normalize_key canonicalizes either
+# scripts dir.
 
-scripts/dag.py:786-787                   # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/dashboard_launcher.py:558-559    # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/dashboard_server.py:1645-1646    # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/knowledge_graph.py:1211-1212     # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/pr_resolver.py:488-489           # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/quality_gate.py:1118-1119        # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/release.py:194-195               # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/review_package.py:131-132        # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/run_metrics.py:2175-2176         # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/run_state.py:1104-1105           # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/spec_loop_guard.py:250-251       # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/validate_marketplace.py:417-418  # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
-scripts/worktrees.py:385-386             # __main__ entry shim (if __name__/sys.exit(main())); not run as __main__ under unittest
+scripts/dag.py:__main__                  # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/dashboard_launcher.py:__main__   # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/dashboard_server.py:__main__     # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/knowledge_graph.py:__main__      # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/pr_resolver.py:__main__          # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/quality_gate.py:__main__         # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/release.py:__main__              # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/review_package.py:__main__       # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/run_metrics.py:__main__          # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/run_state.py:__main__            # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/spec_loop_guard.py:__main__      # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/validate_marketplace.py:__main__ # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/worktrees.py:__main__            # process-entry shim; the module is imported, not run as __main__, under unittest
