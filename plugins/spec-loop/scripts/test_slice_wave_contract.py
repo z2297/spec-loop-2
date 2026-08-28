@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Contract checks: guarded task-result reads, quality-gate-block answer
-injection, and the record-only `over_scope` critique field.
+injection, the record-only `over_scope` critique field, and the
+escalation-gate skill's account of the lost-slice ask.
 
 See `slice_wave_contract_base.py` for the module-wide rationale (why this
 is source-text assertion, why snippets are named constants, and the two
@@ -23,6 +24,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 from slice_wave_contract_base import (
     ANSWER_CONTEXT_END, ANSWER_CONTEXT_START, ANSWERABLE_TRIGGERS, CLEAN,
@@ -303,6 +305,24 @@ class TestTheAnswersMapStaysCumulativeAcrossAResume(WorkflowSourceTestCase):
         # describe: the derivation they exist to protect is the real one.
         source = wrapped_source()
         self.assertIn("return answerKeysFor(sliceId, trigger).length + 1", source)
+
+
+SKILL_MD = (Path(__file__).resolve().parents[1]
+            / "skills" / "escalation-gate" / "SKILL.md")
+LOST_ASK_TAIL = "or stop the run to investigate the silent failure"
+LOST_ASK_STALE = "asks only whether to re-run the wave"
+
+
+class TestTheSkillDescribesTheLostSliceAsk(WorkflowSourceTestCase):
+    """The skill doc is a live plugin surface, and this sentence already
+    carried a prior run's accuracy complaint. The wave widened the ask to
+    three ways; nothing held the doc to it, so the drift was silent."""
+
+    def test_the_skill_names_the_ask_the_wave_actually_emits(self):
+        prose = re.sub(r"\s+", " ", SKILL_MD.read_text(encoding="utf-8"))
+        self.assertIn(LOST_ASK_TAIL, self.src)
+        self.assertIn(LOST_ASK_TAIL, prose)
+        self.assertNotIn(LOST_ASK_STALE, prose)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -7,7 +7,47 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+### Added
+- **A `budget-exhausted` answer that actually raises the cap.** The wave args gain one optional
+  top-level field, `agent_cap_overrides: {"<slice-id>": <integer>}`. `agentCap` in
+  `slice-wave.workflow.js` reads it and the per-slice structural guard enforces the number it
+  returns, so a human who authorises a raise now has a lever instead of prose. The channel is
+  deliberately narrow: it can only RAISE (a value at or below the review tier's own cap in
+  `CAPS` is discarded), it is keyed per slice, it lives in the args object of the single
+  re-dispatch the controller hands it to, and it moves no default. An applied raise emits an
+  `agent-cap-override` event carrying `{tier, default_cap, effective_cap}`, so the exception is
+  auditable in `events.jsonl` rather than inferable from a larger `agents_used`. The record
+  itself now offers three controller-named options and its recommended option names the args
+  field to write. `budget-exhausted` remains NOT a judgment trigger — its answer is injected
+  into no agent prompt, pinned by source text and by execution across
+  all eight prompts one slice builds running plan, critique, task, review, gate, fix, re-review
+  and verify — and the per-stage
+  token floor is untouched, having no args-level lever at all: its resource is the wave budget
+  the host supplies. The controller still translates the human's free-text answer into the
+  integer it writes; nothing in the loop parses that text. An override the channel cannot use
+  is no longer discarded in silence: a value at or below the tier default, a non-integer value,
+  or a key naming no slice of the wave emits a `decision` event naming the discarded value, so
+  a mistyped lever is visible at the dispatch that carried it rather than only at the next cap
+  record. Documented in `commands/spec-loop.md`
+  step 7 and `references/run-state-v2.md`.
+
+### Changed
+- **The lost-slice escalation asks the three-way question its options already offered.** The
+  record widened to `Retry this slice` / `Skip this slice` / `Stop the run` but still asked
+  "Re-run the wave to retry this slice?", so a human answering "no" had chosen none of the
+  three and the stored free text bound to no option. It now asks "Retry this slice, skip it and
+  continue the run, or stop the run to investigate the silent failure?", matching the crash
+  record's shape with its own tail — the lost-slice record has no exception text to diagnose.
+  Pinned by execution in `slice_wave_behaviour.test.mjs` and by source text in
+  `test_slice_wave_contract_crash.py`.
+
 ### Fixed
+- **The escalation-gate skill describes the lost-slice ask the wave actually emits.**
+  `skills/escalation-gate/SKILL.md` still said the lost-slice record "asks only whether to re-run
+  the wave" after that record widened to the three-way retry/skip/stop question. The sentence now
+  names the three-way ask and its own tail, and `test_slice_wave_contract.py` holds the doc
+  against the wave's real question text, so the next change to the ask breaks the doc pin instead
+  of drifting past it.
 - **`escalations.md` renders one section per distinct escalation question.** An
   `escalation-opened` event whose raw `id`, `context` and `question` match a section already on
   the page now rewrites that section in place (`run_state.place_escalation_section`) instead of

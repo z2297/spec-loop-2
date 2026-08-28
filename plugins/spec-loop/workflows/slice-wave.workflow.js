@@ -14,7 +14,9 @@ export const meta = {
 //
 // Hard rules this file owns (single home):
 //   - loop bounds: replan ≤1, task retry ≤1, fix rounds ≤2, debug-fix ≤1
-//   - per-slice agent caps by review tier: 10 / 18 / 32
+//   - per-slice agent caps by review tier: 10 / 18 / 32, raisable in one
+//     dispatch through args.agent_cap_overrides (agentCap); the raise never
+//     lowers a cap and never changes a default
 //   - fail-closed synthesis: an unusable agent return is never an approval
 //   - answers injection: args.answers["<sliceId>:<trigger>"], or
 //     ["<sliceId>:<trigger>:<round>"] from the second round on, resumes an
@@ -33,6 +35,12 @@ const CTX = A.ctx // {run_dir, plugin_root, base_ref, test_command, conventions_
 const CAPS = { 1: 10, 2: 18, 3: 32 }
 const MAX_FIX_ROUNDS = 2
 const BUDGET_STAGE_FLOOR = 60_000 // skip-and-escalate below this remaining budget
+
+// Per-slice agent-cap raises authorised by the human, keyed by slice id. This map
+// arrives in the wave args of ONE dispatch and expires with it: the controller
+// writes it after a human answers a budget-exhausted cap record, and no default in
+// CAPS moves. See agentCap below.
+const CAP_OVERRIDES = A.agent_cap_overrides || {}
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -455,10 +463,42 @@ Polish the diff ${state.commits.base}..HEAD in the worktree: behavior-preserving
 // ── Guarded dispatch ─────────────────────────────────────────────────────────
 
 function guard(slice, state) {
-  if (state.agentsUsed >= CAPS[state.review_tier])
-    throw { escRecord: esc(slice, 'budget-exhausted', { title: `agent cap reached (${CAPS[state.review_tier]})`, context: `Slice used ${state.agentsUsed} agents (tier ${state.review_tier} cap).`, question: 'Raise the cap and resume, accept the slice as-is, or drop it?', options: [] }) }
+  const cap = agentCap(slice, state)
+  if (state.agentsUsed >= cap) throw { escRecord: agentCapEscalation(slice, state, cap) }
   if (budget.total && budget.remaining() < BUDGET_STAGE_FLOOR)
     throw { escRecord: esc(slice, 'budget-exhausted', { title: 'token budget exhausted', context: `Wave budget remaining ${Math.round(budget.remaining() / 1000)}k is below the ${BUDGET_STAGE_FLOOR / 1000}k stage floor.`, question: 'Raise the budget and resume, accept committed work as-is, or drop the slice?', options: [] }) }
+}
+
+// The effective cap of ONE dispatch of one slice. The override channel can only
+// RAISE: a supplied value at or below the tier default is discarded, so the args
+// map is unable to tighten a bound the loop owns, and a missing, non-numeric or
+// fractional value leaves the tier default in force. Declared here, between guard()
+// and dispatch(), so both budget-exhausted records stay inside the source span the
+// guard-wording contract test reads. (PURE over CAP_OVERRIDES)
+function agentCap(slice, state) {
+  const base = CAPS[state.review_tier]
+  const raised = Number(CAP_OVERRIDES[slice.id])
+  if (Number.isInteger(raised) && raised > base) return raised
+  return base
+}
+
+// The agent-cap record. Its options name the CONTROLLER as what applies each one,
+// because the loop applies none of them: budget-exhausted requests a resource, so
+// the answer text is never injected into an agent prompt. The recommended option
+// names the exact args field the controller writes, which is the whole path from a
+// human saying yes to a cap that actually moves.
+function agentCapEscalation(slice, state, cap) {
+  const base = CAPS[state.review_tier]
+  return esc(slice, 'budget-exhausted', {
+    title: `agent cap reached (${cap})`,
+    context: `Slice used ${state.agentsUsed} agents (tier ${state.review_tier} default ${base}, effective cap ${cap}).`,
+    question: 'Raise the cap and resume, accept the slice as-is, or drop it?',
+    options: [
+      { label: 'Raise the agent cap and resume', detail: 'Recommended default. The CONTROLLER must act on this at the next dispatch: put the authorised integer under args.agent_cap_overrides, keyed by this slice id, then re-dispatch the wave. The raise lives in that one args object and moves no default in CAPS.', recommended: true },
+      { label: 'Accept the slice as-is', detail: 'The CONTROLLER must act on this at the next dispatch: leave the slice ESCALATED and take no further work from it. The loop enforces no acceptance by itself.' },
+      { label: 'Drop the slice', detail: 'The CONTROLLER must act on this at the next dispatch: exclude the slice from the re-dispatched wave and record the drop. The loop drops nothing by itself.' },
+    ],
+  })
 }
 
 async function dispatch(slice, state, role, prompt, opts) {
@@ -947,8 +987,49 @@ function runSliceError(slice, state, e) {
   return escalated(slice, state, esc(slice, 'internal-error', { title, context, question, options }))
 }
 
+// An authorised cap raise is a single-dispatch exception to a bound the loop owns,
+// so it belongs in the machine channel rather than being inferable only from a
+// larger agents_used. Emitted once per slice dispatch, at slice start, and only
+// once the raise has actually taken effect. The payload names the tier as it stands
+// at slice start; maybePromoteTier can raise the tier later, and agentCap recomputes
+// the effective cap at every dispatch, so the event is a record of the authorisation
+// rather than a prediction of the final bound. A supplied override that took no
+// effect is announced by recordDiscardedOverride instead.
+
+// A supplied override the channel cannot use leaves the tier default in force.
+// Announcing that once, at slice start, is the point: silence hides the discard
+// until the slice reaches the cap a second time. It stays OUT of the
+// agent-cap-override event, whose payload means a raise that took effect.
+function recordDiscardedOverride(slice, state, base) {
+  const supplied = JSON.stringify(CAP_OVERRIDES[slice.id])
+  state.events.push({ scope: slice.id, type: 'decision', payload: { summary: `agent cap override ${supplied} discarded: the channel takes an integer above the tier ${state.review_tier} default ${base}`, rationale: 'the override raises only, on an integer value; the tier default stays in force', reversibility: 'n/a' } })
+}
+
+// A key naming no slice of this wave raises nothing and belongs to no slice's
+// own record, so it is announced once, on the wave's first slice, rather than
+// dying silent.
+function recordUnmatchedOverrides(slice, state) {
+  const ids = A.slices.map(s => s.id)
+  const unmatched = Object.keys(CAP_OVERRIDES).filter(k => !ids.includes(k))
+  if (!unmatched.length || slice.id !== ids[0]) return
+  state.events.push({ scope: slice.id, type: 'decision', payload: { summary: `agent cap override keys naming no slice of this wave, raising nothing: ${unmatched.join(', ')}`, rationale: 'the override map is keyed by slice id; a key matching none of the dispatched slices reaches no guard', reversibility: 'n/a' } })
+}
+
+function recordCapOverride(slice, state) {
+  const base = CAPS[state.review_tier]
+  const cap = agentCap(slice, state)
+  const supplied = Object.prototype.hasOwnProperty.call(CAP_OVERRIDES, slice.id)
+  if (cap === base) {
+    if (supplied) recordDiscardedOverride(slice, state, base)
+    return
+  }
+  state.events.push({ scope: slice.id, type: 'agent-cap-override', payload: { tier: state.review_tier, default_cap: base, effective_cap: cap } })
+}
+
 async function runSlice(slice) {
   const state = initSliceState(slice)
+  recordCapOverride(slice, state)
+  recordUnmatchedOverrides(slice, state)
   try {
     return await runStages(slice, state)
   } catch (e) {
@@ -969,7 +1050,7 @@ const out = results.map((r, i) => r || {
   escalations: [esc(A.slices[i], 'internal-error', {
     title: 'slice lost',
     context: 'The slice function returned no result (terminal failure) — it died outside runSlice\'s try/catch. Neither structural guard raised its escalation record — each raises budget-exhausted with an escRecord runSlice would have returned — and that is all a null result proves, not that no guard check ran. A host- or agent-layer resource failure dies the same silent way, so the cause is unknown here.',
-    question: 'Re-run the wave to retry this slice?',
+    question: 'Retry this slice, skip it and continue the run, or stop the run to investigate the silent failure?',
     options: [{ label: 'Retry this slice', detail: 'Recommended default. The CONTROLLER must act on this at the next dispatch: re-dispatch the wave on this slice. No result came back, so this record carries no exception text to diagnose and no record of committed work — inspect the slice branch before the retry, which starts from its base.', recommended: true },
      { label: 'Skip this slice', detail: 'The CONTROLLER must act on this at the next dispatch: leave the slice ESCALATED and dispatch only the independent slices. Nothing in the loop enforces a skip — the default re-dispatch procedure would retry it.' },
      { label: 'Stop the run', detail: 'The CONTROLLER must act on this at the next dispatch: halt the run instead of dispatching another wave, so a silent host- or agent-layer failure can be investigated before more agents are spent. Nothing in the loop stops the run by itself.' }],

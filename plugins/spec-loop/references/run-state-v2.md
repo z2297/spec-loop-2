@@ -117,7 +117,10 @@ prose about the slice.
 ```
 
 `budget-exhausted` is raised only by the loop's two structural guards (agent cap, stage
-token floor); `internal-error` covers the two machine-failure shapes the loop actually
+token floor). It stays a resource request rather than a judgment — no prompt ever receives
+its answer — and only the agent-cap half is answerable mechanically: the controller supplies
+`agent_cap_overrides` on the one re-dispatch the human authorised, and the stage token floor
+has no such field. `internal-error` covers the two machine-failure shapes the loop actually
 produces — an unhandled exception that aborted a slice, and a slice that returned no result
 at all — either of which may itself have a host- or agent-layer cause (e.g. a rejected agent
 call on a hard token or rate limit) that the record does not pretend to rule out. It is not
@@ -140,7 +143,7 @@ Event types (extensible; consumers ignore unknown types): `run-created`,
 `baseline`, `council-verdict`, `decision`, `deferred`, `escalation-opened`,
 `escalation-answered`, `wave-dispatched`, `wave-collected`, `slice-merged`,
 `integration-check`, `split-ingested`, `quality-gate`, `review-summary`,
-`agent-dispatch`, `phase5-gate`, `publish-choice`.
+`agent-dispatch`, `phase5-gate`, `publish-choice`, `agent-cap-override`.
 
 Pinned payload facts (consumers rely on these; everything else is
 best-effort):
@@ -155,6 +158,19 @@ best-effort):
   per-dispatch timing/tokens are NOT extractable today.) `engine_active_s`
   derives ONLY from `dispatched_at`/`returned_at` pairs; when absent it is
   `null`, never a `ts`-based guess.
+- **`agent-cap-override`** payload: `{tier, default_cap, effective_cap}` — emitted by
+  the wave at slice start, once per dispatch, only after a human-authorised raise has
+  actually taken effect. `default_cap` is the review tier's own cap and `effective_cap`
+  is the raised number the guard enforces; the pair makes the exception auditable rather
+  than inferable from a larger `agents_used`. The raise arrives as the wave arg
+  `agent_cap_overrides` (`{"<slice-id>": <integer>}`), belongs to the single dispatch the
+  controller hands it to, and can only raise: a value at or below the tier default is
+  discarded. `tier` is the review tier at slice start, which a later tier promotion can
+  move. A supplied override that does NOT take effect emits no `agent-cap-override` event: a
+  value at or below the tier default, or a non-integer value, is announced once at slice
+  start as a `decision` event whose summary opens `agent cap override`, and override keys
+  matching no slice of the dispatched wave are announced the same way on the wave's first
+  slice. The discard is therefore visible without waiting on a second cap record.
 - **`wave-collected`** payload carries the per-wave aggregates the workflow
   completion notification reports: `{index, agent_count, subagent_tokens,
   duration_ms}` — the honest wave-level token/duration channel while

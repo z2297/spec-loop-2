@@ -113,18 +113,21 @@ export async function runWave(waveArgsObj, sandbox) {
   return makeWave()(waveArgsObj, s.agent, s.parallel, s.log, s.budget, s.phase, s.pipeline);
 }
 
-export function sliceFixture(id) {
+export function sliceFixture(id, riskTier) {
   return {
     id, goal: "goal of " + id, files: ["a.py"], subsystems: ["x"],
-    deps: [], risk_tier: 1, depth: 0, parent: null,
+    deps: [], risk_tier: riskTier || 1, depth: 0, parent: null,
     branch: "spec-loop/t/" + id, base_sha: "0000000", worktree: "/tmp/wt/" + id,
   };
 }
 
 // `answers` is the controller's resume channel, keyed by escalation id. It is a
 // parameter so a test can drive the round the workflow computes from it, rather
-// than asserting the id scheme against a copy of the rule.
-export function waveArgs(slices, answers) {
+// than asserting the id scheme against a copy of the rule. `extra` carries any
+// additional TOP-LEVEL wave arg a test needs to drive, such as the per-slice
+// agent cap override map, so the harness never hand-builds a second args shape
+// that could drift from this one.
+export function waveArgs(slices, answers, extra) {
   return {
     run_id: "20260827-harness", wave_index: 0, slices, answers: answers || {},
     ctx: {
@@ -134,5 +137,79 @@ export function waveArgs(slices, answers) {
       quality_gate_cmd: "true", models: { reviewer: "inherit" },
       thorough: false, polish: false,
     },
+    ...(extra || {}),
   };
 }
+
+// ── Mock sandboxes and mock agent returns ────────────────────────────────
+// Fixture DATA lives here, beside defaultSandbox, so the test module carries
+// assertions and their rationale instead. Nothing below restates a workflow
+// rule: every value is a schema-shaped agent return the wave reads.
+
+export const capturePrompts = () => {
+  const seen = [];
+  return { seen, agent: async (prompt) => { seen.push(prompt); throw new Error("BOOM"); } };
+};
+
+const TASK_IDS = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12"];
+const PLAN_TWELVE = {
+  status: "PLANNED", plan_path: "/tmp/plan.md",
+  tasks: TASK_IDS.map((id) => ({ id, title: "task " + id, lane: "standard", files: ["a.py"] })),
+};
+const TASK_DONE = {
+  status: "DONE", touched_files: [], concerns: [], deviations: [],
+  commits: { base: "0000000", head: "c0ffee0" },
+};
+
+// Twelve standard tasks: one dispatch per task, so a tier-1 slice reaches its
+// tier default inside stageTasks and a raised cap later, in stageReviewGate.
+export const capAgent = () => ({
+  agent: async (prompt, opts) => (String(opts.label).indexOf(":task:") > 0 ? TASK_DONE : PLAN_TWELVE),
+});
+
+// A one-task plan whose review returns a single P0 finding. Driving a tier-2
+// slice with it runs plan, critique, task, review, gate, fix, re-review and
+// verify - the eight dispatches PIPELINE_LABELS names - and ends the slice DONE.
+const ONE_TASK_PLAN = {
+  status: "PLANNED", plan_path: "/tmp/plan.md",
+  tasks: [{ id: "t1", title: "task t1", lane: "standard", files: ["a.py"] }],
+};
+const P0_FINDING = {
+  id: "f1", severity: "P0", category: "correctness", file: "a.py", line: 1,
+  claim: "a claim", evidence: { quote: "q" }, remedy: "change it",
+  confidence: "high", outside_diff: false,
+};
+const VERIFY_PASS = {
+  suite: { command: "true", passed: true, summary: "ok" },
+  quality: { summary_pass: true, violations: [], detail: "clean" },
+  head_sha: "c0ffee0", tree_sha: "tree000",
+};
+const PIPELINE = {
+  "plan": ONE_TASK_PLAN,
+  "critic:full-council": { verdict: "ENDORSE", safety: { flag: false, reason: null }, concerns: [] },
+  "task:t1": TASK_DONE,
+  "review:full": { verdict: "APPROVE_WITH_FINDINGS", findings: [P0_FINDING], aspects_examined: {}, summary: "one finding" },
+  "gate": VERIFY_PASS,
+  "fix:1": { status: "DONE", touched_files: ["a.py"], addressed: ["r0-f1"], refuted: [], commits: { base: "0000000", head: "f1x0000" } },
+  "re-review:1": { verdicts: [{ finding_id: "r0-f1", verdict: "ADDRESSED" }], new_breakage: [] },
+  "verify:1": VERIFY_PASS,
+};
+
+export const PIPELINE_LABELS = Object.keys(PIPELINE).map((role) => "s1:" + role);
+
+// Records the label and the prompt of every dispatch and answers each one with
+// the return above. An unmapped role throws under its own name: a new stage
+// must be mapped here rather than degrading a run into a fail-closed path in
+// silence, which would quietly narrow whatever a test built on this asserts.
+export const fullPipeline = () => {
+  const seen = [];
+  const agent = async (prompt, opts) => {
+    const label = String(opts.label);
+    const role = label.slice(label.indexOf(":") + 1);
+    const mapped = PIPELINE[role];
+    if (mapped === undefined) throw new Error("slice_wave_harness: no mock return mapped to role " + role);
+    seen.push({ label, prompt });
+    return mapped;
+  };
+  return { seen, agent };
+};

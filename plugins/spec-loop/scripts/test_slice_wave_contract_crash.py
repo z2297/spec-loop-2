@@ -233,11 +233,15 @@ class TestCrashesAreClassifiedAsInternalError(WorkflowSourceTestCase):
         # parallel() resolved the thunk to null: the slice died with no result
         # at all, outside runSlice's try/catch. Same one classification, per
         # the run's human-decided single-value constraint; the honest 'slice
-        # lost' title and its own question are kept.
+        # lost' title and its own question are kept. The record's ask is
+        # three-way, matching the three controller-named options it already
+        # carries, so a human answer binds to one of them.
         wave_entry = self.between(
             "const results = await parallel(", "log(`wave ")
         self.assertIn(SLICE_LOST_RECORD, wave_entry)
-        self.assertIn("Re-run the wave to retry this slice?", wave_entry)
+        self.assertIn(
+            "Retry this slice, skip it and continue the run, or stop the run "
+            "to investigate the silent failure?", wave_entry)
         self.assertNotIn("'budget-exhausted'", wave_entry)
 
     def test_the_lost_slice_record_denies_no_cause_it_cannot_prove(self):

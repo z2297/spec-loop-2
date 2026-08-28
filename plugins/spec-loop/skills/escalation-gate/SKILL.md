@@ -86,7 +86,7 @@ CONTROLLER as what applies it — matched to the `options` argument the wave-ent
 passes to `esc`, alongside the one `runSliceError` already passed. What still separates the two
 is the evidence and the ask: the exception record carries the exception text and the last
 stage/role dispatched and asks which of the three to take, while the lost-slice record carries
-neither and asks only whether to re-run the wave),
+neither and asks the same three-way question with its own tail, ending "or stop the run to investigate the silent failure"),
 and the council's **over-scope flag** (`critique.over_scope.flag`). The flag is a record: it is
 carried into the `council-verdict` payload and the slice sidecar with its reason, and it raises no
 escalation, changes no verdict, suppresses no split, and blocks nothing. There are exactly five
