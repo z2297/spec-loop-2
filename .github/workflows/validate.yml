@@ -68,10 +68,11 @@ jobs:
         # Scope: deterministic control flow only. The real Workflow-host seam
         # is NOT covered here — see the test file's own honest-limit header.
         run: |
-          # Two modules now: the second covers the plan-time refactor-radius gate, split out
-          # because the first sits at the 300-line class_lines ceiling.
+          # Three modules now: the third covers the optional-read guards and the post-OBJECT
+          # replan re-check, split out because the first sits at the 300-line class_lines ceiling.
           out=$(node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs \
-                            plugins/spec-loop/scripts/slice_wave_radius.test.mjs 2>&1)
+                            plugins/spec-loop/scripts/slice_wave_radius.test.mjs \
+                            plugins/spec-loop/scripts/slice_wave_replan.test.mjs 2>&1)
           rc=$?
           echo "$out"
           if [ "$rc" -ne 0 ]; then

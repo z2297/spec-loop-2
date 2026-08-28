@@ -533,11 +533,25 @@ Findings:
 ${JSON.stringify(findings, null, 1)}`
 }
 
+// FIX_RESULT.commits is optional (`required` is status/touched_files/addressed/
+// refuted), so reading `base` straight off `fix.commits` dereferences an object
+// that need not exist. It threw exactly that way during wave 1 of run 20260828
+// (the raw read is spelled out nowhere in this file on purpose: a contract test
+// pins its absence by source text) and the catch-all mislabelled the TypeError
+// as budget-exhausted, losing the whole wave. Same type tolerance as
+// scopeCeilingList: an object passes through, anything else becomes {} and the
+// caller falls back to the shas the slice already holds.
+// HONEST LIMIT: those fallback shas are the slice's own base/head, so a package
+// built from them can be WIDER than the fix round's own diff. That is
+// deliberate — a wider real package beats a `--base undefined` command that
+// cannot run at all.
+const fixCommits = (fix) => (fix && typeof fix.commits === 'object' && fix.commits) ? fix.commits : {}
+
 function reReviewPrompt(slice, state, findings, fix) {
   return `${packet(slice)}
 
 Re-review after a fix round for slice ${slice.id}. Build the fix-only package:
-  ${packageCmd(slice, fix.commits.base, fix.commits.head, `fix${state.review.fix_rounds}`)}
+  ${packageCmd(slice, fixCommits(fix).base || state.commits.base, fixCommits(fix).head || state.commits.head, `fix${state.review.fix_rounds}`)}
 Prior blocking findings (verdict each): ${JSON.stringify(findings, null, 1)}
 Fixer refutations to adjudicate: ${JSON.stringify(fix.refuted, null, 1)}`
 }
@@ -716,13 +730,59 @@ function refactorRadiusGate(slice, state, plan) {
   return esc(slice, 'refactor-scope', refactorAsk(slice, verdict))
 }
 
+// PLAN_RESULT.required is ['status'] only, so both branches below read a field
+// the schema never promised. Neither read is guarded upstream, and this exact
+// defect class has aborted a whole wave of this repo twice.
+
+// A split with no children array is schema-legal and unusable: passing it
+// through produced a sidecar that run_state.py's validator rejects one stage
+// later, far from the cause. Fail closed HERE instead. (PURE)
+const usableSplit = (s) => !!s && typeof s === 'object' && Array.isArray(s.children) && s.children.length > 0
+
+function splitResult(slice, state, plan) {
+  if (usableSplit(plan.split)) return doneResult(slice, state, 'SPLIT', { split: plan.split })
+  return escalated(slice, state, esc(slice, 'ambiguity', { title: 'planner returned SPLIT with no usable split object', context: 'The planner returned status SPLIT but no `split.children`. That is schema-legal (PLAN_RESULT requires only `status`) and unusable: passing it through writes a sidecar the run-state validator rejects one stage later. The slice is paused here, at the cause.', question: 'Re-dispatch the planner for this slice, split it by hand, or drop it?', options: [] }))
+}
+
+// One optional string field of an escalation record, or the substitute copy.
+// Every one of the four fields below needs the identical explicit type test,
+// and inlining it four times put planEscalation over the gate's
+// cyclomatic/cognitive thresholds for no gain in clarity. An empty string is
+// NOT a readable field: it would render as a blank line in the human's
+// decisions log, so it takes the fallback too. (PURE)
+const escText = (v, fallback) => (typeof v === 'string' && v) ? v : fallback
+
+// The substitute copy for a planner that escalated without saying anything.
+// Module-level so planEscalation stays a short list of guarded reads.
+const BARE_ESCALATION = {
+  title: 'planner escalated without a readable escalation record',
+  context: 'The planner returned status ESCALATE with no usable escalation object. The wave substituted this record so the slice pauses for a human instead of crashing the wave with a TypeError.',
+  question: 'The planner escalated without saying what it needs. Re-dispatch the planner, answer the slice goal directly, or drop the slice?',
+}
+
+// The trigger is TYPE-guarded, not enum-guarded: an unrecognized non-empty
+// string still passes through and will fail run_state.py's validate_escalation
+// downstream, exactly as it does today. Widening this to an enum check would
+// need a second copy of the enum in this file, and that enum has eight homes
+// already. Stated as a limit rather than silently half-fixed.
+function planEscalation(slice, plan) {
+  const e = (plan.escalation && typeof plan.escalation === 'object') ? plan.escalation : {}
+  const trigger = (typeof e.trigger === 'string' && e.trigger) ? e.trigger : 'ambiguity'
+  return esc(slice, trigger, {
+    title: escText(e.title, BARE_ESCALATION.title),
+    context: escText(e.context, BARE_ESCALATION.context),
+    question: escText(e.question, BARE_ESCALATION.question),
+    options: Array.isArray(e.options) ? e.options : [],
+  })
+}
+
 // Stage P — plan (+ right-size gate inside the planner)
 async function stagePlan(slice, state) {
   const plan = await dispatch(slice, state, 'plan', planPrompt(slice),
     { agentType: 'spec-loop:slice-planner', schema: PLAN_RESULT, effort: 'low' })
   if (!plan) return { stop: escalated(slice, state, esc(slice, 'ambiguity', { title: 'planner returned no result', context: 'The planner dispatch failed terminally.', question: 'Retry the slice, or drop it?', options: [] })) }
-  if (plan.status === 'SPLIT') return { stop: doneResult(slice, state, 'SPLIT', { split: plan.split }) }
-  if (plan.status === 'ESCALATE') return { stop: escalated(slice, state, esc(slice, plan.escalation.trigger, plan.escalation)) }
+  if (plan.status === 'SPLIT') return { stop: splitResult(slice, state, plan) }
+  if (plan.status === 'ESCALATE') return { stop: escalated(slice, state, planEscalation(slice, plan)) }
   const radius = refactorRadiusGate(slice, state, plan)
   if (radius) return { stop: escalated(slice, state, radius) }
   return { plan }
