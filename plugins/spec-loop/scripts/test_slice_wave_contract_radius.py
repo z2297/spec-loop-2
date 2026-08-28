@@ -64,6 +64,12 @@ AT_CEILING = {"rewrite_ratio": 0.5, "touched_existing_files": 8, "rewritten_line
 TINY = {"rewrite_ratio": 0.9, "touched_existing_files": 12, "rewritten_lines": 20}
 ZEROED = {"rewrite_ratio": 0, "touched_existing_files": 0, "rewritten_lines": 0}
 STRINGY = {"rewrite_ratio": "0.9", "touched_existing_files": "12"}
+RADIUS_BASIS_GUARD = "(typeof radius.basis === 'string' && radius.basis) ? radius.basis : null"
+BASIS_IN_BASE = "basis: radiusBasis(radius)"
+BASIS_IN_EVENT = "basis: verdict.basis,"
+BASIS_TEXT = "counted with git diff --stat against main"
+WITH_BASIS = dict(BIG, basis=BASIS_TEXT)
+BAD_BASIS = dict(BIG, basis=17)
 
 # Expected verdict fragments, hoisted for the same reason: a hanging
 # literal inside a test body is scored as real block nesting by the
@@ -194,6 +200,36 @@ class TestNoRadiusComparisonIsReachedByCoercion(WorkflowSourceTestCase):
     def test_the_three_no_fire_states_exist_as_their_own_named_branches(self):
         for marker in (NOT_CONFIGURED, NOT_MEASURED, EXCEEDED):
             self.assertIn(marker, self.region())
+
+
+# ---- the planner's basis reaches the human ----
+
+class TestTheBasisReachesTheHumanAndDecidesNothing(WorkflowSourceTestCase):
+    """The planner declares HOW it counted; a human weighing approve /
+    narrow / carve-out cannot weigh a number whose derivation is invisible.
+    The field is display-only, so these tests pin that it travels AND that
+    the verdict is identical with and without it."""
+
+    def test_the_basis_is_carried_on_the_verdict_and_out_to_the_event(self):
+        self.assertIn(BASIS_IN_BASE, self.between(RADIUS_START, RADIUS_END))
+        self.assertIn(BASIS_IN_EVENT, self.src)
+
+    def test_only_a_non_empty_string_is_accepted_as_a_basis(self):
+        self.assertIn(RADIUS_BASIS_GUARD, self.between(RADIUS_START, RADIUS_END))
+
+    def test_the_basis_travels_beside_measured_and_never_inside_it(self):
+        got = TestTheRadiusPredicateDecidesAndNotJustExists.radius_status(
+            self, [[WITH_BASIS, LIMITS], [BIG, LIMITS], [BAD_BASIS, LIMITS]])
+        self.assertEqual(got[0]["basis"], BASIS_TEXT)
+        self.assertIsNone(got[1]["basis"])
+        self.assertIsNone(got[2]["basis"])
+        self.assertNotIn("basis", got[0]["measured"])
+
+    def test_the_basis_changes_no_state_and_no_exceeded_list(self):
+        got = TestTheRadiusPredicateDecidesAndNotJustExists.radius_status(
+            self, [[WITH_BASIS, LIMITS], [BIG, LIMITS]])
+        self.assertEqual(got[0]["state"], got[1]["state"])
+        self.assertEqual(got[0]["exceeded"], got[1]["exceeded"])
 
 
 # ---- the declared block on PLAN_RESULT, and the planner instruction ----

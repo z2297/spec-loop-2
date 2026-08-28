@@ -168,3 +168,48 @@ test("the human answer reaches the planner prompt that raised the question", asy
   assert.ok(seen[0].includes("NARROW-IT-DOWN"));
   assert.ok(seen[0].includes('HUMAN ANSWER to your earlier "refactor-scope" escalation'));
 });
+
+// ── the planner's basis, display-only ─────────────────────────────────────
+// `basis` is the planner's one-sentence account of HOW it counted. The human
+// weighing "approve / narrow / carve out" cannot weigh a number whose
+// derivation is invisible, so it must reach both the event and the record.
+// It is DISPLAY-ONLY: no verdict may move on it, which is why the two tests
+// below pin the same state with and without it.
+const BASIS_TEXT = "counted with git diff --stat against main";
+const WITH_BASIS = { ...BIG, basis: BASIS_TEXT };
+const NO_BASIS = { rewrite_ratio: 0.9, touched_existing_files: 12, rewritten_lines: 900 };
+
+test("the radius event carries the planner's basis sentence verbatim", async () => {
+  const ev = await only(WITH_BASIS, RADIUS_DEFAULTS);
+  assert.equal(ev.payload.basis, BASIS_TEXT);
+});
+
+test("an omitted basis is recorded as null and never as an empty string", async () => {
+  const ev = await only(NO_BASIS, RADIUS_DEFAULTS);
+  assert.equal(ev.payload.basis, null);
+  assert.equal(ev.payload.state, "EXCEEDED");
+});
+
+test("a non-string basis is dropped rather than interpolated into the record", async () => {
+  const ev = await only({ ...BIG, basis: 17 }, RADIUS_DEFAULTS);
+  assert.equal(ev.payload.basis, null);
+});
+
+test("the escalation context tells the human how the planner counted", async () => {
+  const rec = record(await evaluate(WITH_BASIS, RADIUS_DEFAULTS));
+  assert.ok(rec.context.includes(BASIS_TEXT));
+});
+
+test("an unstated basis says so in the record instead of printing null", async () => {
+  const rec = record(await evaluate(NO_BASIS, RADIUS_DEFAULTS));
+  assert.ok(rec.context.includes("not stated"));
+  assert.equal(rec.context.includes("undefined"), false);
+});
+
+test("the basis never moves a verdict: the same numbers reach the same state", async () => {
+  const withB = await only(WITH_BASIS, RADIUS_DEFAULTS);
+  const withoutB = await only(NO_BASIS, RADIUS_DEFAULTS);
+  assert.equal(withB.payload.state, withoutB.payload.state);
+  assert.deepEqual(withB.payload.exceeded, withoutB.payload.exceeded);
+  assert.deepEqual(withB.payload.measured, withoutB.payload.measured);
+});

@@ -184,7 +184,7 @@ best-effort):
   The discard is therefore visible without waiting on a second cap record.
 - **`refactor-radius`** payload: `{summary, state, exceeded[], measured{rewrite_ratio,
   touched_existing_files, rewritten_lines}, thresholds{enabled, max_rewrite_ratio,
-  max_touched_existing_files, min_rewritten_lines}|null}`, plus `suppressed_by_answer: true`
+  max_touched_existing_files, min_rewritten_lines}|null, basis}`, plus `suppressed_by_answer: true`
   when a human has already answered this slice's `refactor-scope` escalation. Emitted by
   the wave's PLAN stage on EVERY evaluation — `state` is one of `NOT_CONFIGURED`,
   `DISABLED`, `NOT_MEASURED`, `WITHIN`, `BELOW_FLOOR`, `EXCEEDED`, and only `EXCEEDED`
@@ -196,6 +196,9 @@ best-effort):
   they cannot catch a blowup discovered mid-implementation, and no second,
   post-implementation checkpoint exists. `thresholds` is `null` only when
   `ctx.refactor_radius` was absent or unusable.
+  `basis` is the planner's own one-sentence account of how it counted, or `null` when it
+  stated none: it is DISPLAY-ONLY — carried so a human weighing the trade-off can see how
+  the number was reached — and no state, threshold or comparison reads it.
 - **`wave-collected`** payload carries the per-wave aggregates the workflow
   completion notification reports: `{index, agent_count, subagent_tokens,
   duration_ms}` — the honest wave-level token/duration channel while

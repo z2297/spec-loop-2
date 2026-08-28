@@ -263,6 +263,18 @@ function radiusNumbers(radius) {
   }
 }
 
+// The planner's one-sentence account of how it counted, or null. DISPLAY-ONLY
+// and deliberately kept OUT of `measured`: no comparison, threshold or state
+// reads it, and `measured` is the object two test layers deep-equal against
+// three numeric nulls. A non-string is dropped rather than stringified,
+// because "17" as a basis sentence is worse than an honest absence — the
+// whole point of the field is that a human weighing the trade-off can see HOW
+// the number was reached. (PURE)
+const radiusBasis = (radius) => {
+  if (!radius || typeof radius !== 'object' || Array.isArray(radius)) return null
+  return (typeof radius.basis === 'string' && radius.basis) ? radius.basis : null
+}
+
 // Which measured metrics sit ABOVE their ceiling. Both sides are checked for
 // null before the one comparison, so no comparison is ever reached by
 // coercion. Strictly greater-than: both settings are MAXIMA, so a plan
@@ -293,7 +305,7 @@ function radiusBelowFloor(m, limits) {
 // either halt every run with an old controller or halt none of them. (PURE)
 function refactorRadiusStatus(radius, limits) {
   const measured = radiusNumbers(radius)
-  const base = { measured, thresholds: limits, exceeded: [] }
+  const base = { measured, basis: radiusBasis(radius), thresholds: limits, exceeded: [] }
   if (!limits) return { ...base, thresholds: null, state: 'NOT_CONFIGURED', reason: 'ctx.refactor_radius is absent or is not an object, so no ceiling was compared' }
   if (!limits.enabled) return { ...base, state: 'DISABLED', reason: 'refactor_radius.enabled is false in the effective gate config' }
   if (measured.rewrite_ratio === null && measured.touched_existing_files === null) return { ...base, state: 'NOT_MEASURED', reason: 'the plan declared no usable refactor-radius number' }
@@ -671,7 +683,7 @@ function doneResult(slice, state, status, extra) {
 // human answering this needs the measurements AND the ceilings they were
 // judged against in the record itself, not a pointer to a config file they
 // would have to resolve by hand. (PURE)
-const radiusPhrase = (v) => `declared rewrite ratio ${v.measured.rewrite_ratio}, touched existing files ${v.measured.touched_existing_files}, rewritten lines ${v.measured.rewritten_lines}; ceilings ${v.thresholds.max_rewrite_ratio} ratio / ${v.thresholds.max_touched_existing_files} files, noise floor ${v.thresholds.min_rewritten_lines} lines`
+const radiusPhrase = (v) => `declared rewrite ratio ${v.measured.rewrite_ratio}, touched existing files ${v.measured.touched_existing_files}, rewritten lines ${v.measured.rewritten_lines}; ceilings ${v.thresholds.max_rewrite_ratio} ratio / ${v.thresholds.max_touched_existing_files} files, noise floor ${v.thresholds.min_rewritten_lines} lines; the planner counted this as: ${v.basis === null ? 'not stated' : v.basis}`
 
 // The trade-off ask. Three options because a yes/no would leave a human who
 // wants neither with nothing to pick, and because each of the three costs
@@ -708,6 +720,7 @@ function radiusEvent(slice, verdict, answered) {
       summary: `refactor radius ${verdict.state}: ${verdict.reason}`,
       state: verdict.state, exceeded: verdict.exceeded,
       measured: verdict.measured, thresholds: verdict.thresholds,
+      basis: verdict.basis,
       ...(answered ? { suppressed_by_answer: true } : {}),
     },
   }
