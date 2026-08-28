@@ -823,10 +823,10 @@ class TestDecisionLine(unittest.TestCase):
         self.assertNotIn("SCOPE", line)
 
     def test_refactor_radius_summary(self):
-        self.assertIn("refactor radius EXCEEDED: over the ceiling",
-                      self.line("refactor-radius",
-                                {"summary": "refactor radius EXCEEDED: over the ceiling",
-                                 "state": "EXCEEDED"}))
+        summary = "refactor radius EXCEEDED: over the ceiling"
+        payload = {"summary": summary, "state": "EXCEEDED"}
+        line = self.line("refactor-radius", payload)
+        self.assertIn(summary, line)
 
 
 class TestRenderReport(unittest.TestCase):
@@ -1053,12 +1053,15 @@ class TestAppendEvent(RunStateTestCase):
         # A threshold that declines to fire is the silent-exclusion defect
         # this event exists to prevent, so the NO-FIRE case has to reach the
         # human surface too, not only the machine-readable events.jsonl.
-        payload = {"summary": "refactor radius WITHIN: every declared number "
-                              "is at or under its ceiling", "state": "WITHIN"}
+        summary = (
+            "refactor radius WITHIN: every declared number "
+            "is at or under its ceiling"
+        )
+        payload = {"summary": summary, "state": "WITHIN"}
         event = rs.build_event(TS, "s1", "refactor-radius", payload)
         rs.append_event(self.run_dir, event)
-        self.assertIn("REFACTOR-RADIUS: refactor radius WITHIN",
-                     self.read("decisions-log.md"))
+        body = self.read("decisions-log.md")
+        self.assertIn("REFACTOR-RADIUS: refactor radius WITHIN", body)
 
     def test_escalation_opened_writes_a_full_entry(self):
         event = rs.build_event(TS, "s1", "escalation-opened", escalation())
