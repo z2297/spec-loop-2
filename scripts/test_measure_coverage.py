@@ -75,6 +75,47 @@ class NormalizeKeyTests(unittest.TestCase):
         self.assertIsNone(mc.normalize_key("/usr/lib/python3.12/trace.py"))
 
 
+class ResolveMainShimTests(unittest.TestCase):
+    def test_resolves_header_and_sys_exit_body(self):
+        src = "a = 1\nif __name__ == \"__main__\":\n    sys.exit(main())\n"
+        self.assertEqual(mc.resolve_main_shim(src, "synthetic.py"), {2, 3})
+
+    def test_resolves_a_raise_systemexit_body(self):
+        src = "a = 1\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"
+        self.assertEqual(mc.resolve_main_shim(src, "synthetic.py"), {2, 3})
+
+    def test_tolerates_a_pragma_comment_on_the_header(self):
+        src = "if __name__ == '__main__':  # pragma: no cover\n    sys.exit(main())\n"
+        self.assertEqual(mc.resolve_main_shim(src, "synthetic.py"), {1, 2})
+
+    def test_position_moves_with_the_file(self):
+        src = "\n" * 40 + "if __name__ == \"__main__\":\n    sys.exit(main())\n"
+        self.assertEqual(mc.resolve_main_shim(src, "synthetic.py"), {41, 42})
+
+    def test_absent_shim_raises(self):
+        with self.assertRaises(ValueError):
+            mc.resolve_main_shim("a = 1\n", "synthetic.py")
+
+    def test_two_shims_raise(self):
+        src = ("if __name__ == \"__main__\":\n    sys.exit(main())\n"
+               "if __name__ == \"__main__\":\n    sys.exit(main())\n")
+        with self.assertRaises(ValueError):
+            mc.resolve_main_shim(src, "synthetic.py")
+
+    def test_oversized_block_raises(self):
+        body = "".join("    x = %d\n" % n for n in range(mc.MAX_SHIM_LINES + 2))
+        with self.assertRaises(ValueError):
+            mc.resolve_main_shim("if __name__ == \"__main__\":\n" + body,
+                                 "synthetic.py")
+
+    def test_every_manifest_target_resolves_against_its_real_source(self):
+        for relpath in mc.TARGET_FILES:
+            source = mc._target_source_path(relpath).read_text()
+            resolved = mc.resolve_main_shim(source, relpath)
+            self.assertTrue(resolved, relpath)
+            self.assertLessEqual(max(resolved), source.count("\n") + 1, relpath)
+
+
 class ParseOmitTests(unittest.TestCase):
     def test_parses_single_line_and_range_with_rationale(self):
         text = textwrap.dedent(

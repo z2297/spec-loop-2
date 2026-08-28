@@ -46,6 +46,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import sys
 import trace
 import unittest
@@ -80,6 +81,19 @@ MIN_TESTS = 150
 # Anti-false-green: OMIT may not remove more than this fraction of any one
 # file's executable lines — a runaway range can't collapse a file to 0/0=100%.
 MAX_OMIT_FRACTION = 0.25
+
+# The one symbolic OMIT token. A manifest entry written as ``path:__main__`` is
+# resolved against the target's own source at measure time by ``resolve_main_shim``,
+# so a file that grows can never repoint the omission at ordinary executed code —
+# the failure mode that a pinned line range has and that this token removes.
+MAIN_SHIM_TOKEN = "__main__"
+
+# Anti-false-green: a resolved entry shim is a header plus a one-line body. Refusing
+# anything longer keeps the token from quietly omitting a large block that someone
+# indented beneath the header.
+MAX_SHIM_LINES = 5
+
+_MAIN_SHIM_RE = re.compile(r"^if\s+__name__\s*==\s*['\"]__main__['\"]\s*:")
 
 # Product modules that count toward coverage (basename -> relpath key).
 TARGET_FILES = (
@@ -196,6 +210,42 @@ def normalize_key(path: str) -> str | None:
         rel = Path(*parts[idx:])
         return rel.as_posix()
     return None
+
+
+def resolve_main_shim(source: str, relpath: str) -> set[int]:
+    """The 1-based line numbers of a module's ``__main__`` entry shim (PURE).
+
+    Scans for the ``if __name__ == "__main__":`` header and takes it together with
+    the indented block beneath it, stopping at the first line that returns to
+    column zero. Matching on the block rather than on a fixed body text keeps the
+    resolver correct for a module ending in ``raise SystemExit(main())`` as well as
+    one ending in ``sys.exit(main())``, and keeps it correct after the file grows.
+
+    Raises ``ValueError`` unless the source carries exactly one such header, and
+    unless the resolved block stays within ``MAX_SHIM_LINES``.
+    """
+    lines = source.splitlines()
+    headers = [n for n, text in enumerate(lines, 1) if _MAIN_SHIM_RE.match(text)]
+    if len(headers) != 1:
+        raise ValueError(
+            f"{relpath}: expected exactly one __main__ entry shim, "
+            f"found {len(headers)} — resolve the OMIT entry by hand."
+        )
+    start = headers[0]
+    resolved = {start}
+    for offset in range(start, len(lines)):
+        text = lines[offset]
+        if text.strip() and not text[:1].isspace():
+            break
+        resolved.add(offset + 1)
+    while resolved and not lines[max(resolved) - 1].strip():
+        resolved.discard(max(resolved))
+    if len(resolved) > MAX_SHIM_LINES:
+        raise ValueError(
+            f"{relpath}: __main__ entry shim resolved to {len(resolved)} lines "
+            f"(max {MAX_SHIM_LINES}) — refusing to omit a block that large."
+        )
+    return resolved
 
 
 def _parse_line_range(line_range: str, raw: str) -> tuple[int, int]:
