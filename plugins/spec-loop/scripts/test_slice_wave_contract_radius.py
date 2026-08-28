@@ -42,6 +42,7 @@ RATIO_GUARD = "const over = (v, max) => v !== null && max !== null && v > max"
 FLOOR_GUARD = "m.rewritten_lines !== null && limits.min_rewritten_lines !== null"
 NOT_CONFIGURED = "state: 'NOT_CONFIGURED'"
 NOT_MEASURED = "state: 'NOT_MEASURED'"
+NO_USABLE_CEILING = "state: 'NO_USABLE_CEILING'"
 EXCEEDED = "state: 'EXCEEDED'"
 COERCION_OPERATORS = (">=", "<=")
 
@@ -63,6 +64,10 @@ BIG = {"rewrite_ratio": 0.9, "touched_existing_files": 12, "rewritten_lines": 90
 AT_CEILING = {"rewrite_ratio": 0.5, "touched_existing_files": 8, "rewritten_lines": 900}
 TINY = {"rewrite_ratio": 0.9, "touched_existing_files": 12, "rewritten_lines": 20}
 ZEROED = {"rewrite_ratio": 0, "touched_existing_files": 0, "rewritten_lines": 0}
+NO_CEILINGS = {"enabled": True, "max_rewrite_ratio": None,
+               "max_touched_existing_files": None, "min_rewritten_lines": 150}
+STRING_CEILINGS = {"enabled": True, "max_rewrite_ratio": "0.5",
+                   "max_touched_existing_files": "8", "min_rewritten_lines": 150}
 STRINGY = {"rewrite_ratio": "0.9", "touched_existing_files": "12"}
 RADIUS_BASIS_GUARD = "(typeof radius.basis === 'string' && radius.basis) ? radius.basis : null"
 BASIS_IN_BASE = "basis: radiusBasis(radius)"
@@ -83,11 +88,11 @@ BOTH_CEILINGS = ["rewrite_ratio", "touched_existing_files"]
 # ---- the predicate, executed ----
 
 class TestTheRadiusPredicateDecidesAndNotJustExists(WorkflowSourceTestCase):
-    """Six states, none collapsed into another. A substring assertion can
+    """Seven states, none collapsed into another. A substring assertion can
     prove the word NOT_MEASURED appears in the file and nothing about which
     inputs reach it, so this class runs the real helpers under real node and
-    reads the verdicts back: absence, disablement, an unmeasured plan, a plan
-    exactly at its ceiling, a breach, and a breach under the noise floor."""
+    reads the verdicts back: absence, disablement, an unusable ceiling, an
+    unmeasured plan, a plan at its ceiling, a breach, and a noise-floor one."""
 
     def radius_status(self, cases):
         """refactorRadiusStatus() applied to each [plan, ctx] pair by node."""
@@ -163,6 +168,29 @@ class TestTheRadiusPredicateDecidesAndNotJustExists(WorkflowSourceTestCase):
         got = self.radius_status([[{"rewrite_ratio": 0.9}, LIMITS]])
         self.assertEqual(got[0]["state"], "EXCEEDED")
 
+    def test_a_configured_block_with_no_usable_ceiling_is_its_own_state(self):
+        # WITHIN used to claim "every declared number is at or under its
+        # ceiling", which no comparison supported: a silent no-op that passed.
+        got = self.radius_status([[BIG, NO_CEILINGS], [BIG, STRING_CEILINGS]])
+        self.assertEqual([g["state"] for g in got], ["NO_USABLE_CEILING"] * 2)
+        self.assertEqual([g["exceeded"] for g in got], [[], []])
+
+    def test_an_unusable_ceiling_is_reported_before_an_unmeasured_plan(self):
+        # A mistyped ceiling is an operator-config defect, and blaming the
+        # planner for it would leave the real defect invisible.
+        got = self.radius_status([[None, NO_CEILINGS]])
+        self.assertEqual(got[0]["state"], "NO_USABLE_CEILING")
+
+    def test_one_usable_ceiling_of_the_two_still_judges_the_plan(self):
+        # The second pair also pins that a ceiling of 0 is a real, if severe,
+        # ceiling: a falsy usability test would read it as no ceiling at all.
+        one = dict(NO_CEILINGS, max_touched_existing_files=8)
+        zero = dict(NO_CEILINGS, max_rewrite_ratio=0)
+        got = self.radius_status([[BIG, one], [BIG, zero]])
+        self.assertEqual([g["state"] for g in got], ["EXCEEDED"] * 2)
+        self.assertEqual(got[0]["exceeded"], ["touched_existing_files"])
+        self.assertEqual(got[1]["exceeded"], ["rewrite_ratio"])
+
     def test_every_verdict_carries_the_thresholds_it_compared_against(self):
         # A threshold that silently declines to fire is a permanent invisible
         # narrowing, so the no-fire and not-measured verdicts carry the
@@ -197,8 +225,8 @@ class TestNoRadiusComparisonIsReachedByCoercion(WorkflowSourceTestCase):
     def test_a_number_is_type_checked_before_it_is_ever_a_measurement(self):
         self.assertIn(RADIUS_NUM, self.region())
 
-    def test_the_three_no_fire_states_exist_as_their_own_named_branches(self):
-        for marker in (NOT_CONFIGURED, NOT_MEASURED, EXCEEDED):
+    def test_the_four_no_fire_states_exist_as_their_own_named_branches(self):
+        for marker in (NOT_CONFIGURED, NO_USABLE_CEILING, NOT_MEASURED, EXCEEDED):
             self.assertIn(marker, self.region())
 
 

@@ -297,17 +297,36 @@ function radiusBelowFloor(m, limits) {
   return known && m.rewritten_lines < limits.min_rewritten_lines
 }
 
-// Six states, none collapsed into another, and only EXCEEDED halts anything.
+// Whether an enabled block carries NO comparable ceiling at all. Only the two
+// MAXIMA count: min_rewritten_lines can only suppress a fire, never cause one,
+// so its absence never makes a configuration unusable. An explicit === null on
+// each side rather than a falsy test, because a ceiling of 0 is a real, if
+// severe, ceiling. Its own named predicate rather than an inline condition,
+// like radiusBreaches and radiusBelowFloor beside it: inlined, the branch took
+// refactorRadiusStatus over its cognitive-complexity threshold. (PURE)
+function radiusNoCeiling(limits) {
+  return limits.max_rewrite_ratio === null && limits.max_touched_existing_files === null
+}
+
+// Seven states, none collapsed into another, and only EXCEEDED halts anything.
 // The two halves of this check have opposite answers on purpose: a
-// measurement that is missing, unconfigured or disabled FAILS OPEN (proceed,
-// and the caller records it loudly), while a measurement that succeeded and
-// is over its ceiling FAILS CLOSED (halt and ask). Collapsing them would
-// either halt every run with an old controller or halt none of them. (PURE)
+// measurement that is missing, unconfigured, unusable or disabled FAILS OPEN
+// (proceed, and the caller records it loudly), while a measurement that
+// succeeded and is over its ceiling FAILS CLOSED (halt and ask). Collapsing
+// them would either halt every run with an old controller or halt none of
+// them. NO_USABLE_CEILING is checked BEFORE NOT_MEASURED deliberately: a
+// mistyped ceiling is an operator-config defect, and blaming the planner for
+// it would leave the real defect invisible. It is its own state rather than a
+// WITHIN, because "every declared number is at or under its ceiling" is a
+// claim no comparison supported when there is no ceiling to compare against —
+// a mistyped threshold used to report success while silently never firing.
+// (PURE)
 function refactorRadiusStatus(radius, limits) {
   const measured = radiusNumbers(radius)
   const base = { measured, basis: radiusBasis(radius), thresholds: limits, exceeded: [] }
   if (!limits) return { ...base, thresholds: null, state: 'NOT_CONFIGURED', reason: 'ctx.refactor_radius is absent or is not an object, so no ceiling was compared' }
   if (!limits.enabled) return { ...base, state: 'DISABLED', reason: 'refactor_radius.enabled is false in the effective gate config' }
+  if (radiusNoCeiling(limits)) return { ...base, state: 'NO_USABLE_CEILING', reason: 'refactor_radius is configured and enabled but neither ceiling is a usable number, so nothing was compared' }
   if (measured.rewrite_ratio === null && measured.touched_existing_files === null) return { ...base, state: 'NOT_MEASURED', reason: 'the plan declared no usable refactor-radius number' }
   const exceeded = radiusBreaches(measured, limits)
   if (!exceeded.length) return { ...base, state: 'WITHIN', reason: 'every declared number is at or under its ceiling' }

@@ -250,3 +250,54 @@ test("an empty round-1 answer still lets a real round-2 answer disarm the halt",
   const result = await evaluate(BIG, RADIUS_DEFAULTS, answers);
   assert.equal(record(result), undefined);
 });
+
+// ── a configured ceiling that cannot be compared ──────────────────────────
+// A mistyped ceiling ("0.5" as a string, or a key spelled wrong) survives
+// refactorLimits as null. WITHIN then claimed "every declared number is at or
+// under its ceiling" — a claim no comparison supported — so the gate reported
+// success while silently never firing again. That is exactly the invisible
+// permanent narrowing this repo's knowledge graph already names.
+const NO_CEILINGS = {
+  enabled: true, max_rewrite_ratio: null,
+  max_touched_existing_files: null, min_rewritten_lines: 150,
+};
+const STRING_CEILINGS = {
+  enabled: true, max_rewrite_ratio: "0.5",
+  max_touched_existing_files: "8", min_rewritten_lines: 150,
+};
+
+test("a configured block with no usable ceiling never claims a plan is within one", async () => {
+  const ev = await only(BIG, NO_CEILINGS);
+  assert.equal(ev.payload.state, "NO_USABLE_CEILING");
+  assert.equal(ev.payload.state === "WITHIN", false);
+});
+
+test("string ceilings are not ceilings and are reported as unusable", async () => {
+  const ev = await only(BIG, STRING_CEILINGS);
+  assert.equal(ev.payload.state, "NO_USABLE_CEILING");
+  assert.equal(ev.payload.thresholds.max_rewrite_ratio, null);
+});
+
+test("the unusable-ceiling summary says plainly that nothing was compared", async () => {
+  const ev = await only(BIG, NO_CEILINGS);
+  assert.ok(ev.payload.summary.startsWith("refactor radius NO_USABLE_CEILING"));
+  assert.ok(ev.payload.summary.includes("nothing was compared"));
+});
+
+test("an unusable ceiling fails open: the slice proceeds and raises nothing", async () => {
+  const result = await evaluate(BIG, NO_CEILINGS);
+  assert.equal(record(result), undefined);
+  assert.deepEqual(radiusEvents(result)[0].payload.exceeded, []);
+});
+
+test("one usable ceiling out of two is still a usable configuration", async () => {
+  const half = { ...RADIUS_DEFAULTS, max_rewrite_ratio: null };
+  const ev = await only(BIG, half);
+  assert.equal(ev.payload.state, "EXCEEDED");
+  assert.deepEqual(ev.payload.exceeded, ["touched_existing_files"]);
+});
+
+test("a missing noise floor alone never makes a ceiling unusable", async () => {
+  const ev = await only(BIG, { ...RADIUS_DEFAULTS, min_rewritten_lines: null });
+  assert.equal(ev.payload.state, "EXCEEDED");
+});
