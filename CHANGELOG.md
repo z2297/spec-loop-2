@@ -59,6 +59,12 @@ All notable changes to the spec-loop plugin are documented here. The format is
   record's shape with its own tail — the lost-slice record has no exception text to diagnose.
   Pinned by execution in `slice_wave_behaviour.test.mjs` and by source text in
   `test_slice_wave_contract_crash.py`.
+- **Gate figures either side of this release are not comparable.** The masking above changes
+  what a scan counts, so the `cyclomatic` and `cognitive` values a run writes to `metrics.json`
+  drop on source that did not change. Recorded runs dated 2026-08-25 and 2026-08-26 were
+  measured under the old semantics, against unmasked text. Reading a later run's numbers as a
+  trend against either of those reads a measurement change as a code change. Compare
+  like against like: post-release runs against post-release runs.
 
 ### Fixed
 - **The escalation-gate skill describes the lost-slice ask the wave actually emits.**
