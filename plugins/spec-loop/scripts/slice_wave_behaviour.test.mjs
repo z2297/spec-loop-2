@@ -93,10 +93,9 @@ test("a crash before any dispatch yields the no-stage title", async () => {
 
 const LOST = { parallel: async () => [null] };
 
-// Three-way, matching the crash record's shape: the record offers three
-// controller-named options, so a yes/no ask would leave a human answering "no"
-// bound to none of them. The tail differs from the crash record's on purpose —
-// this record carries no exception text to diagnose.
+// Three-way, matching the crash record's shape: the record offers three controller-named options,
+// so a yes/no ask would leave a human answering "no" bound to none of them. The tail differs from
+// the crash record's on purpose — this record carries no exception text to diagnose.
 const LOST_QUESTION =
   "Retry this slice, skip it and continue the run, or stop the run to investigate the silent failure?";
 
@@ -112,11 +111,10 @@ test("a lost slice escalates with the same trigger and its own title", async () 
   assert.equal(only(out).question, LOST_QUESTION);
 });
 
-// The lost-slice record used to rely on esc()'s empty-array substitution, which
-// yields ONE option labelled "Proceed with the recommended default" whose detail
-// repeats the whole context. The human ruled that widening this record to the same
-// three controller-named labels as the crash record is the fix. This test pins the
-// OPTION SET by execution; the ask itself is pinned separately, above.
+// The lost-slice record used to rely on esc()'s empty-array substitution, which yields ONE option
+// labelled "Proceed with the recommended default" whose detail repeats the whole context. The human
+// ruled that widening this record to the same three controller-named labels as the crash record is
+// the fix. This test pins the OPTION SET by execution; the ask itself is pinned separately, above.
 test("the lost-slice record carries the same three controller-named options", async () => {
   const rec = only(await runWave(ONE_SLICE(), LOST));
   assert.deepEqual(rec.options.map((o) => o.label), RECORD_OPTIONS);
@@ -127,11 +125,10 @@ test("the lost-slice record carries the same three controller-named options", as
   rec.options.forEach((o) => assert.ok(o.detail.includes("CONTROLLER")));
 });
 
-// The two internal-error records now share the trigger, the id shape and the three
-// option labels. What still separates them is the evidence and the ask: the crash
-// record carries exception text plus a stage attribution and asks which of the three
-// to take; the lost-slice record carries neither and asks the same three-way question with its own tail.
-// A future edit that collapses them into one indistinguishable record fails here.
+// The two internal-error records now share the trigger, the id shape and the three option labels. They
+// differ in evidence and in ask: the crash record carries exception text plus a stage attribution and
+// asks which of the three to take; the lost-slice record carries neither and asks the same three-way
+// question with its own tail. An edit collapsing them into one indistinguishable record fails here.
 test("the crash and lost-slice records stay distinguishable after the widening", async () => {
   const crash = only(await runWave(ONE_SLICE(), THROWS));
   const lost = only(await runWave(ONE_SLICE(), LOST));
@@ -232,11 +229,10 @@ test("the newest answered round wins with several rounds answered", async () => 
 });
 
 // ── the per-slice agent cap and its human-authorised raise (guard/agentCap) ──
-// Driven by EXECUTION, not by inspection: the twelve-task fixture in the
-// harness makes the wave spend one dispatch per task, so the tier-1 default of
-// ten is reached inside stageTasks and a raised cap is reached later, in
-// stageReviewGate. The caps themselves are the workflow's own CAPS values;
-// nothing here restates the rule, it reads the record the guard actually produced.
+// Driven by EXECUTION, not by inspection: the twelve-task fixture in the harness makes the wave
+// spend one dispatch per task, so the tier-1 default of ten is reached inside stageTasks and a
+// raised cap is reached later, in stageReviewGate. The caps themselves are the workflow's own CAPS
+// values; nothing here restates the rule, it reads the record the guard actually produced.
 
 const capWave = (overrides) => waveArgs([sliceFixture("s1")], {}, overrides);
 
@@ -289,29 +285,53 @@ test("the cap record's options name the controller action that applies a raise",
 
 const capEvents = (out) => out.results[0].events.filter((e) => e.type === "agent-cap-override");
 
-test("an applied raise is recorded as one auditable event", async () => {
+// A supplied override the channel cannot use leaves the tier default in force. Announcing it at
+// slice start is the point: silence hides the discard until the slice hits the cap a second time.
+// It stays out of the agent-cap-override event, whose payload means a raise that took effect.
+const discards = (out) => out.results[0].events.filter(
+  (e) => e.type === "decision" && String(e.payload.summary).startsWith("agent cap override"));
+
+test("an applied raise is recorded as one auditable event, announcing no discard", async () => {
   const out = await runWave(capWave({ agent_cap_overrides: { s1: 14 } }), capAgent());
   assert.equal(capEvents(out).length, 1);
   assert.equal(capEvents(out)[0].scope, "s1");
   assert.deepEqual(capEvents(out)[0].payload, { tier: 1, default_cap: 10, effective_cap: 14 });
+  assert.equal(discards(out).length, 0);
 });
 
-test("no override means no override event at all", async () => {
+test("no override means no override event and no discard either", async () => {
   const out = await runWave(capWave(undefined), capAgent());
   assert.equal(capEvents(out).length, 0);
+  assert.equal(discards(out).length, 0);
 });
 
-test("an ignored override records nothing, matching the cap it left alone", async () => {
+test("an override below the tier default records no raise and is announced once", async () => {
   const out = await runWave(capWave({ agent_cap_overrides: { s1: 5 } }), capAgent());
+  assert.equal(capEvents(out).length, 0);
+  assert.equal(discards(out).length, 1);
+});
+
+test("a fractional override leaves the tier default in force and is announced once", async () => {
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: 10.5 } }), capAgent());
+  assert.equal(only(out).title, "agent cap reached (10)");
+  assert.equal(out.results[0].agents_used, 10);
+  assert.equal(discards(out).length, 1);
+  assert.equal(discards(out)[0].scope, "s1");
+  assert.ok(discards(out)[0].payload.summary.includes("10.5"));
   assert.equal(capEvents(out).length, 0);
 });
 
-// budget-exhausted requests a resource, so its answer is deliberately injected
-// into no agent prompt. The source-text twin of this lives in
-// test_slice_wave_contract.py; this one drives a real answer through a slice
-// that runs plan through verify and reads all eight prompts that run built.
-// The label set is asserted too, so the pin cannot narrow in silence, and the
-// ambiguity answer alongside it proves injection was live at the same time.
+test("an override keyed to no slice of the wave is announced too", async () => {
+  const out = await runWave(capWave({ agent_cap_overrides: { s2: 30 } }), capAgent());
+  assert.equal(discards(out).length, 1);
+  assert.ok(discards(out)[0].payload.summary.includes("s2"));
+});
+
+// budget-exhausted requests a resource, so its answer is deliberately injected into no agent
+// prompt. The source-text twin of this lives in test_slice_wave_contract.py; this one drives a
+// real answer through a slice that runs plan through verify and reads all eight prompts that run
+// built. The label set is asserted too, so the pin cannot narrow in silence, and the ambiguity
+// answer alongside it proves injection was live at the same time.
 test("a budget-exhausted answer reaches no prompt of a whole slice run", async () => {
   const cap = fullPipeline();
   const answers = { "s1:budget-exhausted": "RAISE-IT-TO-40", "s1:ambiguity": "ANSWER-CTL" };

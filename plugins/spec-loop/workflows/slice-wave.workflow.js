@@ -993,17 +993,43 @@ function runSliceError(slice, state, e) {
 // once the raise has actually taken effect. The payload names the tier as it stands
 // at slice start; maybePromoteTier can raise the tier later, and agentCap recomputes
 // the effective cap at every dispatch, so the event is a record of the authorisation
-// rather than a prediction of the final bound.
+// rather than a prediction of the final bound. A supplied override that took no
+// effect is announced by recordDiscardedOverride instead.
+
+// A supplied override the channel cannot use leaves the tier default in force.
+// Announcing that once, at slice start, is the point: silence hides the discard
+// until the slice reaches the cap a second time. It stays OUT of the
+// agent-cap-override event, whose payload means a raise that took effect.
+function recordDiscardedOverride(slice, state, base) {
+  const supplied = JSON.stringify(CAP_OVERRIDES[slice.id])
+  state.events.push({ scope: slice.id, type: 'decision', payload: { summary: `agent cap override ${supplied} discarded: the channel takes an integer above the tier ${state.review_tier} default ${base}`, rationale: 'the override raises only, on an integer value; the tier default stays in force', reversibility: 'n/a' } })
+}
+
+// A key naming no slice of this wave raises nothing and belongs to no slice's
+// own record, so it is announced once, on the wave's first slice, rather than
+// dying silent.
+function recordUnmatchedOverrides(slice, state) {
+  const ids = A.slices.map(s => s.id)
+  const unmatched = Object.keys(CAP_OVERRIDES).filter(k => !ids.includes(k))
+  if (!unmatched.length || slice.id !== ids[0]) return
+  state.events.push({ scope: slice.id, type: 'decision', payload: { summary: `agent cap override keys naming no slice of this wave, raising nothing: ${unmatched.join(', ')}`, rationale: 'the override map is keyed by slice id; a key matching none of the dispatched slices reaches no guard', reversibility: 'n/a' } })
+}
+
 function recordCapOverride(slice, state) {
   const base = CAPS[state.review_tier]
   const cap = agentCap(slice, state)
-  if (cap === base) return
+  const supplied = Object.prototype.hasOwnProperty.call(CAP_OVERRIDES, slice.id)
+  if (cap === base) {
+    if (supplied) recordDiscardedOverride(slice, state, base)
+    return
+  }
   state.events.push({ scope: slice.id, type: 'agent-cap-override', payload: { tier: state.review_tier, default_cap: base, effective_cap: cap } })
 }
 
 async function runSlice(slice) {
   const state = initSliceState(slice)
   recordCapOverride(slice, state)
+  recordUnmatchedOverrides(slice, state)
   try {
     return await runStages(slice, state)
   } catch (e) {
