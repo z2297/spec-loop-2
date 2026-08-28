@@ -322,3 +322,35 @@ test("the cap record's options name the controller action that applies a raise",
   rec.options.forEach((o) => assert.ok(o.detail.includes("CONTROLLER")));
   assert.equal(rec.question, "Raise the cap and resume, accept the slice as-is, or drop it?");
 });
+
+const capEvents = (out) => out.results[0].events.filter((e) => e.type === "agent-cap-override");
+
+test("an applied raise is recorded as one auditable event", async () => {
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: 14 } }), CAP_AGENT);
+  assert.equal(capEvents(out).length, 1);
+  assert.equal(capEvents(out)[0].scope, "s1");
+  assert.deepEqual(capEvents(out)[0].payload, { tier: 1, default_cap: 10, effective_cap: 14 });
+});
+
+test("no override means no override event at all", async () => {
+  const out = await runWave(capWave(undefined), CAP_AGENT);
+  assert.equal(capEvents(out).length, 0);
+});
+
+test("an ignored override records nothing, matching the cap it left alone", async () => {
+  const out = await runWave(capWave({ agent_cap_overrides: { s1: 5 } }), CAP_AGENT);
+  assert.equal(capEvents(out).length, 0);
+});
+
+// budget-exhausted asks for a resource, so its answer is deliberately not injected
+// into any agent prompt. The source-text twin of this lives in
+// test_slice_wave_contract.py; this one drives a real answer through the wave and
+// reads every prompt the workflow actually built.
+test("a budget-exhausted answer reaches no agent prompt", async () => {
+  const cap = capturePrompts();
+  const args = waveArgs([sliceFixture("s1")], { "s1:budget-exhausted": "RAISE-IT-TO-40" });
+  await runWave(args, { agent: cap.agent });
+  assert.ok(cap.seen.length > 0);
+  cap.seen.forEach((p) => assert.ok(!p.includes("RAISE-IT-TO-40")));
+  cap.seen.forEach((p) => assert.ok(!p.includes("budget-exhausted")));
+});

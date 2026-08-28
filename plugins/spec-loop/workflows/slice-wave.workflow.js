@@ -987,8 +987,23 @@ function runSliceError(slice, state, e) {
   return escalated(slice, state, esc(slice, 'internal-error', { title, context, question, options }))
 }
 
+// An authorised cap raise is a single-dispatch exception to a bound the loop owns,
+// so it belongs in the machine channel rather than being inferable only from a
+// larger agents_used. Emitted once per slice dispatch, at slice start, and only
+// once the raise has actually taken effect. The payload names the tier as it stands
+// at slice start; maybePromoteTier can raise the tier later, and agentCap recomputes
+// the effective cap at every dispatch, so the event is a record of the authorisation
+// rather than a prediction of the final bound.
+function recordCapOverride(slice, state) {
+  const base = CAPS[state.review_tier]
+  const cap = agentCap(slice, state)
+  if (cap === base) return
+  state.events.push({ scope: slice.id, type: 'agent-cap-override', payload: { tier: state.review_tier, default_cap: base, effective_cap: cap } })
+}
+
 async function runSlice(slice) {
   const state = initSliceState(slice)
+  recordCapOverride(slice, state)
   try {
     return await runStages(slice, state)
   } catch (e) {
