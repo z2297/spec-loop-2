@@ -3,10 +3,10 @@
 Split out of ``test_measure_coverage.py`` (which keeps the executable-line,
 path-key, OMIT-parsing and threshold tests) to keep each test module a
 manageable size. Covers ``resolve_main_shim`` and its two extracted helpers
-directly, and separately
-asserts that the shipped ``coverage_omit.txt`` manifest — parsed and
-resolved through the real code paths, never a fixture copy — names every
-target's shim symbolically and resolves to that file's own shim header.
+directly, and separately asserts that the shipped ``coverage_omit.txt``
+manifest — parsed and resolved through the real code paths, never a fixture
+copy — names every target's shim symbolically and resolves to that file's
+own shim header.
 
 Usage: python3 -m unittest scripts.test_measure_coverage_manifest
        (or) python3 scripts/test_measure_coverage_manifest.py
