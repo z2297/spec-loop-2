@@ -23,6 +23,20 @@ All notable changes to the spec-loop plugin are documented here. The format is
   replan is not re-evaluated; and a controller that does not thread `ctx.refactor_radius`
   records `NOT_CONFIGURED` and never halts.
 
+### Changed
+- **The autonomy contract now names six judgment triggers instead of five.**
+  `skills/escalation-gate/SKILL.md` adds `refactor-scope` as the sixth SURFACE trigger and
+  describes it accurately as the only one raised by the workflow's own arithmetic, at plan
+  time, on a measured breach; the same file keeps its separate, unchanged point that the
+  council's `over_scope` flag is a record that decides nothing and is still not a trigger.
+  `agents/slice-planner.md` gains the doctrine for declaring `rewrite_ratio`,
+  `touched_existing_files`, `rewritten_lines` and `basis` — numbers only, never a verdict, and
+  omitted rather than guessed as a zero — and `commands/spec-loop.md` applies the six-trigger
+  test and states how a `refactor-scope` answer is threaded back. Honest limits: this change is
+  prose and its new tests are substring assertions over that prose, so they prove the doctrine
+  is present and its five-trigger predecessor is gone, and nothing about whether an agent obeys
+  it; no runtime behaviour changes here, and the five-trigger sentences in `README.md` and
+  `references/risk-tiers.md` are not touched by this change.
 ### Fixed
 - **A council objection resolved by a replan no longer passes on the revision's status
   alone.** `slice-wave.workflow.js` used to accept a post-`OBJECT` revision whenever it came
