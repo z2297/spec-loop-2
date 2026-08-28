@@ -7,6 +7,7 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-08-28
 ### Added
 - **The quality gate counts branch keywords in code, not in prose.** `quality_gate.py` now
   masks the content of string literals and comments before it scans a source, so a branch word
@@ -445,7 +446,8 @@ schemas, agents, and internals redesigned; see
   and the `--budget` flag (cost control is structural: caps + bounds; the
   Workflow token ceiling activates when the session sets a token target).
 
-[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.2.2...HEAD
+[2.2.2]: https://github.com/z2297/spec-loop-2/releases/tag/v2.2.2
 [2.2.1]: https://github.com/z2297/spec-loop-2/releases/tag/v2.2.1
 [2.2.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.2.0
 [2.1.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.1.0
