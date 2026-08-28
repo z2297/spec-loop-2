@@ -93,7 +93,8 @@ deadlock is itself an escalation):
    thorough, polish}, slices: [{id, goal, files, subsystems, risk_tier, depth, worktree,
    branch, base_sha, kg_snippet}] (per-slice only —
    the scope ceiling is run-level and travels in ctx, never duplicated here),
-   answers: {}}` — then invoke
+   answers: {}, agent_cap_overrides: {} (optional; see step 7 — omit it on a normal
+   dispatch)}` — then invoke
    the Workflow named `spec-loop:slice-wave` (fallback: `scriptPath:
    "${CLAUDE_PLUGIN_ROOT}/workflows/slice-wave.workflow.js"`). Pass `args` as a real
    JSON object in the tool call, never a JSON-encoded string — a stringified object
@@ -136,8 +137,23 @@ deadlock is itself an escalation):
    `answers` map carrying EVERY answered escalation of the run, all rounds included, not
    just the newest: dropping an earlier round's key reissues the id that round already
    answered. Retaining the older keys surfaces no stale text to a slice, since the wave
-   still reads only the newest answered round. Then
-   **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
+   still reads only the newest answered round.
+
+   A `budget-exhausted` record is a resource request, not a judgment: the wave injects
+   its answer into no prompt, so writing the answer back changes nothing on its own. The
+   AGENT-CAP variant of that record ("agent cap reached (N)") has a lever — after the
+   human authorises a raise, hand the very next dispatch `agent_cap_overrides:
+   {"<slice-id>": <integer>}` alongside the usual `answers` map. `agentCap` in the wave
+   reads it, the structural guard enforces the raised number, and an `agent-cap-override`
+   event records the authorisation. Two rules bind you. The override is single-dispatch:
+   it belongs to the one re-dispatch the human authorised, so drop it from every later
+   dispatch of the run rather than carrying it forward like `answers`. And it only ever
+   raises — a value at or below the tier default is discarded by the wave, so it is no
+   route to a tighter bound either. The TOKEN-FLOOR variant ("token budget exhausted")
+   has no such lever: its resource is the wave budget the host supplies, and no args
+   field in this contract changes the stage floor.
+
+   Then **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
    whose sidecars are not DONE/SPLIT (merged work never re-enters a wave; its worktree is
    already gone) — same `ctx`, `answers` filled in, and `resumeFromRunId: <wf_id>` so the
    escalated slices' completed stages replay from the journal where the cache holds. Never
