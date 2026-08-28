@@ -98,7 +98,7 @@ ANSWER_CONTEXT_START = "const answerContext = (slice, trigger) => {"
 ANSWER_CONTEXT_END = "\n}\n"
 ANSWERABLE_TRIGGERS = (
     "ambiguity", "material-assumption", "review-block",
-    "council-objection", "quality-gate-block")
+    "council-objection", "quality-gate-block", "refactor-scope")
 CRITIQUE_REQUIRED = "required: ['verdict', 'safety', 'concerns']"
 FAIL_CLOSED_DEFAULT = "unreadable critic verdict (fail closed)"
 OVER_SCOPE_DEFAULT = "over_scope: null"

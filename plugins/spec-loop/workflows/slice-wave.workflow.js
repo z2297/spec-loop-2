@@ -348,6 +348,12 @@ const answerContext = (slice, trigger) => {
   return a ? `\nHUMAN ANSWER on the earlier "${trigger}" escalation, for context only — it does NOT change what you report: the suite result and quality.summary_pass/violations stay verbatim from the real output: ${a}` : ''
 }
 
+// refactor-scope is raised by the plan stage, so its answer is read back HERE and nowhere
+// else: a trigger whose answer never re-enters the prompt of the stage that raised it is
+// structurally unanswerable by re-dispatch and the human's answer is silently discarded
+// (the quality-gate-block outage this file already carries). The planner is an actor, not a
+// transcriber, so this is answerFor (an instruction) rather than answerContext. replanPrompt
+// interpolates planPrompt(slice), so it inherits the read-back and must not repeat the call.
 function planPrompt(slice) {
   return `${packet(slice)}
 
@@ -355,7 +361,7 @@ Plan slice ${slice.id} of run ${A.run_id}: ${slice.goal}
 Named files: ${slice.files.join(', ') || '(none named)'} · Subsystems: ${slice.subsystems.join(', ') || '—'}
 Risk tier: ${slice.risk_tier} · Split depth: ${slice.depth} (split allowed only below depth 2)
 Write the plan to exactly: ${CTX.run_dir}/plans/${slice.id}.md
-Test/build command for verification steps: ${CTX.test_command}${answerFor(slice, 'ambiguity')}${answerFor(slice, 'material-assumption')}`
+Test/build command for verification steps: ${CTX.test_command}${answerFor(slice, 'ambiguity')}${answerFor(slice, 'material-assumption')}${answerFor(slice, 'refactor-scope')}`
 }
 
 function criticPrompt(slice, plan, role) {
