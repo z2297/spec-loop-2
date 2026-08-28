@@ -246,11 +246,13 @@ def load_config(path, overlay_path=None):
     yields the documented defaults.
 
     The per-repo overlay (committed `.spec-loop/quality-gate.json`) deep-merges
-    over the global config: threshold keys override, `tier3_surfaces` unions
-    (the overlay extends, it cannot remove a surface), `custom_gates` concat,
-    other keys override. Both files predate the run — the guard hook denies
-    writes to either while a run is active — so any loosening in an overlay is
-    a deliberate, committed human choice, visible in review.
+    over the global config: threshold keys override, `refactor_radius` keys
+    override KEY-WISE (tuning one number never drops its siblings),
+    `tier3_surfaces` unions (the overlay extends, it cannot remove a surface),
+    `custom_gates` concat, other keys override. Both files predate the run —
+    the guard hook denies writes to either while a run is active — so any
+    loosening in an overlay is a deliberate, committed human choice, visible
+    in review.
     """
     raw = {} if not path or not os.path.exists(path) else _read_config_object(path, "config")
     source = "defaults" if not raw else "loaded"
@@ -265,6 +267,13 @@ def load_config(path, overlay_path=None):
         merged["tier3_surfaces"] = sorted(
             set(raw.get("tier3_surfaces") or []) | set(overlay.get("tier3_surfaces") or [])
         )
+        # refactor_radius merges KEY-WISE, like thresholds and unlike the
+        # dict.update() fall-through above. A repo overlay that tunes one number
+        # would otherwise replace the whole block and silently drop the other
+        # three keys, handing the operator defaults they never chose.
+        merged_radius = _radius_object(raw.get("refactor_radius"), "config")
+        merged_radius.update(_radius_object(overlay.get("refactor_radius"), "overlay"))
+        merged["refactor_radius"] = merged_radius
         raw = merged
         source = ("loaded+overlay" if source == "loaded" else "defaults+overlay")
     thresholds = dict(DEFAULT_THRESHOLDS)

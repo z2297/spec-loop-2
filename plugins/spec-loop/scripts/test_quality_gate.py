@@ -418,6 +418,63 @@ class TestLoadConfig(unittest.TestCase):
         with self.assertRaises(qg.GateError):
             qg.load_config(base, fh.name)
 
+    def test_an_overlay_tuning_one_radius_number_does_not_drop_its_siblings(self):
+        base = self._tmp_json({
+            "refactor_radius": {"enabled": True, "max_rewrite_ratio": 0.4,
+                                "max_touched_existing_files": 6,
+                                "min_rewritten_lines": 120},
+        })
+        overlay = self._tmp_json({"refactor_radius": {"max_rewrite_ratio": 0.3}})
+        cfg, src = qg.load_config(base, overlay)
+        self.assertEqual(src, "loaded+overlay")
+        self.assertEqual(cfg["refactor_radius"], {
+            "enabled": True,
+            "max_rewrite_ratio": 0.3,
+            "max_touched_existing_files": 6,
+            "min_rewritten_lines": 120,
+        })
+
+    def test_an_overlay_radius_key_over_a_global_without_the_block_keeps_defaults(self):
+        base = self._tmp_json({"thresholds": {"method_lines": 40}})
+        overlay = self._tmp_json({"refactor_radius": {"max_touched_existing_files": 4}})
+        cfg, _ = qg.load_config(base, overlay)
+        self.assertEqual(cfg["refactor_radius"]["max_touched_existing_files"], 4)
+        self.assertEqual(cfg["refactor_radius"]["max_rewrite_ratio"],
+                         qg.DEFAULT_REFACTOR_RADIUS["max_rewrite_ratio"])
+        self.assertEqual(cfg["refactor_radius"]["min_rewritten_lines"],
+                         qg.DEFAULT_REFACTOR_RADIUS["min_rewritten_lines"])
+
+    def test_a_non_object_refactor_radius_in_the_overlay_is_a_hard_error(self):
+        base = self._tmp_json({"refactor_radius": {"max_rewrite_ratio": 0.4}})
+        overlay = self._tmp_json({"refactor_radius": 0.9})
+        with self.assertRaises(qg.GateError) as ctx:
+            qg.load_config(base, overlay)
+        self.assertIn("refactor_radius", str(ctx.exception))
+
+    def test_a_non_object_refactor_radius_in_the_base_is_a_hard_error_under_an_overlay(self):
+        base = self._tmp_json({"refactor_radius": ["nope"]})
+        overlay = self._tmp_json({"thresholds": {"method_lines": 40}})
+        with self.assertRaises(qg.GateError):
+            qg.load_config(base, overlay)
+
+    def test_print_config_surfaces_the_merged_refactor_radius_block(self):
+        base = self._tmp_json({"refactor_radius": {"max_touched_existing_files": 6}})
+        overlay = self._tmp_json({"refactor_radius": {"max_rewrite_ratio": 0.3}})
+        proc = subprocess.run(
+            [sys.executable, os.path.join(os.path.dirname(__file__), "quality_gate.py"),
+             "--config", base, "--overlay", overlay, "--print-config"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["source"], "loaded+overlay")
+        self.assertEqual(out["config"]["refactor_radius"], {
+            "enabled": True,
+            "max_rewrite_ratio": 0.3,
+            "max_touched_existing_files": 6,
+            "min_rewritten_lines": qg.DEFAULT_REFACTOR_RADIUS["min_rewritten_lines"],
+        })
+
     def test_print_config_cli(self):
         base = self._tmp_json({"tier3_surfaces": ["**/auth/**"]})
         proc = subprocess.run(
