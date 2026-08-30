@@ -1,0 +1,343 @@
+{
+  "schema_version": 2,
+  "id": "s3",
+  "status": "ESCALATED",
+  "branch": "spec-loop/20260828-refactor-escalation/s3",
+  "commits": {
+    "base": "b5e39c9da968dfab632d7ffcf50e0ca88b4bea7b",
+    "head": "64bb2d4c1e26625aa62a5c55537b0ea765c9e06b"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 13,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 7,
+  "review": {
+    "confirmed": 2,
+    "refuted": 3,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: When ctx.refactor_radius is present but BOTH maxima are unusable (null, a string, or absent from a hand-built block), refactorLimits() nulls them, radiusBreaches() can never fire, and every plan lands on WITHIN with the reason 'every declared number is at or under its ceiling' — a claim no comparison supports. The plan side has an explicit NOT_MEASURED branch for exactly this shape (line 299, both numbers null); the config side has no equivalent, so a mistyped ceiling makes the gate a permanent no-op that reports success. quality_gate.py's _radius_object validates only that the block is a dict, not the type of each value, so `\"max_rewrite_ratio\": \"0.5\"` or `null` in a repo overlay reaches ctx intact. The payload does carry thresholds:{...:null}, so this is not fully invisible, but the state and the summary line both assert a comparison that did not happen.",
+      "P2: `answered` is computed from answer-KEY presence, while the same answer's content reaches the planner through answerFor() -> latestAnswer(), which requires a TRUTHY value. An answers entry whose value is empty/null (\"s1:refactor-scope\": \"\") therefore disarms the halt for that slice permanently AND injects nothing into the planner prompt: the slice proceeds with the over-ceiling plan and the planner never learns a human ruled on it. The file's own precedent for answered-means-proceed is resolveCouncilObjection, which gates on latestAnswer() truthiness, not on key presence.",
+      "P3: `suppressed_by_answer: true` is attached on the basis of `answered` alone, independent of the verdict, so the ordinary success path after a human answers — human says 'narrow it', planner narrows, verdict is WITHIN — emits an event that claims a suppression that never occurred. run-state-v2.md defines the field as 'a human has already answered', so docs and code agree, but the name asserts suppression and an events.jsonl consumer will read it that way. The new test 'a no-fire evaluation is never marked as suppressed by an answer' only exercises the no-answer case, so it gives no coverage of this combination.",
+      "P3: Confirming the implementer's explicit question: radiusPhrase's unguarded `v.thresholds.*` dereference cannot throw today. refactorAsk is reached only from the EXCEEDED return, and refactorRadiusStatus returns NOT_CONFIGURED (thresholds null) before EXCEEDED is reachable, so thresholds is always an object there. The measured fields can still print the literal 'null' (e.g. an EXCEEDED-on-ratio plan that declared no touched_existing_files renders 'touched existing files null' in the human copy), which is cosmetic. The residual risk is structural, not live: the safety argument lives entirely in call-site control flow, in a file with live history of an unguarded optional read aborting a wave, so any future caller that builds the ask from a non-EXCEEDED verdict crashes the whole slice.",
+      "P3: The stated reason for putting `summary` first is factually wrong about run_state.py. _summarize() iterates SUMMARY_TEXT_KEYS in ITS OWN priority order ('summary' first) and returns the first payload key that is present; the payload's own key order is never consulted. The corresponding mjs assertion `assert.equal(Object.keys(ev.payload)[0], \"summary\")` therefore pins a property that has no effect on rendering, and a future editor who reorders the payload will read this comment as a hard constraint it is not.",
+      "P2: The PLAN_RESULT schema comment claims the planner's `basis` field is 'carried for a human reading the escalation and never parsed,' but no code path actually threads `basis` anywhere: `radiusNumbers()` normalises `plan.refactor_radius` and drops `basis` entirely, so it never reaches `verdict.measured`, `radiusEvent()`'s payload, or `refactorAsk()`/`radiusPhrase()`'s escalation context. A human answering the narrow/approve/carve-out question never sees the planner's stated rationale for its declared numbers, despite the comment's explicit promise that they would.",
+      "P2: `radiusEvent()`'s `suppressed_by_answer` flag is set whenever an answer key exists for the slice's `refactor-scope` trigger (`answerKeysFor(slice.id, 'refactor-scope').length > 0`), independent of the current verdict's `state`. So a slice that was previously answered (e.g. the human chose 'narrow the plan') and later re-plans to a non-EXCEEDED state (WITHIN/BELOW_FLOOR/etc.) will still emit `suppressed_by_answer: true` on that no-fire evaluation, which reads as 'a breach was silently allowed' when nothing was actually suppressed. The test named 'a no-fire evaluation is never marked as suppressed by an answer' does not exercise this — it calls `only(SMALL, RADIUS_DEFAULTS)` with no `answers` argument at all, so it only proves the trivial case (no answer key exists), not the interaction the test name implies (a no-fire verdict on a slice that HAS an answer on file)."
+    ]
+  },
+  "tests": null,
+  "quality": {
+    "status": "FAIL",
+    "detail": "Quality gate exited 1 with JSON report. Five violations: nesting_depth exceeded in two test functions (test_refactor_radius_summary: 7 vs threshold 3, test_a_refactor_radius_event_renders_a_log_line: 6 vs threshold 3); class_lines exceeded in three files (run_state.py: 1080 vs threshold 300, test_run_state.py: 1755 vs threshold 300, slice-wave.workflow.js: 1098 vs threshold 300)."
+  },
+  "escalations": [
+    {
+      "id": "s3:quality-gate-block",
+      "trigger": "quality-gate-block",
+      "title": "verification failed",
+      "context": "suite: All suite segments passed: marketplace validation OK, 126 scripts tests passed, 1334 plugins/spec-loop/scripts tests passed, 1460 coverage tests passed (3 skipped) with all floors met, 48 dashboard_assets node tests passed, 35 slice_wave_behaviour node tests passed, plugin validation passed.; quality: FAIL (summary_pass=false — Quality gate produced JSON with exit code 1. Three class_lines threshold violations: run_state.py (1080/300), test_run_state.py (1758/300), slice-wave.workflow.js (1098/300). All other metrics passed.)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: All suite segments passed: marketplace validation OK, 126 scripts tests passed, 1334 plugins/spec-loop/scripts tests passed, 1460 coverage tests passed (3 skipped) with all floors met, 48 dashboard_assets node tests passed, 35 slice_wave_behaviour node tests passed, plugin validation passed.; quality: FAIL (summary_pass=false — Quality gate produced JSON with exit code 1. Three class_lines threshold violations: run_state.py (1080/300), test_run_state.py (1758/300), slice-wave.workflow.js (1098/300). All other metrics passed.)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "OPEN"
+    }
+  ],
+  "agents_used": 18,
+  "wave": 2,
+  "events": [
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 10,
+        "deferred": [
+          "DESIGN — a plan produced by the post-OBJECT replan is never radius-evaluated. stagePlan calls the gate on the plan it dispatched, but runStages reassigns `plan = c.plan` at slice-wave.workflow.js:938, and resolveCouncilObjection's replan can return a materially different plan whose declared radius is never compared against the ceiling. The plan documents this in a JS comment and the CHANGELOG, which is honest, but it stays a code comment rather than a tracked gap. Closing it properly would mean evaluating from the critique stage, which the run scope ceiling explicitly forbids ('Raising the new trigger from any stage other than the plan stage'), so it must NOT be built here. Defer: log it as a DEFERRED item — 'the plan-time refactor-radius ceiling is evaluated once, on the first plan; a plan produced by the council-OBJECT replan path (runStages:938) bypasses it' — so a later run can decide whether to re-run the gate on the replanned plan or accept the gap.",
+          "CONSISTENCY — the node-driver plumbing becomes a third copy. radius_status() duplicates the ~18 lines of shutil.which/skipTest + mkstemp + subprocess.run + returncode assert + json.loads + finally-unlink that already exist twice: scope_record() at test_slice_wave_contract.py:214-232 and ceiling_for() in test_slice_wave_contract_scope.py. The natural home is WorkflowSourceTestCase in slice_wave_contract_base.py, but that file is at 299 of its 300 non-blank-line ceiling (measured), so the extraction is genuinely blocked inside this slice and copying is the correct local choice. Defer: log that the extract-and-drive helper now has three copies and that consolidating it requires first making room in slice_wave_contract_base.py (or standing up a small shared driver module), so the next change to the node-driver contract does not have to be applied in three places by hand.",
+          "A post-OBJECT replan is never re-evaluated, so the ceiling can be walked past in revision. refactorRadiusGate runs once inside stagePlan (Task 4 step 4); the council-objection path replaces the plan afterwards through replanPrompt/the replan dispatch, and that plan reaches implementation without any radius evaluation - no event, no halt, not even a NOT_MEASURED record. The plan states this honestly in the CHANGELOG bullet and in refactorRadiusGate's comment, and closing it would mean raising the trigger from a stage other than plan, which this run's scope ceiling forbids. Logging it as DEFERRED rather than leaving it as a comment keeps it from being rediscovered later as a defect."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "deferred",
+      "payload": {
+        "summary": "DESIGN — a plan produced by the post-OBJECT replan is never radius-evaluated. stagePlan calls the gate on the plan it dispatched, but runStages reassigns `plan = c.plan` at slice-wave.workflow.js:938, and resolveCouncilObjection's replan can return a materially different plan whose declared radius is never compared against the ceiling. The plan documents this in a JS comment and the CHANGELOG, which is honest, but it stays a code comment rather than a tracked gap. Closing it properly would mean evaluating from the critique stage, which the run scope ceiling explicitly forbids ('Raising the new trigger from any stage other than the plan stage'), so it must NOT be built here. Defer: log it as a DEFERRED item — 'the plan-time refactor-radius ceiling is evaluated once, on the first plan; a plan produced by the council-OBJECT replan path (runStages:938) bypasses it' — so a later run can decide whether to re-run the gate on the replanned plan or accept the gap.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "deferred",
+      "payload": {
+        "summary": "CONSISTENCY — the node-driver plumbing becomes a third copy. radius_status() duplicates the ~18 lines of shutil.which/skipTest + mkstemp + subprocess.run + returncode assert + json.loads + finally-unlink that already exist twice: scope_record() at test_slice_wave_contract.py:214-232 and ceiling_for() in test_slice_wave_contract_scope.py. The natural home is WorkflowSourceTestCase in slice_wave_contract_base.py, but that file is at 299 of its 300 non-blank-line ceiling (measured), so the extraction is genuinely blocked inside this slice and copying is the correct local choice. Defer: log that the extract-and-drive helper now has three copies and that consolidating it requires first making room in slice_wave_contract_base.py (or standing up a small shared driver module), so the next change to the node-driver contract does not have to be applied in three places by hand.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "deferred",
+      "payload": {
+        "summary": "A post-OBJECT replan is never re-evaluated, so the ceiling can be walked past in revision. refactorRadiusGate runs once inside stagePlan (Task 4 step 4); the council-objection path replaces the plan afterwards through replanPrompt/the replan dispatch, and that plan reaches implementation without any radius evaluation - no event, no halt, not even a NOT_MEASURED record. The plan states this honestly in the CHANGELOG bullet and in refactorRadiusGate's comment, and closing it would mean raising the trigger from a stage other than plan, which this run's scope ceiling forbids. Logging it as DEFERRED rather than leaving it as a comment keeps it from being rediscovered later as a defect.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t4",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t5",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t6",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t7",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 5
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-2 refuted by batched verifier",
+        "rationale": "conventions.md states explicitly: 'Pre-existing class_lines failures on old files are a human-accepted state, not a regression to chase.' run_state.py was already 1303 lines at HEAD~7 (pre-diff, per `git show HEAD~7:...run_state.py | wc -l`), far over the 300-line threshold, and the diff only adds ~2 lines to it (hunk range 86-91 in package). This is pre-existing accepted debt, not a defect introduced by this change; flagging it as a P1 remedy 'behavior-preserving refactor' contradicts the repo's own documented convention.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-3 refuted by batched verifier",
+        "rationale": "Same convention applies: test_run_state.py was already 2073 lines at HEAD~7, well over 300, before this diff's small additions (17 new lines per file stat). conventions.md: 'Pre-existing class_lines failures on old files are a human-accepted state, not a regression to chase.' Not a legitimate P1 finding against this diff.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-4 refuted by batched verifier",
+        "rationale": "slice-wave.workflow.js was already 1067 lines at HEAD~7 (conventions.md even documents it explicitly: 'Workflow JS (plugins/spec-loop/workflows/slice-wave.workflow.js, 1061 lines)'), well over the 300-line class_lines threshold before this diff. Per conventions.md, pre-existing class_lines failures on old files are human-accepted, not a regression to chase for this diff.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260828-refactor-escalation/s3/plugins/spec-loop/scripts/test_run_state.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "review-summary",
+      "payload": {
+        "findings": 7,
+        "confirmed": 2,
+        "refuted": 3,
+        "fix_rounds": 1,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

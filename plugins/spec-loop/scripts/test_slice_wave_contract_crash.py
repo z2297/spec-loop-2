@@ -276,7 +276,9 @@ class TestTheTriggerEnumAgreesAcrossAllSixHomes(WorkflowSourceTestCase):
     a mislabelled field. A one-home edit would otherwise stay fully green. The
     two prose homes are pinned here too: a doc that lists a stale set of
     triggers is what a worker agent reads before it builds a record, so a
-    drifted enumeration produces exactly that rejected write."""
+    drifted enumeration produces exactly that rejected write. The enum is
+    eight values wide as of the refactor-scope trigger; the six homes and the
+    order-sensitivity of this comparison are unchanged."""
 
     def triggers(self):
         return run_state.ESCALATION_TRIGGERS

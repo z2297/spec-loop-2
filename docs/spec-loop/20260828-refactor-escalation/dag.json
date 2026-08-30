@@ -1,0 +1,260 @@
+{
+  "schema_version": 2,
+  "run_id": "20260828-refactor-escalation",
+  "base_ref": "spec-loop-run/20260828-refactor-escalation",
+  "base_sha": "d67cff6e255fc363e93cea410e0d7bc2cff1aae6",
+  "base_branch": "main",
+  "merge_mode": "single-branch",
+  "mode": "workflow",
+  "created_at": "2026-08-28T00:00:00Z",
+  "shared_constraints": [
+    "The checkpoint fires at PLAN time, before implementation effort is spent. The human's own diagnosis of the motivating incident was 'it asked, but too late' - a post-implementation check does not satisfy this request.",
+    "NO threshold comparison may be reached by JavaScript coercion. An explicit null/type guard returns a 'not measured' state BEFORE any >= comparison, because `undefined >= n` is false and `null >= 0` is true. This ships default-on, so a coercion bug halts or fails to halt every installation.",
+    "Measurement FAILS or is absent -> proceed and record loudly (fail open, null-honest: record null, never 0). Measurement SUCCEEDS and exceeds threshold -> halt and ask (fail closed). These two halves have opposite answers; do not collapse them.",
+    "Every evaluation emits an event carrying BOTH the measured numbers AND the thresholds compared against - including the no-fire and not-measured cases. A threshold that silently declines to fire is the silent-exclusion defect the knowledge graph already names.",
+    "The new trigger MUST join ANSWERABLE_TRIGGERS and MUST be read back via answerFor() in the prompt of the stage that raises it. A trigger the orchestrator never reads back is unanswerable by re-dispatch.",
+    "Read every optional agent-return field guarded, with scopeCeilingList()-style type tolerance. PLAN_RESULT.required is ['status'] only and this file has live history of an unguarded optional read aborting a whole wave.",
+    "Thresholds reach the workflow ONLY through ctx, following the tier3_surfaces path (--print-config -> commands/spec-loop.md -> CTX field list). The workflow has no fs/process access; it must never read config itself.",
+    "Any new branch in run_state.py (floor 95, currently 100%), run_metrics.py (93) or quality_gate.py (86) needs a test that EXECUTES it in the same change, or a behaviourally correct diff turns the coverage gate red.",
+    "Run each of the 7 test segments as its OWN tool call. A chained invocation has twice been killed at the 10-minute ceiling and read as a false red.",
+    "Pinned JS snippets in the contract tests are module-level constants, never inline literals - inline JS strings are misscored by the quality gate's own heuristic.",
+    "New files land at or under 300 non-blank lines (class_lines threshold). Split a test module before it crosses.",
+    "State honest limits explicitly in the CHANGELOG and runbook: a pre-execution ratio is a PROXY declared by the planner, not a measured diff size, and it cannot catch a blowup discovered mid-implementation."
+  ],
+  "scope_ceiling": [
+    "A git blast-radius measurement script (other-author churn windows, competing-branch enumeration, file-LOC mining). Deferred by human answer 3 ('both, in that order') - teammate blast radius is secondary to firing rarely. Its three metrics are also unreliable here: competing-branch counts would tally the loop's own spec-loop/<run-id>/* sibling worktree branches, other-author churn is effectively zero in this single-author repo, and file-size thresholds fire on ordinary slices in a repo whose hot files run 1061-2187 lines.",
+    "A second post-implementation or pre-commit measurement checkpoint. A genuine gap the pre-execution estimate cannot close, but a separate mechanism with its own stage, schema and failure modes.",
+    "Any dashboard panel, chart, or run_metrics rollup for the new trigger beyond the enum copies the pinned tests already demand.",
+    "Any change to critique.over_scope, the run-level scope_ceiling mechanism, or the CRITIQUE schema. Those govern NEW scope; this run governs churn on EXISTING code.",
+    "Any new council member, council mandate, or new plan-critic field. Panel size is load-bearing (a counted member changes veto thresholds) and precedent from run 20260825 chose a promoted role over a new member.",
+    "Loop-side automatic splitting of a refactor into its own slice without human choice.",
+    "Threshold auto-tuning or learning from run history.",
+    "Raising the new trigger from any stage other than the plan stage.",
+    "Any git-hosting or CI integration (PR-size bots, server-side hooks).",
+    "An enum backward-compatibility migration, forward-compat shims, or version-skew handling - guardian verified all three are already safe and building them would be wasted work.",
+    "Recording teammate identities (author names or emails) in any run artifact. Moot while git mining is out of scope; binding if it ever returns.",
+    "Taking the model out of the number path by having the workflow invoke the measurement itself and read stdout. Deferred: it is the right end state but a separate mechanism."
+  ],
+  "slices": [
+    {
+      "id": "s1",
+      "goal": "Add the refactor_radius threshold block to the quality-gate config with conservative default-ON values, and fix the overlay merge so a repo overlay merges it key-wise instead of replacing it wholesale; document the block in commands/quality-gate.md at both the step-1 key list and the written schema.",
+      "files": [
+        "plugins/spec-loop/scripts/quality_gate.py",
+        "plugins/spec-loop/scripts/test_quality_gate.py",
+        "plugins/spec-loop/commands/quality-gate.md"
+      ],
+      "subsystems": [
+        "config"
+      ],
+      "deps": [],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s2",
+      "goal": "Add the 'refactor-scope' escalation trigger value across all eight pinned touchpoints (JS enum, three Python tuples, fallback-agent prose including the count word, run-state-v2 union, TRIGGER_PROSE_LEAD, ANSWERABLE_TRIGGERS) so the enum-agreement contract test passes with the new value.",
+      "files": [
+        "plugins/spec-loop/workflows/slice-wave.workflow.js",
+        "plugins/spec-loop/scripts/run_state.py",
+        "plugins/spec-loop/scripts/run_metrics.py",
+        "plugins/spec-loop/scripts/dashboard_server.py",
+        "plugins/spec-loop/scripts/slice_wave_contract_base.py",
+        "plugins/spec-loop/scripts/test_slice_wave_contract_crash.py",
+        "plugins/spec-loop/agents/slice-worker-fallback.md",
+        "plugins/spec-loop/references/run-state-v2.md"
+      ],
+      "subsystems": [
+        "escalation",
+        "contract"
+      ],
+      "deps": [],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s3",
+      "goal": "Build the mechanism in the workflow: a declared optional refactor_radius property on PLAN_RESULT, one pure guarded predicate mirroring qualityStatus() that never compares by coercion, the escalation raised from the plan stage with trade-off options, answerFor() injection into planPrompt, thresholds threaded through ctx, and an observability event on every evaluation including no-fire and not-measured.",
+      "files": [
+        "plugins/spec-loop/workflows/slice-wave.workflow.js",
+        "plugins/spec-loop/scripts/slice_wave_contract_base.py",
+        "plugins/spec-loop/scripts/test_slice_wave_contract.py",
+        "plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs"
+      ],
+      "subsystems": [
+        "workflow",
+        "escalation"
+      ],
+      "deps": [
+        "s2"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s4",
+      "goal": "Close the silent-replan leak: a council objection resolved by replan must not be accepted on status alone - re-check the revised plan before proceeding, or escalate. Guard the three unguarded optional agent-return reads in this file (fix.commits.base, which aborted slice s2 in wave 1 of this run; plan.escalation.trigger; plan.split), updating the contract-base docstring that currently records the latter two as deliberately unfixed. Correct the fixableByReplan/fixable_by_replan prose drift in the four agent docs.",
+      "files": [
+        "plugins/spec-loop/workflows/slice-wave.workflow.js",
+        "plugins/spec-loop/scripts/slice_wave_contract_base.py",
+        "plugins/spec-loop/scripts/test_slice_wave_contract.py",
+        "plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs",
+        "plugins/spec-loop/agents/plan-critic.md",
+        "plugins/spec-loop/agents/guardian.md",
+        "plugins/spec-loop/agents/skeptic.md",
+        "plugins/spec-loop/agents/slice-worker-fallback.md"
+      ],
+      "subsystems": [
+        "workflow",
+        "council"
+      ],
+      "deps": [
+        "s3"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s5",
+      "goal": "Controller and agent doctrine: build the refactor_radius ctx key in commands/spec-loop.md, instruct slice-planner to declare its refactor_radius numbers from its own task list, and promote the escalation-gate doctrine from five judgment triggers to six without losing its point that over_scope is still not one.",
+      "files": [
+        "plugins/spec-loop/commands/spec-loop.md",
+        "plugins/spec-loop/agents/slice-planner.md",
+        "plugins/spec-loop/skills/escalation-gate/SKILL.md"
+      ],
+      "subsystems": [
+        "controller",
+        "planner-agent",
+        "doctrine"
+      ],
+      "deps": [
+        "s2",
+        "s3"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s6",
+      "goal": "Documentation close-out: the five-to-six trigger prose in README and risk-tiers, the README component counts, and a CHANGELOG entry that states the honest limits - a planner-declared proxy rather than a measured diff, default-on changing halting behavior on upgrade, and which parts are levers versus records.",
+      "files": [
+        "plugins/spec-loop/README.md",
+        "plugins/spec-loop/references/risk-tiers.md",
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "docs"
+      ],
+      "deps": [
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "s5",
+        "s7"
+      ],
+      "risk_tier": 1,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s7",
+      "goal": "Remediate four verified correctness defects in s3's refactor-radius mechanism: thread the planner's `basis` through radiusNumbers into the event payload and the escalation context so the human sees HOW the numbers were counted; compute `answered` from a truthy latestAnswer rather than answer-key presence, matching resolveCouncilObjection's precedent, so an empty answer cannot silently disarm the halt; add an explicit NOT_MEASURED-equivalent branch when the config is present but every maximum is unusable, so a mistyped ceiling never reports WITHIN on a comparison that never happened; and set suppressed_by_answer from the verdict as well as the answer so an ordinary post-answer success does not claim a suppression that did not occur. ALSO decompose acceptRevisedPlan into small named helpers so it lands under cyclomatic_complexity 10 and cognitive_complexity 15 - it is at 12 and 22 - behaviour-preserving only, with the replan re-check's observable outcomes unchanged and slice_wave_replan.test.mjs still green.",
+      "files": [
+        "plugins/spec-loop/workflows/slice-wave.workflow.js",
+        "plugins/spec-loop/scripts/slice_wave_radius.test.mjs",
+        "plugins/spec-loop/scripts/test_slice_wave_contract_radius.py",
+        "plugins/spec-loop/scripts/slice_wave_replan.test.mjs"
+      ],
+      "subsystems": [
+        "workflow",
+        "escalation"
+      ],
+      "deps": [
+        "s4"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete",
+      "remediation": true
+    },
+    {
+      "id": "s8",
+      "goal": "Close the last instance of the silent-exclusion defect class in the radius gate: a PARTIALLY unusable ceiling. radiusNoCeiling only fires when BOTH maxima are null, so a config with one usable and one unusable ceiling (e.g. max_rewrite_ratio mistyped as the string \"0.5\" while max_touched_existing_files is a valid 8) lets radiusBreaches short-circuit on the null side and then reports state WITHIN with the reason 'every declared number is at or under its ceiling' - while the declared rewrite_ratio was never compared against anything. Make the verdict per-dimension honest: a declared number that had no usable ceiling must never be counted as being under one, and the reason string must say which dimensions were actually compared and which were skipped for want of a usable ceiling. Behaviour-preserving elsewhere: a fully usable config must produce exactly today's verdicts, and this must never turn a WITHIN into a halt - an unusable ceiling still FAILS OPEN, it just stops claiming a comparison it did not make.",
+      "files": [
+        "plugins/spec-loop/workflows/slice-wave.workflow.js",
+        "plugins/spec-loop/scripts/slice_wave_radius.test.mjs",
+        "plugins/spec-loop/scripts/test_slice_wave_contract_radius.py"
+      ],
+      "subsystems": [
+        "workflow",
+        "escalation"
+      ],
+      "deps": [
+        "s7"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete",
+      "remediation": true
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "slice_ids": [
+        "s1",
+        "s2"
+      ],
+      "workflow_run_id": "wf_0e02b0d1-daa",
+      "status": "collected"
+    },
+    {
+      "index": 2,
+      "slice_ids": [
+        "s3"
+      ],
+      "workflow_run_id": "wf_c770e2d9-7fc",
+      "status": "collected"
+    },
+    {
+      "index": 3,
+      "slice_ids": [
+        "s4",
+        "s5"
+      ],
+      "workflow_run_id": "wf_9c5004ca-48c",
+      "status": "collected"
+    },
+    {
+      "index": 4,
+      "slice_ids": [
+        "s7"
+      ],
+      "workflow_run_id": "wf_c3689f78-fc5",
+      "status": "collected"
+    },
+    {
+      "index": 5,
+      "slice_ids": [
+        "s6",
+        "s8"
+      ],
+      "workflow_run_id": "wf_f5802475-83f",
+      "status": "collected"
+    }
+  ]
+}

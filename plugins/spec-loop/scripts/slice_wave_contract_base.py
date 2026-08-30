@@ -18,15 +18,14 @@ type-safe read of CTX.scope_ceiling, the answer-injection sites, and the
 record-only isolation of the over-scope flag from the four control-flow
 branches, and the ONE-durable-record-per-defer-hinted-concern guarantee.
 
-This module (and its importers) do NOT claim every optional agent-return
-field is guarded. Two known instances of the same defect class remain
-unguarded BY DECISION, deferred and logged by this run's own council rather
-than fixed here: `plan.escalation.trigger` is read unguarded on the
-ESCALATE branch (`PLAN_RESULT.required` is `['status']` only), and
-`plan.split` is passed through as `undefined` on a SPLIT return that
-carries no `split` object. Fixing either would exceed this task's scope
-router; these modules pin what actually exists, not what a docstring would
-prefer existed.
+The two instances this docstring used to record as deliberately unguarded -
+`plan.escalation.trigger` on the ESCALATE branch and the `plan.split`
+pass-through on SPLIT - are now guarded, together with the `fix.commits.base`
+read that aborted a wave of run 20260828; `test_slice_wave_contract_replan.py`
+pins all three and asserts the raw reads are gone. What these modules still do
+NOT claim is exhaustiveness: they pin the reads that have failed in
+production, not every optional field in every schema, and no static check here
+enumerates the rest.
 
 These are source-text assertions. They prove a guard is present; they
 cannot prove it behaves. Any change to the workflow that trips one of them
@@ -59,9 +58,9 @@ stays under the quality gate's 300-line class_lines threshold; this file
 carries no tests of its own (its class exposes no `test_*` method), so
 `unittest discover -p 'test_*.py'` never collects it directly.
 
-Usage: imported by test_slice_wave_contract.py,
-test_slice_wave_contract_scope.py, and test_slice_wave_contract_crash.py;
-not runnable on its own.
+Usage: imported by the `test_slice_wave_contract*.py` family of modules, not
+enumerated by name here since a per-module list drifts the moment a new one
+splits out; not runnable on its own.
 """
 
 import unittest
@@ -98,7 +97,7 @@ ANSWER_CONTEXT_START = "const answerContext = (slice, trigger) => {"
 ANSWER_CONTEXT_END = "\n}\n"
 ANSWERABLE_TRIGGERS = (
     "ambiguity", "material-assumption", "review-block",
-    "council-objection", "quality-gate-block")
+    "council-objection", "quality-gate-block", "refactor-scope")
 CRITIQUE_REQUIRED = "required: ['verdict', 'safety', 'concerns']"
 FAIL_CLOSED_DEFAULT = "unreadable critic verdict (fail closed)"
 OVER_SCOPE_DEFAULT = "over_scope: null"
@@ -111,11 +110,11 @@ FINDING_CATEGORIES = "category: { enum: ["
 # The trigger enum has six homes: this line, the ESCALATION_TRIGGERS tuple in
 # run_state.py, run_metrics.py and dashboard_server.py, and two PROSE
 # enumerations - the fallback agent's escalation section and the run-state
-# contract reference - located by the two locator constants below. Earlier
-# this comment said five and then listed four; the guard that names it now
-# asserts over all six.
+# contract reference - located by the two locator constants below. Earlier this
+# comment said five and then listed four; the guard that names it now asserts
+# over all six homes, and the enum they carry is now eight values wide.
 TRIGGER_ENUM_LINE = "trigger: { enum: ["
-TRIGGER_PROSE_LEAD = "one of the seven triggers ("
+TRIGGER_PROSE_LEAD = "one of the eight triggers ("
 TRIGGER_UNION_PREFIX = '"trigger": "'
 FALLBACK_MD = Path(__file__).resolve().parents[1] / "agents" / "slice-worker-fallback.md"
 RUN_STATE_MD = Path(__file__).resolve().parents[1] / "references" / "run-state-v2.md"

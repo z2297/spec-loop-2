@@ -83,11 +83,14 @@ deadlock is itself an escalation):
 3. **Dispatch**: resolve the effective gate config once through the one door —
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/quality_gate.py" --print-config --config
    ~/.claude/spec-loop-2/quality-gate.json --overlay .spec-loop/quality-gate.json` — and
-   take `tier3_surfaces` and `models` from it. Build the wave args object exactly as
-   `slice-wave.workflow.js` documents — `{run_id, wave_index, ctx: {run_dir (absolute),
-   plugin_root, base_ref, test_command, conventions_path, shared_constraints,
+   take `tier3_surfaces`, `models` and `refactor_radius` from it. Build the wave args object
+   exactly as `slice-wave.workflow.js` documents — `{run_id, wave_index, ctx: {run_dir
+   (absolute), plugin_root, base_ref, test_command, conventions_path, shared_constraints,
    scope_ceiling (dag.json's run-level list, verbatim; omit or pass [] when the run has
-   none — the workflow puts it in every agent packet), tier3_surfaces, quality_gate_cmd
+   none — the workflow puts it in every agent packet), tier3_surfaces,
+   refactor_radius (the merged block verbatim from --print-config; the workflow has no
+   filesystem access, so this is the ONLY way its plan-time ceiling is configured — omit it
+   and the wave records NOT_CONFIGURED and never halts), quality_gate_cmd
    ("python3 <plugin_root>/scripts/quality_gate.py --config <global> --overlay <repo
    overlay>" — the same two paths, so agents measure against the merged bar), models,
    thorough, polish}, slices: [{id, goal, files, subsystems, risk_tier, depth, worktree,
@@ -158,6 +161,17 @@ deadlock is itself an escalation):
    has no such lever: its resource is the wave budget the host supplies, and no args
    field in this contract changes the stage floor.
 
+   A `refactor-scope` record is the one trigger the wave raises from its own arithmetic
+   rather than from an agent's judgment: the plan stage compared the planner's declared
+   rewrite numbers against `ctx.refactor_radius` and stopped the slice before any
+   implementation dispatch. Write the answer back like any other, keyed
+   `answers["<slice-id>:refactor-scope"]` verbatim; the wave injects it into the
+   re-dispatched plan prompt and stops raising the halt for that slice. Answering it is the
+   only thing that unblocks the slice — re-dispatching without the answer recomputes the same
+   breach and stops again, and the ceiling itself is operator config, so there is no other
+   lever. Narrowing the slice instead is your call to make explicit: the wave does not split a
+   refactor out on its own.
+
    Then **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
    whose sidecars are not DONE/SPLIT (merged work never re-enters a wave; its worktree is
    already gone) — same `ctx`, `answers` filled in, and `resumeFromRunId: <wf_id>` so the
@@ -198,7 +212,7 @@ Phase 5 (regenerating `runbook.md` is safe).
 ## Escalation discipline
 
 You are the only layer that can ask the human. Never ask mid-wave, never one-at-a-time;
-apply the `escalation-gate` five-trigger test and precedent check to every candidate
+apply the `escalation-gate` six-trigger test and precedent check to every candidate
 question, including your own. Announce every question you do ask: immediately before ANY
 `AskUserQuestion` (escalation rounds, the publish prompt), fire a best-effort desktop alert —
 `printf '\a'; command -v osascript >/dev/null 2>&1 && osascript -e 'display notification

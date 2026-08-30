@@ -1,0 +1,213 @@
+{
+  "schema_version": 2,
+  "id": "s1",
+  "status": "ESCALATED",
+  "branch": "spec-loop/20260828-refactor-escalation/s1",
+  "commits": {
+    "base": "d67cff6e255fc363e93cea410e0d7bc2cff1aae6",
+    "head": "854fa1d"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 6,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 3,
+  "review": {
+    "confirmed": 7,
+    "refuted": 2,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: An explicit JSON `null` for `refactor_radius` is silently treated as absent and replaced by the shipped default-ON block, contradicting the operator-facing doc this same slice writes, which states that a present non-object value is a hard error. `_radius_object` cannot distinguish `{\"refactor_radius\": null}` from a missing key because it inspects the already-defaulted result of `raw.get(...)`. An operator who writes `null` intending to switch the block off gets default-ON with no diagnostic — the silent-exclusion shape this run's prior-knowledge entry names.",
+      "P3: The pin test's literal mapping uses a dict keyed by `True`/`False`, so any integer default of `1` or `0` would be rendered as `\"true\"`/`\"false\"` (Python hashes `1 == True`). Harmless for today's values (0.5, 8, 150) but a latent trap for a future default of 1.",
+      "P3: The step-1 rewrap leaves an orphan four-word line (\"changes. If not, this\") mid-paragraph, which reads as an editing artifact next to the file's otherwise even fill."
+    ]
+  },
+  "tests": null,
+  "quality": {
+    "status": "FAIL",
+    "detail": "Gate exited with code 1 (measured failure). 6 violations detected: 4 nesting_depth violations in test functions (values 5-7 exceed threshold of 3), 2 class_lines violations (1403 and 1620 lines exceed threshold of 300)."
+  },
+  "escalations": [
+    {
+      "id": "s1:quality-gate-block",
+      "trigger": "quality-gate-block",
+      "title": "verification failed",
+      "context": "suite: All 7 suite segments passed: (1) validate_marketplace: OK; (2) scripts tests: 126 tests passed; (3) plugins/spec-loop/scripts tests: 1305 tests passed; (4) measure_coverage: 1431 tests passed, coverage PASS with all per-file and total floors met; (5) dashboard_assets: 48 tests passed; (6) slice_wave_behaviour: 35 tests passed; (7) claude plugin validate: validation passed; quality: FAIL (summary_pass=false — Quality gate exit 1 (measured failure). Two class_lines violations: quality_gate.py 1403 lines (threshold 300), test_quality_gate.py 1629 lines (threshold 300). Both exceed the 300-line per-file threshold.)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: All 7 suite segments passed: (1) validate_marketplace: OK; (2) scripts tests: 126 tests passed; (3) plugins/spec-loop/scripts tests: 1305 tests passed; (4) measure_coverage: 1431 tests passed, coverage PASS with all per-file and total floors met; (5) dashboard_assets: 48 tests passed; (6) slice_wave_behaviour: 35 tests passed; (7) claude plugin validate: validation passed; quality: FAIL (summary_pass=false — Quality gate exit 1 (measured failure). Two class_lines violations: quality_gate.py 1403 lines (threshold 300), test_quality_gate.py 1629 lines (threshold 300). Both exceed the 300-line per-file threshold.)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "OPEN"
+    }
+  ],
+  "agents_used": 10,
+  "wave": 1,
+  "events": [
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council"
+        ],
+        "safety": false,
+        "concerns_folded": 5,
+        "deferred": [
+          "Downstream contract not yet updated, correctly deferred but worth recording: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260828-refactor-escalation/s1/plugins/spec-loop/commands/spec-loop.md:84-86 is the tier3_surfaces path the shared constraints name ('--print-config -> commands/spec-loop.md -> CTX field list') and still says only 'take `tier3_surfaces` and `models` from it'. This slice is right not to touch it (no consumer exists yet), but that edit plus the workflow CTX field list is a hard prerequisite for any later slice that reads a threshold. Confirm a later slice in this run owns it."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "deferred",
+      "payload": {
+        "summary": "Downstream contract not yet updated, correctly deferred but worth recording: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260828-refactor-escalation/s1/plugins/spec-loop/commands/spec-loop.md:84-86 is the tier3_surfaces path the shared constraints name ('--print-config -> commands/spec-loop.md -> CTX field list') and still says only 'take `tier3_surfaces` and `models` from it'. This slice is right not to touch it (no consumer exists yet), but that edit plus the workflow CTX field list is a hard prerequisite for any later slice that reads a threshold. Confirm a later slice in this run owns it.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:full",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 6
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260828-refactor-escalation/s1/plugins/spec-loop/scripts/test_quality_gate.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "review-summary",
+      "payload": {
+        "findings": 4,
+        "confirmed": 7,
+        "refuted": 2,
+        "fix_rounds": 1,
+        "reviewers": 1
+      }
+    },
+    {
+      "scope": "s1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

@@ -73,12 +73,16 @@ yourself before executing it.
 Tier 2 and above, dispatch the composition your tier table names — one `plan-critic`, joined
 by `guardian` at Tier 3 (same message, one shared context packet placed identically at the top
 of each prompt).
-- `OBJECT` with `fixableByReplan: true` → one replan pass through `slice-planner` with the
-  objection attached, then proceed on the revised plan. Once the plan proceeds, record the
-  ORIGINAL panel's `defer`-hinted concerns exactly as the `ENDORSE_WITH_CONCERNS` bullet below
-  does — one `deferred` event per concern, same payload shape, plus the bare boolean
-  `over_scope: true` when its raising member set `over_scope.flag` — the replan does not
-  discard them. That is your single replan.
+- `OBJECT` with `fixable_by_replan: true` → one replan pass through `slice-planner` with the
+  objection attached. The revision is NOT accepted on its status: it goes back to one
+  `plan-critic` seat for a fresh verdict, and only a non-`OBJECT` verdict with no safety flag
+  proceeds — anything else records a `council-objection` escalation. Honest limits: that
+  re-check is a single seat, not the original panel, and the plan-time refactor-radius ceiling
+  is not re-measured on the revision. Once the plan proceeds, record the ORIGINAL panel's
+  `defer`-hinted concerns exactly as the `ENDORSE_WITH_CONCERNS` bullet below does — one
+  `deferred` event per concern, same payload shape, plus the bare boolean `over_scope: true`
+  when its raising member set `over_scope.flag` — the replan does not discard them. That is
+  your single replan.
 - `OBJECT` otherwise, or any `safety.flag` → do not execute. Record a `council-objection`
   escalation with the critic's question and recommended default; return `ESCALATED`.
 - `ENDORSE_WITH_CONCERNS` → fold the `fold` concerns into the plan; for EACH `defer`
@@ -152,9 +156,10 @@ regardless of how the work went.
 ## Escalations
 
 Every escalation is an EscalationRecord in `escalations[]`: stable id `<slice-id>:<trigger>`,
-plus `:<round>` from the second round of that trigger in that slice onward, one of the seven
+plus `:<round>` from the second round of that trigger in that slice onward, one of the eight
 triggers (`ambiguity`, `material-assumption`, `review-block`,
-`council-objection`, `quality-gate-block`, `budget-exhausted`, `internal-error`), the context,
+`council-objection`, `quality-gate-block`, `refactor-scope`, `budget-exhausted`,
+`internal-error`), the context,
 the precise question, options with one marked `recommended`, and `if_unanswered`.
 Proceed-and-log stays the default — surface only genuine ambiguity or a material assumption
 touching behavior, public contracts, persisted data, security, or an external integration. A
@@ -170,6 +175,9 @@ carries the real error text and names the stage/role you were actually running w
 aborted: you drive every stage serially, so unlike the workflow you DO know which one it was
 — say it. Hedge only for a failure inside step 4's concurrent review ∥ quality-gate message,
 where either dispatch may be the one that died; there, name both and say which is unclear.
+`refactor-scope` is raised only by the workflow itself at plan time, when the plan's own
+declared refactor-to-feature ratio crosses the configured threshold; you never mint one, and
+you never use it for a refactor you merely think is large.
 
 ## Return
 

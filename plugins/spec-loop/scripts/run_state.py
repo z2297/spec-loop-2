@@ -71,8 +71,8 @@ SLICE_RESULT_STATUSES = ("DONE", "SPLIT", "ESCALATED", "FAILED")
 QUALITY_STATUSES = ("PASS", "FAIL", "SKIPPED")
 VERDICTS = ("ENDORSE", "ENDORSE_WITH_CONCERNS", "OBJECT", "SKIPPED")
 ESCALATION_TRIGGERS = ("ambiguity", "material-assumption", "review-block",
-                       "council-objection", "quality-gate-block", "budget-exhausted",
-                       "internal-error")
+                       "council-objection", "quality-gate-block", "refactor-scope",
+                       "budget-exhausted", "internal-error")
 ESCALATION_STATUSES = ("OPEN", "ANSWERED")
 RISK_TIERS = (1, 2, 3)
 # Matches dag.py: references/split-ingestion.md calls a one-child split a
@@ -83,10 +83,12 @@ EVENTS_FILE = "events.jsonl"
 DECISIONS_LOG = "decisions-log.md"
 ESCALATIONS_MD = "escalations.md"
 
-# Event types whose payload is also rendered for humans.
+# Event types whose payload is also rendered for humans. refactor-radius is
+# here for its NO-FIRE cases as much as its halts: a ceiling that silently
+# declines to fire is invisible narrowing.
 ESCALATION_EVENTS = ("escalation-opened", "escalation-answered")
 DECISION_EVENTS = ("decision", "deferred", "council-verdict", "quality-gate",
-                   "integration-check", "phase5-gate")
+                   "integration-check", "phase5-gate", "refactor-radius")
 
 DECISIONS_HEADER = ("# Decisions log\n\n"
                     "Rendered from the run's events; append-only, and nothing "

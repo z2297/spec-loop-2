@@ -18,7 +18,8 @@ the config and never measures code or triggers slice work.
 
 1. **Locate / read current config.** If `~/.claude/spec-loop-2/quality-gate.json`
    exists, show its current values (thresholds, `measurement`, `enabled`, `custom_gates`,
-   `tier3_surfaces`, `models`) and stop here unless the user wants changes. If not, this
+   `tier3_surfaces`, `models`, `refactor_radius`) and stop here unless the user wants
+   changes. If not, this
    is first-time setup — and if `~/.claude/spec-loop/quality-gate.json` (spec-loop v1)
    exists, offer **import** as the first option of the step-2 question:
    - **Import from v1** — read the v1 file and carry `enabled`, `measurement`,
@@ -38,7 +39,7 @@ the config and never measures code or triggers slice work.
      recommended value first, "Other" for exact numbers; also ask `enabled` (default
      true). Do not offer a fix-round or `refactor_attempts` question: v2's wave workflow
      caps fix rounds itself (step 5).
-3. **The two v2 knobs** (one batched round, recommended value first):
+3. **The three v2 knobs** (one batched round, recommended value first):
    - **`tier3_surfaces`** — globs whose presence in a slice's diff deterministically
      promotes that slice's *review* tier to 3 (two-reviewer panel, session model on the
      correctness lane), regardless of the tier the controller assigned. Default
@@ -49,6 +50,17 @@ the config and never measures code or triggers slice work.
      Sonnet) or `"inherit"` (promote them to the session model — stronger reviews, more
      cost). Tier 3 always runs the panel with the session model, so this knob only
      moves the default tiers.
+   - **`refactor_radius`** — the plan-time ceiling on how much EXISTING code one slice
+     may declare it will rewrite. Ships **on**: `{ "enabled": true, "max_rewrite_ratio":
+     0.5, "max_touched_existing_files": 8, "min_rewritten_lines": 150 }`. `max_rewrite_ratio`
+     is declared rewritten-existing-lines ÷ total declared changed lines;
+     `max_touched_existing_files` counts pre-existing files the plan says it will modify;
+     `min_rewritten_lines` is a noise floor below which the check does not fire at all, so a
+     high ratio over a dozen lines is never a halt. Offer the defaults, "tune the numbers",
+     or `enabled: false`. These are **declared** numbers, a proxy the planner states before
+     implementation — not a measured diff — so they cannot catch a blowup discovered
+     mid-implementation. A missing or non-numeric value is a "not measured" state and never
+     a zero.
 4. **Custom gates.** Offer **metric gates only** — `{ "name", "metric", "threshold" }`,
    evaluated by `quality_gate.py` against the measured values, and genuinely blocking.
    **v2.0.0 does not execute command-form gates** (`{ "name", "command", "pass_when" }`):
@@ -71,6 +83,12 @@ the config and never measures code or triggers slice work.
        "class_lines": 300,
        "crap_score": 30
      },
+     "refactor_radius": {
+       "enabled": true,
+       "max_rewrite_ratio": 0.5,
+       "max_touched_existing_files": 8,
+       "min_rewritten_lines": 150
+     },
      "tier3_surfaces": ["**/auth/**", "**/migrations/**", "**/*.sql", "**/security/**"],
      "models": { "reviewer": "sonnet" },
      "custom_gates": []
@@ -81,6 +99,12 @@ the config and never measures code or triggers slice work.
    `quality_gate.py` measures against `enabled`, `thresholds`, and `custom_gates`, and
    passes every other key (`tier3_surfaces`, `models`, `measurement`, …) straight through
    to `--print-config`, which is how the controller reads them — one file, one door.
+   `refactor_radius` is one of those pass-through keys with one difference: the script
+   normalizes it against its shipped defaults, so `--print-config` always reports all four
+   of its keys even when the file names none or only one. The script never evaluates the
+   block — it is the plan stage's pre-execution ceiling, and a `refactor_radius` value that
+   is present but not a JSON object is a hard error (exit 2), never a silently ignored
+   setting.
 
    **Migration from v1:** `refactor_attempts` is gone. v1 used it to bound the refactor
    loop; v2's wave workflow caps a slice at 2 fix rounds and then escalates, so the key
@@ -100,9 +124,11 @@ python3 quality_gate.py --config ~/.claude/spec-loop-2/quality-gate.json \
                         --overlay .spec-loop/quality-gate.json --print-config
 ```
 
-`--overlay` deep-merges over `--config` — `thresholds` keys override, `tier3_surfaces`
-**unions** (an overlay extends the surface list, it can never remove a surface),
-`custom_gates` concatenate, every other key overrides — and the provenance is always
+`--overlay` deep-merges over `--config` — `thresholds` keys override, `refactor_radius`
+keys override **key-wise** (a repo that tunes one radius number keeps the global block's
+other keys; a wholesale replacement would silently hand it defaults it never chose),
+`tier3_surfaces` **unions** (an overlay extends the surface list, it can never remove a
+surface), `custom_gates` concatenate, every other key overrides — and the provenance is always
 reported: `loaded+overlay`, or `defaults+overlay` when no global config exists, in the
 measurement report's `config` field and in `--print-config`'s `source` field. So a reader
 can always tell an overlay was in play. `--print-config` prints the effective merged

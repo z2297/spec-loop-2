@@ -62,7 +62,9 @@ plan before execution).
   as DEFERRED, never silently dropped).
 - **OBJECT** — do not execute as planned. State the precise objection, the question a human
   would need to answer (the workflow escalates it verbatim), a recommended default, and
-  `fixableByReplan: true` when one planner revision pass would resolve it without a human.
+  `fixable_by_replan: true` when one planner revision pass would resolve it without a human.
+  The revision does not pass unchallenged: it comes back to one plan-critic seat for a fresh
+  verdict, and a second `OBJECT` escalates to a human.
 
 Calibration: you are the only challenge at default tiers — a rubber stamp wastes your
 dispatch, but objection theater burns human attention that escalation-gate exists to

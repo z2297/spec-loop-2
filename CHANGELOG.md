@@ -6,6 +6,80 @@ All notable changes to the spec-loop plugin are documented here. The format is
 [v1 repository](https://github.com/z2297/spec-loop).
 
 ## [Unreleased]
+### Added
+- **The wave now halts a slice at PLAN time when its plan declares a rewrite of existing code
+  larger than the run's configured ceiling — the run's one new LEVER.**
+  `slice-wave.workflow.js` gains an optional `refactor_radius` block on `PLAN_RESULT` that the
+  slice planner fills with declared numbers (`rewrite_ratio`, `touched_existing_files`,
+  `rewritten_lines`, and a `basis` string saying how it counted), a pure
+  `refactorRadiusStatus()` predicate that judges them in JS — mirroring `qualityStatus()`, with
+  every comparison behind an explicit null guard because `undefined >= n` is false and
+  `null >= 0` is true — and a `refactor-scope` escalation offering three trade-offs (narrow,
+  approve, carve out) when a measured number exceeds its ceiling. The verdict is reached
+  PER DIMENSION: a ceiling that is usable for one number and unusable for another is reported
+  as exactly that, and never as a blanket claim that every declared number is within bounds.
+  Thresholds arrive only through `ctx.refactor_radius`, resolved by the controller from
+  `quality_gate.py --print-config`, the one door to the effective configuration; a controller
+  that does not thread it records `NOT_CONFIGURED` and never halts. Every evaluation emits a
+  `refactor-radius` event carrying the measured numbers, the thresholds compared and the
+  planner's basis — including the no-fire and not-measured cases — and it renders into
+  `decisions-log.md`. Only a truthy human answer disarms the halt, and a suppression is claimed
+  only where an answer actually waived a real breach.
+
+### Changed
+- **The autonomy contract now names six judgment triggers instead of five, everywhere it is
+  stated.** `skills/escalation-gate/SKILL.md` adds `refactor-scope` as the sixth SURFACE trigger
+  and describes it accurately as the only one raised by the workflow's own arithmetic, at plan
+  time, on a measured breach; `agents/slice-planner.md` gains the doctrine for declaring the
+  radius numbers — numbers only, never a verdict, and omitted rather than guessed as a zero;
+  `commands/spec-loop.md` applies the six-trigger test and states how a `refactor-scope` answer
+  is threaded back; and `README.md` and `references/risk-tiers.md` are reconciled to six, with
+  `risk-tiers.md` stating that `refactor-scope` is NOT in the tier funnel because it fires at
+  plan time against a run-level ceiling that no tier setting moves. The same files keep their
+  separate, unchanged point that the council's `over_scope` flag is a RECORD that decides
+  nothing and is still not a trigger. `README.md`'s counted component inventory is re-verified
+  against the tree: this run added test-support and harness modules and changed no agent,
+  command, skill or runtime-script count.
+
+### Fixed
+- **A council objection resolved by a replan no longer passes on the revision's status alone.**
+  `slice-wave.workflow.js` used to accept a post-`OBJECT` revision whenever it came back
+  `PLANNED`, so one silent retry absorbed the objection: nobody re-read the plan the council had
+  rejected and the human never saw it, while the doctrine described the mechanism as blocking.
+  `acceptRevisedPlan()` now sends the revision back to one `plan-critic` seat (`critic:replan`),
+  records a `replan-recheck` event carrying the verdict and the reason, and escalates
+  `council-objection` on a second objection, a fresh safety flag, or an unreadable re-critique.
+- **The last three unguarded optional agent-return reads in the wave are guarded.**
+  `PLAN_RESULT.required` is `['status']` only and `FIX_RESULT.commits` is optional, so
+  `fix.commits.base` (which threw during wave 1 of this run, was mislabelled a
+  `budget-exhausted` escalation, and lost the wave), `plan.escalation.trigger` and the
+  `plan.split` pass-through were each one absent object away from aborting a whole wave.
+  `fixCommits()` falls back to the slice's own shas, `planEscalation()` substitutes a usable
+  record so the slice pauses instead of crashing, and `usableSplit()` escalates a childless
+  SPLIT at the cause instead of writing a sidecar the validator rejects a stage later.
+  `slice_wave_contract_base.py`'s docstring, which recorded two of these as deliberately
+  unfixed, is corrected.
+
+### Honest limits of this run
+- The radius numbers are the PLANNER'S PRE-EXECUTION DECLARATION — a proxy, not a measured
+  diff. A rewrite that blows up mid-implementation is invisible to this gate. No git
+  blast-radius measurement script and no second, post-implementation checkpoint were built;
+  both were deferred by human decision.
+- The gate ships DEFAULT ON, so every installation gains this halt on its next run after
+  upgrade rather than opting into it.
+- A plan revised after a council `OBJECT` is NOT re-radius-evaluated. Known gap, left
+  deliberately.
+- The replan re-check is a SINGLE `plan-critic` seat, not the original panel: a tier-3
+  objection raised by `guardian` or `skeptic` is re-checked by a different member, and the
+  re-check prompt does not carry the objection text. It also runs once, because
+  `state.replanned` already vetoes a second replan.
+- Teammate blast radius — other-author churn, competing branches — was deliberately not built.
+- The catch-all that mislabels a `TypeError` as `budget-exhausted` is unchanged, and the
+  `refactor-scope` trigger guard is a TYPE check, so an unrecognized trigger string still fails
+  `validate_escalation` downstream exactly as it does today.
+- The doctrine changes are prose, and their tests are substring assertions over that prose:
+  they prove the doctrine is present and its five-trigger predecessor is gone, and nothing
+  about whether an agent obeys it.
 
 ## [2.2.2] - 2026-08-28
 ### Added

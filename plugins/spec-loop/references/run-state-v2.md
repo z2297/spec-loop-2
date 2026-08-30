@@ -104,7 +104,7 @@ prose about the slice.
                                 // answers map reproduces the same id. Answers are keyed
                                 // by this id verbatim; latestAnswer reads the newest
                                 // answered round back into the resumed prompts.
-  "trigger": "ambiguity | material-assumption | review-block | council-objection | quality-gate-block | budget-exhausted | internal-error",
+  "trigger": "ambiguity | material-assumption | review-block | council-objection | quality-gate-block | refactor-scope | budget-exhausted | internal-error",
   "title": "<short title>",
   "context": "<what the loop was doing and why it cannot decide>",
   "question": "<the precise question>",
@@ -128,6 +128,13 @@ a catch-all for every other failure: a failure the loop can name keeps the trigg
 names it, so a spent replan stays `council-objection` and a blocked task — including a task
 dispatch that returned no result — stays `ambiguity`. Neither is a judgment trigger.
 
+`refactor-scope` is the one trigger the workflow raises on its own arithmetic rather than on
+an agent's judgment: at plan time, when the plan's declared refactor-to-feature ratio exceeds
+the configured threshold. It IS a judgment trigger — its answer is injected back into the
+plan prompt — because the only useful answer is a human trade-off between shipping the
+refactor with the feature and splitting it out. An absent or unmeasured ratio never raises
+it: not-measured proceeds and is recorded as null.
+
 ## `events.jsonl` — the machine channel
 
 Append-only, one JSON object per line, written only by the controller
@@ -143,7 +150,8 @@ Event types (extensible; consumers ignore unknown types): `run-created`,
 `baseline`, `council-verdict`, `decision`, `deferred`, `escalation-opened`,
 `escalation-answered`, `wave-dispatched`, `wave-collected`, `slice-merged`,
 `integration-check`, `split-ingested`, `quality-gate`, `review-summary`,
-`agent-dispatch`, `phase5-gate`, `publish-choice`, `agent-cap-override`.
+`agent-dispatch`, `phase5-gate`, `publish-choice`, `agent-cap-override`,
+`refactor-radius`.
 
 Pinned payload facts (consumers rely on these; everything else is
 best-effort):
@@ -174,6 +182,39 @@ best-effort):
   reading as a whole number — `"14"` — is read as the integer 14 and judged against the tier
   default like any other value.
   The discard is therefore visible without waiting on a second cap record.
+- **`refactor-radius`** payload: `{summary, state, exceeded[], measured{rewrite_ratio,
+  touched_existing_files, rewritten_lines}, thresholds{enabled, max_rewrite_ratio,
+  max_touched_existing_files, min_rewritten_lines}|null, basis, compared[], skipped[]}`, plus
+  `suppressed_by_answer: true`
+  when — and only when — the state is `EXCEEDED` and a truthy human answer to this slice's
+  `refactor-scope` escalation kept it from halting; the key is absent, never `false`, in every
+  other case, so counting it counts real waived halts. Emitted by
+  the wave's PLAN stage on EVERY evaluation — `state` is one of `NOT_CONFIGURED`,
+  `DISABLED`, `NO_USABLE_CEILING`, `NOT_MEASURED`, `WITHIN`, `WITHIN_PARTIAL`, `BELOW_FLOOR`,
+  `EXCEEDED`, and only `EXCEEDED` halts. The no-fire cases are emitted precisely because a ceiling that silently declines
+  to fire is invisible narrowing: `measured` and `thresholds` are both present in every
+  state so a reader never re-derives why nothing happened. `measured` is null-honest —
+  an undeclared number is `null`, never `0`, and `0` is a real measurement. The numbers
+  are planner-DECLARED: a proxy declared before implementation, not a measured diff, so
+  they cannot catch a blowup discovered mid-implementation, and no second,
+  post-implementation checkpoint exists. `thresholds` is `null` only when
+  `ctx.refactor_radius` was absent or unusable.
+  `basis` is the planner's own one-sentence account of how it counted, or `null` when it
+  stated none: it is DISPLAY-ONLY — carried so a human weighing the trade-off can see how
+  the number was reached — and no state, threshold or comparison reads it.
+  `NO_USABLE_CEILING` means the block was present and enabled but neither `max_rewrite_ratio`
+  nor `max_touched_existing_files` survived as a number — a mistyped ceiling. It fails open
+  like the other no-fire states, and it is separate from `WITHIN` because a plan cannot be
+  "under a ceiling" that was never compared.
+  `compared[]` and `skipped[]` name, per dimension, which DECLARED maxima numbers
+  (`rewrite_ratio`, `touched_existing_files`) were actually judged against a usable ceiling and
+  which were not; a number the plan never declared appears in neither. `WITHIN_PARTIAL` is
+  `NO_USABLE_CEILING`'s per-dimension twin: the block was usable overall — one ceiling survived —
+  but at least one declared number had no ceiling of its own, so nothing compared was over and
+  `WITHIN` would have claimed a comparison that never ran. It fails open exactly like `WITHIN`:
+  an unusable ceiling never causes a halt, it only stops the record claiming a comparison it did
+  not make. HONEST LIMIT: this says which numbers were compared, not whether the declared
+  numbers were true — they remain planner declarations, and no measured diff is taken anywhere.
 - **`wave-collected`** payload carries the per-wave aggregates the workflow
   completion notification reports: `{index, agent_count, subagent_tokens,
   duration_ms}` — the honest wave-level token/duration channel while

@@ -83,12 +83,15 @@ overlay). Any match promotes `review_tier` to 3 and records a `decision` event w
 
 ## Escalation-relevant consequences
 
-Everything the tier decides funnels into exactly two of `escalation-gate`'s five triggers:
+Everything the tier decides funnels into exactly two of `escalation-gate`'s six triggers:
 `review-block` (blocking findings survive the fix loop, or verification cannot pass) and
-`quality-gate-block` (gate violations survive it). The `budget-exhausted` record the per-slice
-agent cap emits is mechanical, not a judgment — and the caps in the table above are only one of
-its two sources; the other is the loop's per-stage token floor, which no tier setting changes.
-A spent loop bound is neither: it escalates as whatever actually stalled (`run-state-v2.md`).
+`quality-gate-block` (gate violations survive it). The sixth trigger, `refactor-scope` is
+not one of them: it fires at plan time against a run-level ceiling, and no tier setting moves it —
+a Tier 1 docs slice and a Tier 3 auth slice are judged against the same declared-rewrite numbers.
+The `budget-exhausted` record the per-slice agent cap emits is mechanical, not a judgment — and
+the caps in the table above are only one of its two sources; the other is the loop's per-stage
+token floor, which no tier setting changes. A spent loop bound is neither: it escalates as
+whatever actually stalled (`run-state-v2.md`).
 
 An over-scope record (`critique.over_scope`) is **not** in that funnel. It is record-only:
 it is carried into the `council-verdict` event and the sidecar, counted null-honestly by

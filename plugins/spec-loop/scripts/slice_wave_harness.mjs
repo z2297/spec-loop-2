@@ -195,21 +195,118 @@ const PIPELINE = {
   "verify:1": VERIFY_PASS,
 };
 
-export const PIPELINE_LABELS = Object.keys(PIPELINE).map((role) => "s1:" + role);
+// ── Refactor-radius fixtures ──────────────────────────────────────────────
+// The radius thresholds reach the workflow ONLY through ctx, and `extra`
+// above merges TOP-LEVEL wave args, so a ctx-level knob needs its own
+// builder. It reuses waveArgs rather than hand-building a second args shape,
+// so the two cannot drift.
+export const RADIUS_DEFAULTS = {
+  enabled: true, max_rewrite_ratio: 0.5,
+  max_touched_existing_files: 8, min_rewritten_lines: 150,
+};
 
-// Records the label and the prompt of every dispatch and answers each one with
-// the return above. An unmapped role throws under its own name: a new stage
-// must be mapped here rather than degrading a run into a fail-closed path in
-// silence, which would quietly narrow whatever a test built on this asserts.
-export const fullPipeline = () => {
+export function radiusArgs(slices, radius, answers) {
+  const base = waveArgs(slices, answers);
+  return { ...base, ctx: { ...base.ctx, refactor_radius: radius } };
+}
+
+// `undefined` means the planner returned no block at all — a DIFFERENT input
+// from a block of zeros, and the two must stay tellable apart end to end.
+export const planWithRadius = (radius) => ({
+  status: "PLANNED", plan_path: "/tmp/plan.md",
+  tasks: [{ id: "t1", title: "task t1", lane: "standard", files: ["a.py"] }],
+  ...(radius === undefined ? {} : { refactor_radius: radius }),
+});
+
+// Runs the plan stage for real, then makes the NEXT dispatch throw so the
+// slice terminates right after the gate under test. state.events survives on
+// the crash record's result, which is what the radius tests read.
+export const planThenStop = (plan) => ({
+  agent: async (prompt, opts) => {
+    if (String(opts.label).endsWith(":plan")) return plan;
+    throw new Error("STOP");
+  },
+});
+
+// ── Plan-status and council fixtures ──────────────────────────────────────
+// Every value below is a SCHEMA-LEGAL agent return. PLAN_RESULT.required is
+// ['status'] only, so SPLIT_EMPTY and ESCALATE_BARE are legal returns the
+// workflow must survive, not malformed junk - that is the whole point of
+// having them here rather than hand-built in a test body.
+const CHILD = { goal: "half", files: ["a.py"], subsystems: ["x"], internal_deps: [] };
+export const ONE_TASK_PLANNED = ONE_TASK_PLAN;
+export const SPLIT_OK = { status: "SPLIT", split: { children: [CHILD, CHILD] } };
+export const SPLIT_EMPTY = { status: "SPLIT" };
+export const ESCALATE_BARE = { status: "ESCALATE" };
+export const ESCALATE_FULL = {
+  status: "ESCALATE",
+  escalation: {
+    trigger: "material-assumption", title: "which store", context: "two stores",
+    question: "which one?", options: [{ label: "the first", detail: "d" }],
+  },
+};
+
+// ── Council OBJECT / replan fixtures ──────────────────────────
+// The reasons differ by design: a test asserts WHICH objection reached the
+// human, and two identical strings would pass that assertion by accident.
+export const OBJECTION_FIXABLE = {
+  verdict: "OBJECT", safety: { flag: false, reason: null }, concerns: [],
+  fixable_by_replan: true,
+  objection: { reason: "the plan skips the migration test", question: "Replan or accept?", recommendation: "add the migration test" },
+};
+export const RECHECK_CLEAN = { verdict: "ENDORSE", safety: { flag: false, reason: null }, concerns: [] };
+export const RECHECK_OBJECT = {
+  verdict: "OBJECT", safety: { flag: false, reason: null }, concerns: [],
+  fixable_by_replan: true,
+  objection: { reason: "the revision still skips the migration test", question: "Accept it, or drop the slice?", recommendation: "escalate to a human" },
+};
+export const RECHECK_SAFETY = {
+  verdict: "ENDORSE", safety: { flag: true, reason: "the revision drops the pre-migration backup" }, concerns: [],
+};
+
+// Answers a dispatch from `map`, keyed by the role part of the label
+// (`s1:critic:full-council` -> `critic:full-council`). An unmapped role throws,
+// which terminates the slice right after the stage under test; `seen` is the
+// dispatch order, so a test can assert that a stage did or did not run at all.
+// A mapped Error value is thrown instead of returned, and a mapped null is
+// returned as null - the terminal-failure input every caller must fail closed on.
+export function councilSandbox(map) {
   const seen = [];
   const agent = async (prompt, opts) => {
     const label = String(opts.label);
     const role = label.slice(label.indexOf(":") + 1);
-    const mapped = PIPELINE[role];
-    if (mapped === undefined) throw new Error("slice_wave_harness: no mock return mapped to role " + role);
-    seen.push({ label, prompt });
-    return mapped;
+    seen.push(role);
+    if (!(role in map)) throw new Error("STOP");
+    if (map[role] instanceof Error) throw map[role];
+    return map[role];
   };
   return { seen, agent };
-};
+}
+
+// Records the label and the prompt of every dispatch and answers each one from
+// `map`. An unmapped role throws under its own name: a new stage must be mapped
+// rather than degrading a run into a fail-closed path in silence, which would
+// quietly narrow whatever a test built on this asserts.
+function mappedPipeline(map) {
+  const seen = [];
+  const agent = async (prompt, opts) => {
+    const label = String(opts.label);
+    const role = label.slice(label.indexOf(":") + 1);
+    if (!(role in map)) throw new Error("slice_wave_harness: no mock return mapped to role " + role);
+    seen.push({ label, prompt });
+    return map[role];
+  };
+  return { seen, agent };
+}
+
+// fullPipeline() with individual roles swapped out, so a test can drive ONE
+// deviant return through an otherwise complete slice without rebuilding the map.
+export function pipelineWith(overrides) {
+  return mappedPipeline({ ...PIPELINE, ...overrides });
+}
+
+export const PIPELINE_LABELS = Object.keys(PIPELINE).map((role) => "s1:" + role);
+
+// Every role of the eight-dispatch pipeline mocked, with nothing swapped out.
+// One shared mock body with pipelineWith() above, so the two cannot drift.
+export const fullPipeline = () => mappedPipeline(PIPELINE);

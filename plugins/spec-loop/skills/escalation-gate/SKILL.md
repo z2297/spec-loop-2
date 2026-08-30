@@ -47,7 +47,7 @@ The record is one `decision` event, payload
 `decisions-log.md` is *rendered* from those events: never hand-write an entry, and never rely on its
 wording — v2 pins no line grammar.
 
-### SURFACE to human (only these five triggers)
+### SURFACE to human (only these six triggers)
 
 Do not act. Return an `EscalationRecord` and let the controller batch it:
 
@@ -65,6 +65,13 @@ Do not act. Return an `EscalationRecord` and let the controller batch it:
 5. **Unfixable quality-gate block** — the quality gate's metrics still exceed the configured
    thresholds after the fix loop's behavior-preserving refactors. Thresholds are never weakened
    to avoid this.
+6. **Refactor scope** (`refactor-scope`) — the plan a slice just produced declares a rewrite of
+   existing code larger than the run's configured ceiling (`ctx.refactor_radius`). This is the one
+   trigger raised by the workflow's own arithmetic on planner-declared numbers rather than by an
+   agent's judgment, and it is raised at plan time, before a single implementation dispatch is
+   spent. It asks the human to narrow the slice, approve the rewrite, or carve the refactor out.
+   It fires only on a MEASURED breach: an absent or unmeasured number is never a breach, and no
+   number is ever inferred to be zero.
 
 When uncertain whether something is "material": if a reasonable reviewer could reject the slice
 over it, it is material → surface it.
@@ -89,8 +96,11 @@ stage/role dispatched and asks which of the three to take, while the lost-slice 
 neither and asks the same three-way question with its own tail, ending "or stop the run to investigate the silent failure"),
 and the council's **over-scope flag** (`critique.over_scope.flag`). The flag is a record: it is
 carried into the `council-verdict` payload and the slice sidecar with its reason, and it raises no
-escalation, changes no verdict, suppresses no split, and blocks nothing. There are exactly five
-JUDGMENT triggers; an over-scope flag is not a sixth.
+escalation, changes no verdict, suppresses no split, and blocks nothing. There are exactly six
+JUDGMENT triggers, and the sixth is `refactor-scope` — a threshold comparison the workflow performs
+on itself, which is why it belongs on the list even though no agent asked for it. Still, an
+over-scope flag is not one of them, and not because of the count: it stays a record because it
+decides nothing.
 
 ### Precedent check (before returning any SURFACE escalation)
 
@@ -116,7 +126,7 @@ The controller repeats this check over every open record at the wave boundary.
 ### Not triggers (autonomous by design)
 
 Three things that look like stopping points but are handled by the loop itself, keeping the bar at
-exactly the five triggers above:
+exactly the six triggers above:
 
 - **Slice split.** A slice that turns out to be two-or-more independently shippable changes
   returns `SPLIT`; the controller grafts the children into the DAG (`dag.py ingest-split`) —
