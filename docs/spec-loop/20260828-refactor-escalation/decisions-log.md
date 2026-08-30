@@ -61,3 +61,4 @@ Rendered from the run's events; append-only, and nothing parses it back.
 [run] PHASE5-GATE: PASS — AT: 2026-08-28T20:15:43Z
 [run] DECISION: Close the integration review's two findings inline rather than opening a Phase 5 remediation slice — AT: 2026-08-28T20:15:43Z
 [run] PHASE5-GATE: PASS — AT: 2026-08-28T20:21:48Z
+[run] DECISION: Publish choice: merge onto main --no-ff and push — AT: 2026-08-30T00:43:10Z

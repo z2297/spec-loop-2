@@ -6,6 +6,8 @@ All notable changes to the spec-loop plugin are documented here. The format is
 [v1 repository](https://github.com/z2297/spec-loop).
 
 ## [Unreleased]
+
+## [2.3.0] - 2026-08-29
 ### Added
 - **The wave now halts a slice at PLAN time when its plan declares a rewrite of existing code
   larger than the run's configured ceiling — the run's one new LEVER.**
@@ -520,7 +522,8 @@ schemas, agents, and internals redesigned; see
   and the `--budget` flag (cost control is structural: caps + bounds; the
   Workflow token ceiling activates when the session sets a token target).
 
-[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.2.2...HEAD
+[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.3.0
 [2.2.2]: https://github.com/z2297/spec-loop-2/releases/tag/v2.2.2
 [2.2.1]: https://github.com/z2297/spec-loop-2/releases/tag/v2.2.1
 [2.2.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.2.0
