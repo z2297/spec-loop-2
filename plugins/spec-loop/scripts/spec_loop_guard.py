@@ -352,18 +352,25 @@ def main(argv=None):
         reason = evaluate(payload)
     except Exception:  # noqa: BLE001 — deliberate fail-open (see module docstring)
         return 0
-    if reason:
-        print(
-            json.dumps(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "permissionDecision": "deny",
-                        "permissionDecisionReason": reason,
-                    }
+    if not reason:
+        return 0
+    if payload.get("hook_event_name") == "Stop":
+        # A Stop block is a DIFFERENT wire shape: top-level decision/reason,
+        # empirically confirmed on Claude Code 2.1.260. The PreToolUse
+        # hookSpecificOutput shape is ignored here, which reads as allow.
+        print(json.dumps({"decision": "block", "reason": reason}))
+        return 0
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
                 }
-            )
+            }
         )
+    )
     return 0
 
 

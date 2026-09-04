@@ -96,6 +96,11 @@ DEADLOCKED = [
 ALL_DONE = [{"id": "s1", "status": "complete", "deps": []}]
 
 
+def _remediation_sentence(run_id):
+    """The exact _remediation() text every denial and block ends with."""
+    return guard._remediation({"run_id": run_id})
+
+
 class StopGateTests(GuardTestCase):
     def test_runnable_slice_blocks_the_controller_turn(self):
         self.make_run(slices=PENDING, controller_session="sess-ctl")
@@ -261,6 +266,73 @@ class StopGateFailOpenTests(GuardTestCase):
         )
         self.assertIsNone(guard.evaluate(self.bash("ls -la")))
         self.assertIsNone(guard.evaluate(self.write("/tmp/notes.md")))
+
+
+class StopEmitTests(GuardTestCase):
+    def _run_main(self, payload):
+        with mock.patch("sys.stdin", io.StringIO(json.dumps(payload))):
+            with mock.patch("sys.stdout", io.StringIO()) as out:
+                self.assertEqual(guard.main(), 0)
+        return out.getvalue()
+
+    def test_stop_block_uses_the_top_level_decision_shape(self):
+        # Reusing the PreToolUse hookSpecificOutput shape produces a
+        # malformed block that the harness ignores, which reads as allow.
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        emitted = json.loads(self._run_main(self.stop(session_id="sess-ctl")))
+        self.assertEqual(emitted["decision"], "block")
+        self.assertIn("s4", emitted["reason"])
+        self.assertNotIn("hookSpecificOutput", emitted)
+
+    def test_stop_allow_is_silent(self):
+        self.make_run(slices=ALL_DONE, controller_session="sess-ctl")
+        self.assertEqual(self._run_main(self.stop(session_id="sess-ctl")), "")
+
+    def test_pretooluse_deny_still_uses_hook_specific_output(self):
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        emitted = json.loads(self._run_main(self.bash("git push")))
+        self.assertNotIn("decision", emitted)
+        self.assertEqual(
+            emitted["hookSpecificOutput"]["hookEventName"], "PreToolUse"
+        )
+        self.assertEqual(emitted["hookSpecificOutput"]["permissionDecision"], "deny")
+
+
+class StopReasonTextTests(GuardTestCase):
+    def _reason(self):
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        reason = guard.evaluate(self.stop(session_id="sess-ctl"))
+        self.assertIsNotNone(reason)
+        return reason
+
+    def test_reason_names_the_runnable_slices_and_the_compliant_alternative(self):
+        reason = self._reason()
+        self.assertIn("s4", reason)
+        self.assertIn("Phase 2 step 1", reason)
+
+    def test_reason_warns_against_re_dispatching_an_in_flight_wave(self):
+        # dag has no in-flight status (SLICE_STATUSES is pending/complete/
+        # split) and record_wave leaves slices pending, so a dispatched-but-
+        # uncollected wave still reads as runnable. The push must not be
+        # readable as an order to double-dispatch.
+        reason = self._reason()
+        self.assertIn("still in flight", reason)
+        self.assertIn("rather than re-dispatching", reason)
+
+    def test_reason_names_the_literal_paused_path(self):
+        self.assertIn("docs/spec-loop/20260707-demo/.paused", self._reason())
+
+    def test_reason_carries_the_not_the_controller_clause(self):
+        self.assertIn("not the controller", self._reason())
+
+    def test_reason_demands_a_visible_trace(self):
+        self.assertIn("say why in your next message", self._reason())
+
+    def test_reason_ends_with_the_standard_remediation_sentence(self):
+        reason = self._reason()
+        self.assertTrue(
+            reason.endswith(_remediation_sentence("20260707-demo")), reason
+        )
 
 
 class PushRuleTests(GuardTestCase):
