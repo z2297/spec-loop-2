@@ -134,6 +134,74 @@ def _push_targets_run(command, run):
     return False
 
 
+def _controller_marker(run):
+    """Raw text of the run's `.controller-session` marker, or None.
+
+    Absent or blank marker => the gate cannot tell the controller's turn from
+    any other session's on this machine, so it declines to block at all. The
+    controller writes this in Phase 1 from its own session's id
+    (`$CLAUDE_CODE_SESSION_ID`, per commands/spec-loop.md); matching is
+    substring-based in check_stop so a labelled marker still works.
+    """
+    try:
+        with open(os.path.join(run["dir"], ".controller-session"), "r",
+                  encoding="utf-8") as fh:
+            return fh.read().strip() or None
+    except OSError:
+        return None
+
+
+def _runnable_slices(run):
+    """This run's runnable slice ids, or None when readiness is unknowable.
+
+    Wave membership has exactly ONE implementation (`dag.next_wave`); a copy
+    here would fork the split-parent readiness rule. The import is
+    function-local so the Bash/Write hot paths pay nothing for it (the
+    try/import/except ImportError idiom of dashboard_server.py:74-89), and
+    every failure mode — no dag module, an `.active` marker with no dag.json
+    (DagError), a half-written dag — returns None, which ALLOWS. Per run:
+    one broken run must not unlock the gate for another.
+
+    Note: dag has no in-flight status, so a dispatched-but-uncollected slice
+    still reads as runnable. check_stop's reason text accounts for that
+    rather than this function inventing a status dag does not have.
+    """
+    try:
+        import dag as dag_module
+    except ImportError:  # packaging drift, not a logic path
+        return None
+    try:
+        report = dag_module.next_wave(dag_module.load_dag(run["dir"]))
+    except (dag_module.DagError, OSError, ValueError, TypeError, AttributeError):
+        return None
+    slice_ids = report.get("slice_ids")
+    # Runnability is non-empty slice_ids and NEVER a missing 'done' key: a
+    # deadlock report carries no 'done' at all.
+    return slice_ids if isinstance(slice_ids, list) else None
+
+
+def _has_open_escalation(run):
+    """Is a question already open on this run? True on any doubt.
+
+    An open escalation means the human owes an answer, so ending the turn is
+    the correct move and the gate must not block it. Fail-open direction is
+    therefore True.
+
+    The except clause is purely defensive: run_state.open_escalations does
+    NOT raise for a missing or unreadable events.jsonl (_read_text at
+    run_state.py:172-177 swallows OSError and returns ""), so only a genuine
+    internal defect reaches it.
+    """
+    try:
+        import run_state as run_state_module
+    except ImportError:  # packaging drift, not a logic path
+        return True
+    try:
+        return bool(run_state_module.open_escalations(run["dir"]))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return True
+
+
 def check_bash(command, cwd, runs):
     """Return a deny reason for this Bash command, or None to allow."""
     blocking = [r for r in runs if not r["publish_choice"]]
@@ -210,12 +278,64 @@ def check_write(file_path, runs, project_root):
     return None
 
 
+def check_stop(session_id, runs):
+    """Return a reason to block this turn from ending, or None to allow.
+
+    Unlike check_bash/check_write this gate is narrowed to the controller
+    session: it denies INACTION, so its false positives are not
+    self-limiting the way a typed command's are. `.paused` relaxes THIS gate
+    only — never find_active_runs, where a paused run reading as
+    non-blocking would silently unlock push-before-publish, broad staging
+    and default-branch commits.
+    """
+    for run in runs:
+        if os.path.exists(os.path.join(run["dir"], ".paused")):
+            continue
+        marker = _controller_marker(run)
+        if not marker or not session_id or session_id not in marker:
+            continue
+        runnable = _runnable_slices(run)
+        if not runnable:
+            continue
+        if _has_open_escalation(run):
+            continue
+        return (
+            "spec-loop run %s has %d runnable slice(s) (%s) and no open escalation: a wave "
+            "boundary is a dispatch point, not a reporting boundary. Continue Phase 2 step 1 "
+            "in THIS turn — compute the wave, prepare worktrees, dispatch — instead of "
+            "reporting status. If a wave you already dispatched is still in flight, wait for "
+            "its completion notification rather than re-dispatching: slice status stays "
+            "pending until collection, so these ids can include work already running. If "
+            "you are deliberately ending the turn anyway, say why in your next message so "
+            "the transcript carries the reason. If the human asked you to hold, write "
+            "docs/spec-loop/%s/.paused, which relaxes this gate alone. If you are not the "
+            "controller of this run, this gate is not aimed at you — only the session "
+            "recorded in docs/spec-loop/%s/.controller-session is blocked. %s"
+            % (
+                run["run_id"],
+                len(runnable),
+                ", ".join(runnable),
+                run["run_id"],
+                run["run_id"],
+                _remediation(run),
+            )
+        )
+    return None
+
+
 def evaluate(payload):
     """Return a deny reason for this hook payload, or None to allow."""
     project_root = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or os.getcwd()
     runs = find_active_runs(project_root)
     if not runs:
         return None
+
+    # Branch on the EVENT first: a Stop payload carries no tool_name key at
+    # all, so a tool-keyed branch would pass unit tests and never fire live.
+    if payload.get("hook_event_name") == "Stop":
+        if payload.get("stop_hook_active"):
+            return None  # this fire ends the continuation a block caused
+        return check_stop(payload.get("session_id"), runs)
 
     tool = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}

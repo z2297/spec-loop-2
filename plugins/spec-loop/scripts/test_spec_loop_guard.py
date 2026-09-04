@@ -29,7 +29,8 @@ class GuardTestCase(unittest.TestCase):
         self.addCleanup(branch.stop)
 
     def make_run(self, run_id="20260707-demo", active=True, publish_choice=False,
-                 merge_mode="single-branch", base_ref="csv-export"):
+                 merge_mode="single-branch", base_ref="csv-export",
+                 slices=(), controller_session=None, paused=False):
         run_dir = os.path.join(self.root, "docs", "spec-loop", run_id)
         os.makedirs(run_dir, exist_ok=True)
         if active:
@@ -38,8 +39,16 @@ class GuardTestCase(unittest.TestCase):
         if publish_choice:
             with open(os.path.join(run_dir, ".publish-choice"), "w") as fh:
                 fh.write("push-feature-branch")
+        if controller_session:
+            with open(os.path.join(run_dir, ".controller-session"), "w") as fh:
+                fh.write(controller_session + "\n")
+        if paused:
+            with open(os.path.join(run_dir, ".paused"), "w") as fh:
+                fh.write("human asked to hold\n")
         with open(os.path.join(run_dir, "dag.json"), "w") as fh:
-            json.dump({"base_ref": base_ref, "merge_mode": merge_mode, "slices": []}, fh)
+            json.dump(
+                {"base_ref": base_ref, "merge_mode": merge_mode, "slices": list(slices)}, fh
+            )
         return run_dir
 
     @staticmethod
@@ -50,6 +59,22 @@ class GuardTestCase(unittest.TestCase):
     def write(file_path):
         return {"tool_name": "Write", "tool_input": {"file_path": file_path}, "cwd": "/tmp"}
 
+    @staticmethod
+    def stop(session_id="sess-ctl", stop_hook_active=False, cwd="/tmp/wt"):
+        """A realistic Stop payload: the probed key set, and NO tool_name."""
+        return {
+            "hook_event_name": "Stop",
+            "session_id": session_id,
+            "stop_hook_active": stop_hook_active,
+            "cwd": cwd,
+            "transcript_path": "/tmp/transcript.jsonl",
+            "last_assistant_message": "Wave 1 merged. Here is a status report.",
+            "permission_mode": "acceptEdits",
+            "prompt_id": "p-1",
+            "background_tasks": [],
+            "session_crons": [],
+        }
+
 
 class NoActiveRunTests(GuardTestCase):
     def test_everything_allowed_without_marker(self):
@@ -59,6 +84,94 @@ class NoActiveRunTests(GuardTestCase):
         self.assertIsNone(
             guard.evaluate(self.write(os.path.expanduser(guard.QUALITY_GATE_CONFIG)))
         )
+
+
+PENDING = [{"id": "s4", "status": "pending", "deps": []}]
+DEADLOCKED = [
+    {"id": "s4", "status": "pending", "deps": ["s9"]},
+    {"id": "s9", "status": "pending", "deps": ["s4"]},
+]
+ALL_DONE = [{"id": "s1", "status": "complete", "deps": []}]
+
+
+class StopGateTests(GuardTestCase):
+    def test_runnable_slice_blocks_the_controller_turn(self):
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        reason = guard.evaluate(self.stop(session_id="sess-ctl"))
+        self.assertIsNotNone(reason)
+        self.assertIn("s4", reason)
+
+    def test_stop_payload_has_no_tool_name_and_still_dispatches(self):
+        # Regression guard for the silent no-op: an implementation that keys
+        # off tool_name never fires live, because Stop carries no such key.
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        payload = self.stop(session_id="sess-ctl")
+        self.assertNotIn("tool_name", payload)
+        self.assertIsNotNone(guard.evaluate(payload))
+
+    def test_deadlock_allows(self):
+        # next_wave reports {'slice_ids': [], 'deadlock': True} with NO 'done'
+        # key: the deadlock escalation question must be askable.
+        self.make_run(slices=DEADLOCKED, controller_session="sess-ctl")
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_done_allows_the_publish_prompt(self):
+        self.make_run(slices=ALL_DONE, controller_session="sess-ctl")
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_other_session_not_blocked(self):
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-other")))
+
+    def test_labelled_marker_still_matches(self):
+        # Matching is substring-tolerant: a marker written with a label or
+        # extra lines must still narrow to the same session. It can never
+        # match a session whose id is absent from the file.
+        self.make_run(slices=PENDING,
+                      controller_session="session_id: sess-ctl (controller)")
+        self.assertIsNotNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_missing_controller_session_marker_allows(self):
+        self.make_run(slices=PENDING)
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_empty_controller_session_marker_allows(self):
+        run_dir = self.make_run(slices=PENDING, controller_session="sess-ctl")
+        with open(os.path.join(run_dir, ".controller-session"), "w") as fh:
+            fh.write("   \n")
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_payload_without_session_id_allows(self):
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        payload = self.stop()
+        del payload["session_id"]
+        self.assertIsNone(guard.evaluate(payload))
+
+    def test_open_escalation_allows(self):
+        run_dir = self.make_run(slices=PENDING, controller_session="sess-ctl")
+        with open(os.path.join(run_dir, "events.jsonl"), "w") as fh:
+            fh.write(json.dumps({
+                "ts": "2026-09-04T00:00:00Z", "scope": "run",
+                "type": "escalation-opened",
+                "payload": {"id": "esc-1", "trigger": "ambiguity", "status": "OPEN"},
+            }) + "\n")
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_answered_escalation_still_blocks(self):
+        run_dir = self.make_run(slices=PENDING, controller_session="sess-ctl")
+        with open(os.path.join(run_dir, "events.jsonl"), "w") as fh:
+            for event in (
+                {"ts": "2026-09-04T00:00:00Z", "scope": "run", "type": "escalation-opened",
+                 "payload": {"id": "esc-1", "trigger": "ambiguity", "status": "OPEN"}},
+                {"ts": "2026-09-04T00:01:00Z", "scope": "run", "type": "escalation-answered",
+                 "payload": {"id": "esc-1", "answer": "option a"}},
+            ):
+                fh.write(json.dumps(event) + "\n")
+        self.assertIsNotNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_no_active_run_allows(self):
+        self.make_run(active=False, slices=PENDING, controller_session="sess-ctl")
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
 
 
 class PushRuleTests(GuardTestCase):
