@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""PreToolUse guard: deterministic enforcement of spec-loop's git invariants.
+"""PreToolUse + Stop guard: deterministic enforcement of spec-loop's invariants.
 
-Registered by the plugin's hooks/hooks.json for Bash and Write|Edit tool calls.
+Registered by the plugin's hooks/hooks.json for Bash and Write|Edit tool calls and
+for the Stop event.
 While a spec-loop run is active (a `docs/spec-loop/<run-id>/.active` marker
 exists under the project root), this hook mechanically blocks the operations
 the loop's prompts forbid:
@@ -19,6 +20,17 @@ the loop's prompts forbid:
 - Any write to the quality-gate config — the global file
   (`~/.claude/spec-loop-2/quality-gate.json`) or the per-repo overlay
   (`.spec-loop/quality-gate.json`) — thresholds must never be weakened mid-run.
+- Ending the turn (`Stop`) while an active, unpaused run still has runnable
+  slices and no open escalation — a wave boundary is a dispatch point, not a
+  reporting boundary. Narrowed to the controller session: the payload's
+  `session_id` must appear in the run's `.controller-session` marker, which
+  the controller writes in Phase 1 from its own session. Skipped when
+  `stop_hook_active` is true, and relaxed by a `.paused` marker (which
+  relaxes THIS gate only, never the git rules above). Empirically confirmed
+  on Claude Code 2.1.260: a sync Stop hook honours a top-level
+  `{"decision": "block", "reason": ...}`, and `stop_hook_active` resets on
+  every new user turn, so the gate re-arms per turn and is one push per stop
+  attempt, never a fence.
 
 Design decisions:
 - **Fail-open on internal errors.** This hook is defense-in-depth; the skill
@@ -35,8 +47,12 @@ Design decisions:
   (integration merge, runbook commit, publish push) runs in the main session
   regardless.
 
-Standard library only. Reads the hook payload from stdin; a denial is exit 0
-plus a permissionDecision JSON on stdout; an allow is exit 0 with no output.
+Standard library only (the loop-boundary gate imports the sibling `dag` and
+`run_state` modules function-locally, so the tool hot paths pay nothing and
+an absent module fails open). Reads the hook payload from stdin; a PreToolUse
+denial is exit 0 plus a permissionDecision JSON on stdout, a Stop block is
+exit 0 plus a top-level decision/reason JSON, and an allow is exit 0 with no
+output.
 """
 
 from __future__ import annotations
