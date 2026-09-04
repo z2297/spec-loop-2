@@ -269,15 +269,33 @@ no pinned machine grammar in v2.
 
 ## Markers — guard-hook contract (unchanged from v1)
 
-- `.active` — created at Phase 1, recreated on resume, never committed. While
-  present, `spec_loop_guard.py` blocks pushes, broad staging, main-branch
+- `.active` — created at Phase 1, recreated on resume. While present,
+  `spec_loop_guard.py` blocks pushes, broad staging, main-branch
   commits/merges, and quality-gate config writes.
 - `.publish-choice` — written the instant the human answers the publish
   prompt, before the action is performed.
 - `.done` — `.active` renamed at run end.
+- `.paused` — present only while the human has deliberately suspended the
+  loop-boundary gate. It relaxes that one gate and nothing else; every
+  `.active` restriction above still applies.
+- `.controller-session` — identifies the controller's own session so the
+  loop-boundary gate applies to it and not to other sessions. Per-session
+  state, meaningful only inside the machine that wrote it.
+
+None of these markers is ever committed. They are per-checkout state: the
+hooks fire on a marker's PRESENCE, so a committed `.active` would deny pushes
+and main-branch commits on every clone and in every fresh worktree, including
+sessions with no run at all. `.gitignore` enforces this with one bare,
+unanchored entry per marker name, and `test_doctrine_marker_hygiene.py` fails
+if one re-enters the index. Markers did get committed twice before that pin
+existed; the correction is an index-only removal (`git rm --cached`) that
+leaves the files on disk for any run still reading them — never a history
+rewrite, and never a plain delete.
 
 A hook denial means the run has not earned that operation yet — never delete
-a marker to dodge one.
+a marker to dodge one. A stale marker is remediated by resuming the run or
+clearing the marker, in that order; that applies to a stale `.paused` exactly
+as it does to a stale `.active`.
 
 ## Worktrees & branches
 

@@ -122,3 +122,29 @@ class TestMarkersAreNotTracked(unittest.TestCase):
                         "%s must be matched at any depth, so its .gitignore "
                         "entry must be the bare name, not %r" % (marker, line),
                     )
+
+
+class TestRunStateDocStatesMarkerHygiene(unittest.TestCase):
+    """The Markers section must name every marker and the ignore rule."""
+
+    def test_every_marker_is_documented(self):
+        text = prose(RUN_STATE_MD)
+        for marker in MARKERS:
+            self.assertIn("`%s`" % marker, text, "%s undocumented" % marker)
+
+    def test_the_class_wide_never_committed_rule_is_stated(self):
+        self.assertIn(
+            "None of these markers is ever committed",
+            prose(RUN_STATE_MD),
+        )
+
+    def test_gitignore_is_named_as_the_enforcement(self):
+        text = prose(RUN_STATE_MD)
+        self.assertIn("`.gitignore`", text)
+        self.assertIn("index-only removal", text)
+
+    def test_the_do_not_delete_a_marker_sentence_survives(self):
+        self.assertIn(
+            "never delete a marker to dodge one",
+            prose(RUN_STATE_MD),
+        )
