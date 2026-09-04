@@ -257,8 +257,9 @@ half of the same rule: the moment the human answers, append the matching
 `escalation-answered` event keyed by the same `id` verbatim, before you act on the answer.
 `open-escalations` holds an opened id with no answer event open forever, so an unclosed
 record is re-gathered by Phase 2 step 7, re-asked at the next wave boundary, and surfaced
-by the dashboard until it is closed. The rule does not apply to wave-raised escalations:
-records a wave raised are already appended by `persist-slice`, so never re-append those.
+by the dashboard until it is closed. The append half alone does not apply to wave-raised
+escalations: records a wave raised are already appended by `persist-slice`, so never
+re-append those — the write-back half above still applies to them in full.
 
 Every autonomous decision = one `decision` event with rationale and reversibility. When a
 workflow result surprises you (empty, malformed, contradicting its own events), read the
