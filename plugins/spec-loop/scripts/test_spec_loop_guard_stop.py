@@ -161,6 +161,23 @@ class StopGateFailOpenTests(GuardTestCase):
         self.assertIsNotNone(reason)
         self.assertIn("20260902-run-b", reason)
 
+    def test_undecodable_marker_does_not_fail_open_for_a_healthy_run(self):
+        # A .controller-session that is not valid UTF-8 raises
+        # UnicodeDecodeError — a ValueError, NOT an OSError. If
+        # _controller_marker lets it escape, main()'s blanket handler
+        # swallows it and the gate unlocks for EVERY run, not just this
+        # one. The property under test is that isolation, so a second
+        # healthy run controlled by the same session must still block.
+        broken = self.make_run("20260901-run-a", controller_session="sess-ctl")
+        with open(os.path.join(broken, ".controller-session"), "wb") as fh:
+            fh.write(b"\xff\xfe\x00bad")
+        self.make_run(
+            "20260902-run-b", slices=PENDING, controller_session="sess-ctl")
+        reason = guard.evaluate(self.stop(session_id="sess-ctl"))
+        self.assertIsNotNone(reason)
+        self.assertIn("20260902-run-b", reason)
+        self.assertIn("s4", reason)
+
     def test_stale_other_run_is_skipped_not_blamed(self):
         # A stale .active owned by a different session must not block this one.
         self.make_run("20260901-stale", slices=PENDING, controller_session="sess-old")

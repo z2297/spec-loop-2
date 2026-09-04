@@ -163,6 +163,10 @@ ANSWER_BACK = "append the matching `escalation-answered` event keyed by the same
 ANSWER_WHY = "an opened id with no answer event open forever"
 ANSWER_RE_ASK = "re-gathered by Phase 2 step 7"
 OPEN_NO_DOUBLE_TAIL = "so never re-append those"
+OPEN_APPEND_ONLY = "The append half alone does not apply to wave-raised escalations"
+OPEN_STALE_UNSCOPED = "The rule does not apply to wave-raised escalations"
+OPEN_WRITE_BACK_STILL = (
+    "the write-back half above still applies to them in full")
 
 
 class TestControllerQuestionsAreRecordedBeforeTheyAreAsked(unittest.TestCase):
@@ -188,6 +192,18 @@ class TestControllerQuestionsAreRecordedBeforeTheyAreAsked(unittest.TestCase):
     def test_wave_raised_records_are_not_re_appended(self):
         self.assertIn(OPEN_NO_DOUBLE, self.text)
         self.assertIn(OPEN_NO_DOUBLE_TAIL, self.text)
+
+    def test_the_exemption_covers_only_the_append_half(self):
+        # Read unscoped, the exemption would excuse the write-back too,
+        # and open_escalations() would then hold every wave-raised id
+        # open forever. The scope is the assertion, not the sentence.
+        self.assertIn(OPEN_APPEND_ONLY, self.text)
+        self.assertNotIn(OPEN_STALE_UNSCOPED, self.text)
+
+    def test_the_write_back_still_applies_to_wave_raised_escalations(self):
+        self.assertIn(OPEN_WRITE_BACK_STILL, self.text)
+        self.assertLess(
+            self.text.index(ANSWER_BACK), self.text.index(OPEN_WRITE_BACK_STILL))
 
     def test_the_answer_write_back_is_the_second_half_of_the_rule(self):
         self.assertIn(ANSWER_BACK, self.text)
