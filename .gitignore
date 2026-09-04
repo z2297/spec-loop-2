@@ -4,3 +4,15 @@
 # Python cache (release/validation scripts)
 __pycache__/
 *.pyc
+
+# spec-loop run-state markers (never commit)
+# The guard hooks fire on these files' PRESENCE. A committed marker arrives on
+# every clone and every fresh worktree, so a committed .active would deny
+# pushes and main-branch commits in sessions that have no run at all. They are
+# per-checkout, per-session state, like .worktrees/. Bare names on purpose:
+# they must be ignored at any depth, under any run directory.
+.active
+.controller-session
+.done
+.paused
+.publish-choice
