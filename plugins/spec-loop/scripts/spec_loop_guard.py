@@ -159,9 +159,9 @@ def _controller_marker(run):
     (`$CLAUDE_CODE_SESSION_ID`, per commands/spec-loop.md); matching is
     substring-based in check_stop so a labelled marker still works.
     """
+    marker_path = os.path.join(run["dir"], ".controller-session")
     try:
-        with open(os.path.join(run["dir"], ".controller-session"), "r",
-                  encoding="utf-8") as fh:
+        with open(marker_path, "r", encoding="utf-8") as fh:
             return fh.read().strip() or None
     except OSError:
         return None
@@ -294,6 +294,31 @@ def check_write(file_path, runs, project_root):
     return None
 
 
+def _stop_block_reason(run, runnable):
+    """The block text for one runnable, unescalated, controller-owned run."""
+    return (
+        "spec-loop run %s has %d runnable slice(s) (%s) and no open escalation: a wave "
+        "boundary is a dispatch point, not a reporting boundary. Continue Phase 2 step 1 "
+        "in THIS turn — compute the wave, prepare worktrees, dispatch — instead of "
+        "reporting status. If a wave you already dispatched is still in flight, wait for "
+        "its completion notification rather than re-dispatching: slice status stays "
+        "pending until collection, so these ids can include work already running. If "
+        "you are deliberately ending the turn anyway, say why in your next message so "
+        "the transcript carries the reason. If the human asked you to hold, write "
+        "docs/spec-loop/%s/.paused, which relaxes this gate alone. If you are not the "
+        "controller of this run, this gate is not aimed at you — only the session "
+        "recorded in docs/spec-loop/%s/.controller-session is blocked. %s"
+        % (
+            run["run_id"],
+            len(runnable),
+            ", ".join(runnable),
+            run["run_id"],
+            run["run_id"],
+            _remediation(run),
+        )
+    )
+
+
 def check_stop(session_id, runs):
     """Return a reason to block this turn from ending, or None to allow.
 
@@ -315,27 +340,7 @@ def check_stop(session_id, runs):
             continue
         if _has_open_escalation(run):
             continue
-        return (
-            "spec-loop run %s has %d runnable slice(s) (%s) and no open escalation: a wave "
-            "boundary is a dispatch point, not a reporting boundary. Continue Phase 2 step 1 "
-            "in THIS turn — compute the wave, prepare worktrees, dispatch — instead of "
-            "reporting status. If a wave you already dispatched is still in flight, wait for "
-            "its completion notification rather than re-dispatching: slice status stays "
-            "pending until collection, so these ids can include work already running. If "
-            "you are deliberately ending the turn anyway, say why in your next message so "
-            "the transcript carries the reason. If the human asked you to hold, write "
-            "docs/spec-loop/%s/.paused, which relaxes this gate alone. If you are not the "
-            "controller of this run, this gate is not aimed at you — only the session "
-            "recorded in docs/spec-loop/%s/.controller-session is blocked. %s"
-            % (
-                run["run_id"],
-                len(runnable),
-                ", ".join(runnable),
-                run["run_id"],
-                run["run_id"],
-                _remediation(run),
-            )
-        )
+        return _stop_block_reason(run, runnable)
     return None
 
 
@@ -362,6 +367,18 @@ def evaluate(payload):
     return None
 
 
+def _pretooluse_deny_payload(reason):
+    """The PreToolUse hookSpecificOutput deny shape, as its own literal so
+    main() doesn't carry the dict's nesting on top of its own control flow."""
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
 def main(argv=None):
     try:
         payload = json.load(sys.stdin)
@@ -376,17 +393,7 @@ def main(argv=None):
         # hookSpecificOutput shape is ignored here, which reads as allow.
         print(json.dumps({"decision": "block", "reason": reason}))
         return 0
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": reason,
-                }
-            }
-        )
-    )
+    print(json.dumps(_pretooluse_deny_payload(reason)))
     return 0
 
 
