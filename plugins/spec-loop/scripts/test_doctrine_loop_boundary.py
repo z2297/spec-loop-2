@@ -100,3 +100,49 @@ class TestTheSkillNamesTheRunnableWaveBoundary(unittest.TestCase):
     def test_the_pinned_tail_clause_and_the_other_list_are_untouched(self):
         self.assertIn(SKILL_PINNED_TAIL, self.text)
         self.assertIn(SKILL_OTHER_LIST, self.text)
+
+
+# ---- the command: Phase 2 closes its own loop ----
+
+CLOSE_STEP = "9. **Close**:"
+CLOSE_RECOMPUTE = "re-run `dag.py next-wave` and act on it in THIS turn"
+CLOSE_SAME_TURN = "return to step 1 immediately, in the same turn, with no status report"
+CLOSE_DONE = "`done: true` → Phase 5"
+CLOSE_DEADLOCK = "`deadlock: true` → escalate with the `blocked` list"
+CLOSE_ON_SLICE_IDS = (
+    "Judge runnability on `slice_ids` being non-empty and never on the absence "
+    "of a `done` key")
+CLOSE_NO_DONE_KEY = "a deadlock report carries no `done` key at all"
+CLOSE_VISIBLE_TRACE = "say why in your next message so the transcript carries the reason"
+INVARIANT_BOUNDARY = "a wave boundary is a dispatch point, not a reporting boundary"
+
+
+class TestPhase2ClosesTheWaveLoopInTheSameTurn(unittest.TestCase):
+    """The controller command is the only place the loop's turn discipline is
+    written. Phase 2 ended at step 8 with no instruction to recompute, which
+    is how a turn ends with slices still runnable."""
+
+    def setUp(self):
+        self.text = prose(COMMAND_MD)
+
+    def test_phase_2_has_a_closing_step(self):
+        self.assertIn(CLOSE_STEP, self.text)
+        self.assertIn(CLOSE_RECOMPUTE, self.text)
+
+    def test_the_closing_step_states_all_three_outcomes(self):
+        for pin in (CLOSE_SAME_TURN, CLOSE_DONE, CLOSE_DEADLOCK):
+            self.assertIn(pin, self.text)
+
+    def test_runnability_is_judged_on_slice_ids_not_a_missing_done_key(self):
+        self.assertIn(CLOSE_ON_SLICE_IDS, self.text)
+        self.assertIn(CLOSE_NO_DONE_KEY, self.text)
+
+    def test_a_deliberate_stop_must_leave_a_visible_reason(self):
+        self.assertIn(CLOSE_VISIBLE_TRACE, self.text)
+
+    def test_the_invariants_line_names_the_boundary_as_a_dispatch_point(self):
+        self.assertIn(INVARIANT_BOUNDARY, self.text)
+        head = self.text.index("Invariants (non-negotiable)")
+        self.assertLess(head, self.text.index(INVARIANT_BOUNDARY))
+        self.assertLess(self.text.index(INVARIANT_BOUNDARY),
+                        self.text.index("## Phase 0 — Intake"))
