@@ -143,12 +143,16 @@ def _controller_marker(run):
 
     Absent or blank => no recorded controller, so the gate declines to block
     at all; check_stop matches it as a substring (a labelled marker works).
+    ValueError is caught alongside OSError — an undecodable marker raises
+    UnicodeDecodeError, which is a ValueError, not an OSError — so this run
+    fails open on its own, matching _blocking_slices and never escaping to
+    main()'s blanket handler, which would unlock the gate for every run.
     """
     marker_path = os.path.join(run["dir"], ".controller-session")
     try:
         with open(marker_path, "r", encoding="utf-8") as fh:
             return fh.read().strip() or None
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 
