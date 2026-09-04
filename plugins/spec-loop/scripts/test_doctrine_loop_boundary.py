@@ -159,12 +159,18 @@ OPEN_CLI = "--type escalation-opened"
 OPEN_SCOPE = "any question you raise yourself rather than a wave"
 OPEN_WHY = "a question asked before its record exists is invisible to a resume"
 OPEN_NO_DOUBLE = "records a wave raised are already appended by `persist-slice`"
+ANSWER_BACK = "append the matching `escalation-answered` event keyed by the same `id`"
+ANSWER_WHY = "an opened id with no answer event open forever"
+ANSWER_RE_ASK = "re-gathered by Phase 2 step 7"
+OPEN_NO_DOUBLE_TAIL = "so never re-append those"
 
 
 class TestControllerQuestionsAreRecordedBeforeTheyAreAsked(unittest.TestCase):
     """`open-escalations` reads events.jsonl, so an unrecorded question is a
     question no resume and no run-state reader can see, and an answer written
-    back pairs by an id that was never opened."""
+    back pairs by an id that was never opened. An opened record never answered
+    back is re-asked at every later wave boundary, so the write-back is pinned
+    with the ordering."""
 
     def setUp(self):
         self.text = prose(COMMAND_MD)
@@ -181,6 +187,15 @@ class TestControllerQuestionsAreRecordedBeforeTheyAreAsked(unittest.TestCase):
 
     def test_wave_raised_records_are_not_re_appended(self):
         self.assertIn(OPEN_NO_DOUBLE, self.text)
+        self.assertIn(OPEN_NO_DOUBLE_TAIL, self.text)
+
+    def test_the_answer_write_back_is_the_second_half_of_the_rule(self):
+        self.assertIn(ANSWER_BACK, self.text)
+        self.assertLess(self.text.index(OPEN_FIRST), self.text.index(ANSWER_BACK))
+
+    def test_the_rule_says_why_an_unclosed_record_is_re_asked(self):
+        self.assertIn(ANSWER_WHY, self.text)
+        self.assertIn(ANSWER_RE_ASK, self.text)
 
     def test_the_rule_lives_in_the_escalation_discipline_section(self):
         head = self.text.index("## Escalation discipline")
@@ -217,7 +232,10 @@ class TestTheMarkerLifecyclesAreWrittenDown(unittest.TestCase):
         self.assertIn(SESSION_PURPOSE, self.text)
 
     def test_the_markers_are_stated_once_to_be_uncommitted(self):
-        self.assertIn(SESSION_NEVER_COMMITTED, self.text)
+        """The name says once, so count it: the drift this pin guards against is a
+        SECOND copy of the claim appearing in another phase and the two falling out
+        of step, which a mere `assertIn` would never see."""
+        self.assertEqual(self.text.count(SESSION_NEVER_COMMITTED), 1)
 
     def test_resume_rewrites_the_session_marker(self):
         self.assertIn(SESSION_RESUME, self.text)

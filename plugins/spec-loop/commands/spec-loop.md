@@ -252,10 +252,14 @@ rather than a wave — append the record FIRST, then ask:
 --scope run --type escalation-opened --payload <EscalationRecord JSON>`. The order is the
 point: `open-escalations` reads events.jsonl, so a question asked before its record exists is
 invisible to a resume and to anything else reading run state, and the `escalation-answered`
-event you write back pairs by an `id` that was never opened. This excludes records a wave
-raised are already appended by `persist-slice` — never re-append those.
+event you write back pairs by an `id` that was never opened. Closing the record is the second
+half of the same rule: the moment the human answers, append the matching
+`escalation-answered` event keyed by the same `id` verbatim, before you act on the answer.
+`open-escalations` holds an opened id with no answer event open forever, so an unclosed
+record is re-gathered by Phase 2 step 7, re-asked at the next wave boundary, and surfaced
+by the dashboard until it is closed. The rule does not apply to wave-raised escalations:
+records a wave raised are already appended by `persist-slice`, so never re-append those.
 
-Every autonomous decision = one `decision` event with
-rationale and reversibility. When a workflow result surprises you (empty, malformed,
-contradicting its own events), read the workflow journal before re-dispatching — never
-re-run work you merely failed to look at.
+Every autonomous decision = one `decision` event with rationale and reversibility. When a
+workflow result surprises you (empty, malformed, contradicting its own events), read the
+workflow journal before re-dispatching — never re-run work you merely failed to look at.
