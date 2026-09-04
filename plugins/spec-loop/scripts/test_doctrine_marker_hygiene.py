@@ -61,6 +61,14 @@ def ignore_lines():
     ]
 
 
+def marker_suffix(line):
+    """The marker `line` ends with, or None. (PURE)"""
+    for marker in MARKERS:
+        if line.endswith(marker):
+            return marker
+    return None
+
+
 def repo_has_git():
     """True when REPO_ROOT has a .git dir OR a .git file (linked worktree)."""
     return (REPO_ROOT / ".git").exists()
@@ -114,14 +122,15 @@ class TestMarkersAreNotTracked(unittest.TestCase):
 
     def test_marker_ignore_patterns_are_unanchored(self):
         for line in ignore_lines():
-            for marker in MARKERS:
-                if line.endswith(marker):
-                    self.assertEqual(
-                        line,
-                        marker,
-                        "%s must be matched at any depth, so its .gitignore "
-                        "entry must be the bare name, not %r" % (marker, line),
-                    )
+            marker = marker_suffix(line)
+            if marker is None:
+                continue
+            self.assertEqual(
+                line,
+                marker,
+                "%s must be matched at any depth, so its .gitignore "
+                "entry must be the bare name, not %r" % (marker, line),
+            )
 
 
 class TestRunStateDocStatesMarkerHygiene(unittest.TestCase):
