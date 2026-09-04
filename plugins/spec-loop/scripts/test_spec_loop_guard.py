@@ -9,10 +9,12 @@ import io
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
+import run_state
 import spec_loop_guard as guard
 
 
@@ -172,6 +174,93 @@ class StopGateTests(GuardTestCase):
     def test_no_active_run_allows(self):
         self.make_run(active=False, slices=PENDING, controller_session="sess-ctl")
         self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+
+class StopGateFailOpenTests(GuardTestCase):
+    def test_stop_hook_active_allows(self):
+        # Empirically (2026-09-04, CC 2.1.260) stop_hook_active is true only
+        # on the fire that ends the continuation a block caused, and resets
+        # on every new user turn: honouring it makes the gate one push per
+        # stop attempt, re-armed per turn, never a fence.
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        self.assertIsNone(
+            guard.evaluate(self.stop(session_id="sess-ctl", stop_hook_active=True))
+        )
+
+    def test_paused_marker_allows_the_stop_gate(self):
+        self.make_run(slices=PENDING, controller_session="sess-ctl", paused=True)
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_paused_marker_does_not_unlock_push_or_main_commits(self):
+        # .paused relaxes the loop-boundary gate ALONE. If it leaked into
+        # find_active_runs it would silently unlock push-before-publish,
+        # broad staging and default-branch commits.
+        self.make_run(slices=PENDING, controller_session="sess-ctl", paused=True)
+        self.assertIsNotNone(guard.evaluate(self.bash("git push")))
+        self.assertIsNotNone(guard.evaluate(self.bash("git add -A")))
+        self.branch_mock.return_value = "main"
+        self.assertIsNotNone(guard.evaluate(self.bash("git commit -m x")))
+
+    def test_active_marker_without_dag_json_allows(self):
+        # Reachable state: find_active_runs tolerates it, dag.load_dag
+        # raises DagError on it, and the gate must fail OPEN there.
+        run_dir = self.make_run(slices=PENDING, controller_session="sess-ctl")
+        os.unlink(os.path.join(run_dir, "dag.json"))
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_half_written_dag_json_allows(self):
+        run_dir = self.make_run(slices=PENDING, controller_session="sess-ctl")
+        with open(os.path.join(run_dir, "dag.json"), "w") as fh:
+            fh.write('{"slices": [')
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_broken_run_does_not_fail_open_for_a_healthy_run(self):
+        # Two active runs: run-a's dag.json is missing, run-b is runnable
+        # and controlled by this session. The gate must still block. If this
+        # fails, the implementation put ONE try around the whole loop.
+        broken = self.make_run("20260901-run-a", controller_session="sess-ctl")
+        os.unlink(os.path.join(broken, "dag.json"))
+        self.make_run("20260902-run-b", slices=PENDING, controller_session="sess-ctl")
+        reason = guard.evaluate(self.stop(session_id="sess-ctl"))
+        self.assertIsNotNone(reason)
+        self.assertIn("20260902-run-b", reason)
+
+    def test_stale_other_run_is_skipped_not_blamed(self):
+        # A stale .active owned by a different session must not block this one.
+        self.make_run("20260901-stale", slices=PENDING, controller_session="sess-old")
+        self.make_run("20260902-mine", slices=ALL_DONE, controller_session="sess-ctl")
+        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_import_error_on_dag_allows(self):
+        # A None entry in sys.modules makes `import dag` raise ImportError
+        # ("import of dag halted; None in sys.modules") — the standard idiom,
+        # and unlike patching builtins.__import__ it intercepts nothing else.
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        with mock.patch.dict(sys.modules, {"dag": None}):
+            self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_import_error_on_run_state_allows(self):
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        with mock.patch.dict(sys.modules, {"run_state": None}):
+            self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_open_escalations_raising_allows(self):
+        # Exercises the REAL defensive branch in _has_open_escalation by
+        # patching the dependency (run_state.open_escalations), not the
+        # function under test. open_escalations does not raise for a missing
+        # or unreadable events.jsonl, so this is the only way to reach it.
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        with mock.patch.object(run_state, "open_escalations", side_effect=OSError):
+            self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
+
+    def test_pretooluse_bash_and_write_unaffected_by_the_stop_branch(self):
+        self.make_run(slices=PENDING, controller_session="sess-ctl")
+        self.assertIsNotNone(guard.evaluate(self.bash("git push")))
+        self.assertIsNotNone(
+            guard.evaluate(self.write(os.path.expanduser(guard.QUALITY_GATE_CONFIG)))
+        )
+        self.assertIsNone(guard.evaluate(self.bash("ls -la")))
+        self.assertIsNone(guard.evaluate(self.write("/tmp/notes.md")))
 
 
 class PushRuleTests(GuardTestCase):
