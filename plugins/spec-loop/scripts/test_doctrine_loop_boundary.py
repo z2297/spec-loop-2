@@ -48,8 +48,10 @@ def not_trigger_bullet_count():
     counts. The section ends at the next `## ` heading.
     """
     lines = SKILL_MD.read_text(encoding="utf-8").splitlines()
-    start = next(i for i, line in enumerate(lines)
-                 if line.strip() == NOT_TRIGGERS_HEADING)
+    start = next(
+        i for i, line in enumerate(lines)
+        if line.strip() == NOT_TRIGGERS_HEADING
+    )
     count = 0
     for line in lines[start + 1:]:
         if line.startswith("## "):
@@ -144,8 +146,10 @@ class TestPhase2ClosesTheWaveLoopInTheSameTurn(unittest.TestCase):
         self.assertIn(INVARIANT_BOUNDARY, self.text)
         head = self.text.index("Invariants (non-negotiable)")
         self.assertLess(head, self.text.index(INVARIANT_BOUNDARY))
-        self.assertLess(self.text.index(INVARIANT_BOUNDARY),
-                        self.text.index("## Phase 0 — Intake"))
+        self.assertLess(
+            self.text.index(INVARIANT_BOUNDARY),
+            self.text.index("## Phase 0 — Intake"),
+        )
 
 
 # ---- the command: record the escalation BEFORE asking ----
@@ -217,8 +221,10 @@ class TestTheMarkerLifecyclesAreWrittenDown(unittest.TestCase):
 
     def test_resume_rewrites_the_session_marker(self):
         self.assertIn(SESSION_RESUME, self.text)
-        self.assertLess(self.text.index("## Resume"),
-                        self.text.index(SESSION_RESUME))
+        self.assertLess(
+            self.text.index("## Resume"),
+            self.text.index(SESSION_RESUME),
+        )
 
     def test_the_paused_lifecycle_names_who_writes_and_who_clears(self):
         for pin in (PAUSED_WHO, PAUSED_CLEAR, PAUSED_NEVER_SELF):
