@@ -146,3 +146,38 @@ class TestPhase2ClosesTheWaveLoopInTheSameTurn(unittest.TestCase):
         self.assertLess(head, self.text.index(INVARIANT_BOUNDARY))
         self.assertLess(self.text.index(INVARIANT_BOUNDARY),
                         self.text.index("## Phase 0 — Intake"))
+
+
+# ---- the command: record the escalation BEFORE asking ----
+
+OPEN_FIRST = "append the record FIRST, then ask"
+OPEN_CLI = "--type escalation-opened"
+OPEN_SCOPE = "any question you raise yourself rather than a wave"
+OPEN_WHY = "a question asked before its record exists is invisible to a resume"
+OPEN_NO_DOUBLE = "records a wave raised are already appended by `persist-slice`"
+
+
+class TestControllerQuestionsAreRecordedBeforeTheyAreAsked(unittest.TestCase):
+    """`open-escalations` reads events.jsonl, so an unrecorded question is a
+    question no resume and no run-state reader can see, and an answer written
+    back pairs by an id that was never opened."""
+
+    def setUp(self):
+        self.text = prose(COMMAND_MD)
+
+    def test_the_record_is_appended_before_the_question_is_asked(self):
+        self.assertIn(OPEN_FIRST, self.text)
+        self.assertIn(OPEN_CLI, self.text)
+
+    def test_the_rule_names_which_questions_it_covers(self):
+        self.assertIn(OPEN_SCOPE, self.text)
+
+    def test_the_rule_says_why_the_order_matters(self):
+        self.assertIn(OPEN_WHY, self.text)
+
+    def test_wave_raised_records_are_not_re_appended(self):
+        self.assertIn(OPEN_NO_DOUBLE, self.text)
+
+    def test_the_rule_lives_in_the_escalation_discipline_section(self):
+        head = self.text.index("## Escalation discipline")
+        self.assertLess(head, self.text.index(OPEN_FIRST))

@@ -230,7 +230,19 @@ question, including your own. Announce every question you do ask: immediately be
 `printf '\a'; command -v osascript >/dev/null 2>&1 && osascript -e 'display notification
 "spec-loop run needs a decision" with title "spec-loop"' || true` — so an unattended run is
 never silently parked (a finished run once waited 7.6 hours at the publish prompt). An alert
-failure is ignored, never a reason to delay the question. Every autonomous decision = one `decision` event with
+failure is ignored, never a reason to delay the question.
+
+Before ANY controller-originated `AskUserQuestion` — a reported deadlock, a decomposition
+ambiguity, a config first-run choice, the publish prompt, any question you raise yourself
+rather than a wave — append the record FIRST, then ask:
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_state.py" append-event --run-dir <dir> --ts <now>
+--scope run --type escalation-opened --payload <EscalationRecord JSON>`. The order is the
+point: `open-escalations` reads events.jsonl, so a question asked before its record exists is
+invisible to a resume and to anything else reading run state, and the `escalation-answered`
+event you write back pairs by an `id` that was never opened. This excludes records a wave
+raised are already appended by `persist-slice` — never re-append those.
+
+Every autonomous decision = one `decision` event with
 rationale and reversibility. When a workflow result surprises you (empty, malformed,
 contradicting its own events), read the workflow journal before re-dispatching — never
 re-run work you merely failed to look at.
