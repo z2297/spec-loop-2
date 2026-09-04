@@ -181,3 +181,52 @@ class TestControllerQuestionsAreRecordedBeforeTheyAreAsked(unittest.TestCase):
     def test_the_rule_lives_in_the_escalation_discipline_section(self):
         head = self.text.index("## Escalation discipline")
         self.assertLess(head, self.text.index(OPEN_FIRST))
+
+
+# ---- the command: the two session/pause markers ----
+
+SESSION_WRITE = "`.controller-session` beside `.active`, containing your session id"
+SESSION_PURPOSE = "tells your turns from any other session's on this machine"
+SESSION_NEVER_COMMITTED = "Neither marker is ever committed"
+SESSION_RESUME = "rewrite `.controller-session` with your NEW session id"
+PAUSED_WHO = "the HUMAN asks for it and YOU write"
+PAUSED_ONE_GATE = "relaxes the loop-boundary gate alone"
+PAUSED_CLEAR = "delete it yourself the moment the human says resume"
+PAUSED_RESUME = "`--resume` does NOT clear it"
+PAUSED_REMEDIATION = (
+    "a stale `.paused` is remediated by resuming the run or clearing the marker, "
+    "in that order")
+PAUSED_NEVER_SELF = "Never write it to get past a gate of your own accord"
+
+
+class TestTheMarkerLifecyclesAreWrittenDown(unittest.TestCase):
+    """`.controller-session` scopes the gate to the controller and `.paused` is
+    its only deliberate escape. A `.paused` nobody clears is a gate lost with
+    no report, so who writes it, who clears it, and what resume does with it
+    all have to be on the page."""
+
+    def setUp(self):
+        self.text = prose(COMMAND_MD)
+
+    def test_phase_1_writes_the_controller_session_marker(self):
+        self.assertIn(SESSION_WRITE, self.text)
+        self.assertIn(SESSION_PURPOSE, self.text)
+
+    def test_the_markers_are_stated_once_to_be_uncommitted(self):
+        self.assertIn(SESSION_NEVER_COMMITTED, self.text)
+
+    def test_resume_rewrites_the_session_marker(self):
+        self.assertIn(SESSION_RESUME, self.text)
+        self.assertLess(self.text.index("## Resume"),
+                        self.text.index(SESSION_RESUME))
+
+    def test_the_paused_lifecycle_names_who_writes_and_who_clears(self):
+        for pin in (PAUSED_WHO, PAUSED_CLEAR, PAUSED_NEVER_SELF):
+            self.assertIn(pin, self.text)
+
+    def test_paused_relaxes_one_gate_and_survives_a_resume(self):
+        self.assertIn(PAUSED_ONE_GATE, self.text)
+        self.assertIn(PAUSED_RESUME, self.text)
+
+    def test_the_stale_paused_remediation_sentence_is_present(self):
+        self.assertIn(PAUSED_REMEDIATION, self.text)

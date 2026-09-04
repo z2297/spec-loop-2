@@ -71,6 +71,10 @@ re-dispatches in the SAME turn.
    the optional run-level `scope_ceiling` from Phase 0), and empty `events.jsonl`;
    append a `run-created` event via `run_state.py append-event`. Ensure `.worktrees/` is
    gitignored. Validate: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dag.py" validate --run-dir <dir>`.
+   Write `.controller-session` beside `.active`, containing your session id: the
+   loop-boundary gate reads it and tells your turns from any other session's on this machine.
+   Neither marker is ever committed — `.gitignore` covers both, bare and unanchored, and
+   `test_doctrine_marker_hygiene.py` fails if either re-enters the index.
 5. Knowledge graph (if enabled): one `knowledge_graph.py batch` seeding the system hub + run
    MOC (`ensure_base: true`).
 
@@ -195,6 +199,14 @@ deadlock is itself an escalation):
    deadlock report carries no `done` key at all, so reading a missing `done` as "keep going"
    would swallow both the deadlock question and the Phase 5 publish prompt. If you do end the
    turn here anyway, say why in your next message so the transcript carries the reason.
+   `.paused` is the one deliberate escape from the loop-boundary gate: the HUMAN asks for it
+   and YOU write `docs/spec-loop/<run-id>/.paused`. It relaxes the loop-boundary gate alone —
+   every other `.active` restriction (pushes before the publish choice, broad staging,
+   default-branch commits and merges, gate-config writes) still applies. You delete it yourself
+   the moment the human says resume; `--resume` does NOT clear it, so a resumed run is unpaused
+   only once you remove the file. Never write it to get past a gate of your own accord. Like a
+   stale `.active`, a stale `.paused` is remediated by resuming the run or clearing the marker,
+   in that order — and it is never committed.
 
 ## Phase 5 — Integration gate & finish
 
@@ -213,13 +225,14 @@ Executive Readout, verbatim.
 ## Resume
 
 `--resume <run-id>`: read `dag.json` (recover branch, mode, wave history), recreate
-`.active`, checkout the integration branch (clean-tree guard), `worktrees.py prepare
---resume` for the incomplete wave's slices, drain EVERY answered escalation of the run into
-the `answers` map (every round, already-dispatched ones included, per step 7's
-cumulative-map invariant), and re-enter the wave loop at the first incomplete wave —
-same-session
-with `resumeFromRunId`, fresh invocation otherwise. All slices terminal → straight to
-Phase 5 (regenerating `runbook.md` is safe).
+`.active`, rewrite `.controller-session` with your NEW session id (the previous
+session's id is stale the moment this one starts), checkout the integration branch
+(clean-tree guard), `worktrees.py prepare --resume` for the incomplete wave's slices, drain
+EVERY answered escalation of the run into the `answers` map (every round,
+already-dispatched ones included, per step 7's cumulative-map invariant), and re-enter the
+wave loop at the first incomplete wave — same-session with `resumeFromRunId`, fresh
+invocation otherwise. All slices terminal → straight to Phase 5 (regenerating `runbook.md`
+is safe).
 
 ## Escalation discipline
 
