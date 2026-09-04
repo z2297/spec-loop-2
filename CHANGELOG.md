@@ -7,6 +7,22 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+### Added
+- **The controller's Phase-2 loop now closes itself in prose: a wave boundary with slices
+  still runnable is a dispatch point, not a place to stop and report.** `commands/spec-loop.md`
+  gains a Phase 2 step 9 **Close** that re-runs `dag.py next-wave` in the same turn and routes
+  the three outcomes — runnable back to step 1, `done` to Phase 5, `deadlock` to an escalation
+  — judging runnability on a non-empty `slice_ids` rather than on a missing `done` key, which a
+  deadlock report does not carry. The Invariants line states the same rule, an
+  `escalation-opened` event is now mandatory before any controller-originated
+  `AskUserQuestion`, Phase 1 and Resume write `.controller-session` beside `.active`, and the
+  `.paused` lifecycle (human asks, controller writes, controller clears, `--resume` does not)
+  is written down with its stale-marker remediation. `skills/escalation-gate/SKILL.md` adds a
+  fourth "Not triggers" entry for the RUNNABLE boundary only — a reported deadlock stays a
+  genuine escalation — and `scripts/test_doctrine_loop_boundary.py` pins every one of those
+  sentences, counting the list's bullets on disk rather than trusting the number in the prose.
+  This is prose and a pin; the enforcing gate is separate.
+
 ## [2.3.0] - 2026-08-29
 ### Added
 - **The wave now halts a slice at PLAN time when its plan declares a rewrite of existing code
