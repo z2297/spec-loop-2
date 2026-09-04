@@ -152,8 +152,8 @@ def _controller_marker(run):
         return None
 
 
-def _runnable_slices(run):
-    """Slice ids that make ending the turn wrong, or None to ALLOW it.
+def _blocking_slices(run):
+    """Runnable slice ids that make ending the turn wrong, or None to ALLOW.
 
     `dag.next_wave` is the ONE implementation of wave membership; a copy here
     would fork the split-parent rule. An open escalation means the human owes
@@ -287,7 +287,7 @@ def check_stop(session_id, runs):
         marker = _controller_marker(run)
         if not marker or not session_id or session_id not in marker:
             continue
-        runnable = _runnable_slices(run)
+        runnable = _blocking_slices(run)
         if not runnable:
             continue
         return _stop_block_reason(run, runnable)

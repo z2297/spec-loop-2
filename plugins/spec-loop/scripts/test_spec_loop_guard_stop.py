@@ -181,10 +181,10 @@ class StopGateFailOpenTests(GuardTestCase):
             self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
 
     def test_open_escalations_raising_allows(self):
-        # Exercises the REAL defensive branch in _has_open_escalation by
-        # patching the dependency (run_state.open_escalations), not the
-        # function under test. open_escalations does not raise for a missing
-        # or unreadable events.jsonl, so this is the only way to reach it.
+        # Exercises the REAL defensive except in _blocking_slices by patching
+        # the dependency (run_state.open_escalations), not the function under
+        # test. open_escalations does not raise for a missing or unreadable
+        # events.jsonl, so this is the only way to reach it.
         self.make_run(slices=PENDING, controller_session="sess-ctl")
         with mock.patch.object(run_state, "open_escalations", side_effect=OSError):
             self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
