@@ -22,6 +22,50 @@ All notable changes to the spec-loop plugin are documented here. The format is
   genuine escalation — and `scripts/test_doctrine_loop_boundary.py` pins every one of those
   sentences, counting the list's bullets on disk rather than trusting the number in the prose.
   This is prose and a pin; the enforcing gate is separate.
+- **The loop-boundary gate itself: a `Stop` hook that blocks the controller's turn from ending
+  while its run still has runnable slices and no open escalation — the run's one proven
+  LEVER.** `scripts/spec_loop_guard.py` gains `check_stop()` plus event dispatch in
+  `evaluate()`/`main()`, and `hooks/hooks.json` registers the `Stop` event; a `Stop` block is a
+  different wire shape from a `PreToolUse` denial (top-level `decision`/`reason`, not a
+  `permissionDecision`). The gate is narrowed to the session recorded in
+  `.controller-session`, skipped when `stop_hook_active` is true — probed on Claude Code
+  2.1.260 and CONFIRMED within a single turn to be `false` on the turn-ending fire and `true`
+  on the block-caused continuation's fire, which makes the gate one push per stall rather than
+  a fence — relaxed by a `.paused` marker that relaxes THIS gate alone, and fails open PER RUN
+  (not globally) when a `.controller-session` marker cannot be decoded. The probe evidence and
+  its limits are recorded in `references/platform-probes.md`, together with the four questions
+  that remain UNTESTED there: whether `AskUserQuestion` emits `PreToolUse` at all, whether
+  `stop_hook_active` resets at the start of a new user turn (so whether the gate re-arms per
+  turn or is one-shot per session is NOT established), whether Ctrl+C routes through `Stop`,
+  and whether `Stop` fires for `Task` subagents. A PreToolUse gate on `AskUserQuestion` was
+  considered and DROPPED by human decision; no part of it was built and nothing in this release
+  guards that path.
+
+### Changed
+- **Run-state markers are now untracked, ignored and pinned, and the contract that describes
+  them says what it actually enforces and where.** Eight previously committed markers across
+  four runs are removed from the index (index-only, leaving the files on disk for any run still
+  reading them), `.gitignore` gains one bare unanchored entry per marker name for all five
+  (`.active`, `.publish-choice`, `.done`, `.paused`, `.controller-session`), and
+  `scripts/test_doctrine_marker_hygiene.py` fails if one re-enters the index.
+  `references/run-state-v2.md` documents the two markers v2 adds, scopes that enforcement claim
+  to this repository — an installing repo has neither the ignore entries nor the pin — declines
+  to claim the `.controller-session` narrowing separates a `Task` subagent from its parent (it
+  inherits the same session id), and records as an ACCEPTED residual risk that `.paused`
+  disables the loop-boundary gate with zero observable trace, since a silent hook cannot
+  announce that it is paused. `README.md` stops describing `spec_loop_guard.py` as a
+  PreToolUse-only hook and adds the loop-boundary block to its exhaustive blocked-actions list.
+- **The escalation-ordering rule now states both halves**, in `commands/spec-loop.md`: the
+  mandatory `escalation-opened` event before any controller-originated `AskUserQuestion`, and
+  the write-back once the human answers. The wave-raised exclusion is scoped to the append half
+  only, so a wave-raised escalation still gets its answer recorded.
+
+### Known limitation
+- **Nothing this release added to `hooks/hooks.json` protected the run that produced it.** The
+  installed plugin was 2.2.0 while this repository is 2.3.0, so the `Stop` registration shipped
+  here was never loaded during the run, and no test in the suite would have failed if the gate
+  had been inert — the suite pins the script's behaviour, not the running session's hooks. The
+  gate's effect on a live controller session is therefore unobserved as of this entry.
 
 ## [2.3.0] - 2026-08-29
 ### Added
