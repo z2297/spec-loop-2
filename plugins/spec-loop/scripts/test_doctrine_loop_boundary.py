@@ -232,7 +232,10 @@ class TestTheMarkerLifecyclesAreWrittenDown(unittest.TestCase):
         self.assertIn(SESSION_PURPOSE, self.text)
 
     def test_the_markers_are_stated_once_to_be_uncommitted(self):
-        self.assertIn(SESSION_NEVER_COMMITTED, self.text)
+        """The name says once, so count it: the drift this pin guards against is a
+        SECOND copy of the claim appearing in another phase and the two falling out
+        of step, which a mere `assertIn` would never see."""
+        self.assertEqual(self.text.count(SESSION_NEVER_COMMITTED), 1)
 
     def test_resume_rewrites_the_session_marker(self):
         self.assertIn(SESSION_RESUME, self.text)
