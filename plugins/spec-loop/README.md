@@ -111,9 +111,11 @@ arrive as ONE question round per wave boundary, recommended default first.
 
 `scripts/quality_gate.py` measures the slice diff (cyclomatic/cognitive
 complexity, method/class length, parameters, nesting, CRAP with coverage) —
-deterministic, script-first, agents cannot weaken it: the guard hook's
-PreToolUse Write/Edit branch denies writes to the config while a run is
-active. Global config
+deterministic, script-first, agents cannot weaken it: while a run is
+active the guard hook denies both a `Write`/`Edit`/`MultiEdit` targeting
+the config (`check_write` in `spec_loop_guard.py`) and a shell-side write
+to it — redirect, `tee`, `mv`, `cp` or `sed -i` (the
+`QUALITY_GATE_WRITE` pattern, enforced in `check_bash`). Global config
 `~/.claude/spec-loop-2/quality-gate.json` (first run offers presets or import
 from v1); a committed per-repo overlay `.spec-loop/quality-gate.json`
 deep-merges over it and hosts `tier3_surfaces`. Gate violations join review

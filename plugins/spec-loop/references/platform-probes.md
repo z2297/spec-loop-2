@@ -31,50 +31,62 @@ Two more facts verified 2026-07-30 by the E2E dry run:
   `spec-loop/<run-id>` exists (ref-directory collision). Hence the
   `spec-loop-run/<run-id>` default.
 
-Four more facts from the 2026-09-04 hook probes, on Claude Code 2.1.260 (darwin
-arm64); the raw payloads are in `docs/spec-loop/20260904-loop-gate/probe-results.md`:
+Four more facts from the 2026-09-04 hook probes, on Claude Code 2.1.260
+(darwin arm64); the raw payloads are in
+`docs/spec-loop/20260904-loop-gate/probe-results.md`:
 
-- **`PreToolUse` fires in a headless (`claude -p`) session and a `.*` matcher
-  matches (control, PASS).** Established before either real probe was trusted, so
-  a silent non-firing could not be mistaken for a negative result. The payload
-  carries **no** `project_dir` key — `cwd` is the only root signal, which is what
-  `spec_loop_guard.py` already relies on. The `Stop` payload likewise carries no
+- **`PreToolUse` fires in a headless (`claude -p`) session and a `.*`
+  matcher matches (control, PASS).** Established before either real probe
+  was trusted, so a silent non-firing could not be mistaken for a negative
+  result. The payload carries **no** `project_dir` key. That does not make
+  `cwd` the guard's root signal: `spec_loop_guard.py`'s `evaluate()`
+  resolves the project root as `CLAUDE_PROJECT_DIR` from the environment,
+  then the payload's `cwd`, then `os.getcwd()` — so the environment
+  variable wins and the payload's `cwd` is only the first fallback. The
+  `Stop` payload likewise carries no
   `project_dir`.
 - **A sync `Stop` hook honours a top-level `{"decision":"block","reason":…}`
-  (CONFIRMED).** Evidence, not inference: the harness model was asked to reply
-  with one word, the hook blocked its turn end with a `reason` instructing a
-  different token, and the session output was that token — so the reason text
-  reached the model and the model continued its turn instead of ending it. This
-  is the loop-boundary gate's one proven lever.
-- **Within a single turn, `stop_hook_active` is `false` on the fire that ends the
-  turn and `true` on the fire that ends the block-caused continuation
-  (CONFIRMED).** Both fires were logged in one turn of the probe session. This is
-  why a gate that skips when `stop_hook_active` is true pushes ONCE PER STALL
-  rather than fencing: it cannot re-block the continuation it just caused.
-  Honouring the flag is therefore required, not optional. What this evidence does
-  **not** cover: whether the flag starts at `false` again on a NEW user turn, i.e.
-  whether the gate re-arms per turn or is one-shot for the whole session. No
-  second user turn was observed; that question is untested and listed below.
-- **Whether `AskUserQuestion` emits `PreToolUse` at all is UNRESOLVED.** This is an
-  absence of opportunity, not a negative result: the tool is not exposed in print
-  mode — the headless model reported it is neither in its tool list nor fetchable
-  via ToolSearch — so the `AskUserQuestion` matcher never had a call to match.
-  Nothing here licenses the claim that the event does or does not fire.
+  (CONFIRMED).** Evidence, not inference: the harness model was asked to
+  reply with one word, the hook blocked its turn end with a `reason`
+  instructing a different token, and the session output was that token — so
+  the reason text reached the model and the model continued its turn
+  instead of ending it. This is the loop-boundary gate's one proven lever.
+- **Within a single turn, `stop_hook_active` is `false` on the fire that
+  ends the turn and `true` on the fire that ends the block-caused
+  continuation, and it resets to `false` again at the start of every NEW
+  user turn (CONFIRMED).** Both single-turn fires were logged in one turn of
+  probe B; the per-turn reset is established by the THIRD fire of a two-turn
+  session (probe B2), where the flag reads `false` at the end of turn 1,
+  `true` on the block-caused continuation, and `false` AGAIN at the end of
+  turn 2 — reproduced byte-identically on re-run. That third fire closes both
+  readings probe B left open, in opposite directions. Not a fence: a gate
+  that skips while the flag is true always yields on the immediately
+  following fire, so it pushes ONCE PER STALL rather than blocking
+  indefinitely. Not a one-shot per session: the gate re-arms on every user
+  turn, so it stands at the first `Stop` attempt of every turn — but within
+  that same turn the fire that ends a block-caused continuation carries the
+  flag true and is skipped, so a turn that drives several wave boundaries is
+  only guarded at its first one. Honouring the flag is therefore required,
+  not optional.
+- **Whether `AskUserQuestion` emits `PreToolUse` at all is UNRESOLVED.**
+  This is an absence of opportunity, not a negative result: the tool is not
+  exposed in print mode — the headless model reported it is neither in its
+  tool list nor fetchable via ToolSearch — so the `AskUserQuestion` matcher
+  never had a call to match. Nothing here licenses the claim that the event
+  does or does not fire.
 
-Four questions need an INTERACTIVE session to settle. None is answered today, and
-no shipped behaviour may be described as depending on an answer:
+Three questions need an INTERACTIVE session to settle. None is answered
+today, and no shipped behaviour may be described as depending on an answer:
 
-1. Does `AskUserQuestion` emit `PreToolUse`? Register a logging-only `PreToolUse`
-   hook with matcher `.*` in a settings file, start an interactive session, and
-   trigger one `AskUserQuestion` call **and one `Bash` call**. The `Bash` call is
-   the control and is not optional: without it, a log missing `AskUserQuestion`
-   cannot be told apart from a hook that never loaded.
-2. Does `stop_hook_active` reset to `false` at the start of a new user turn? Same
-   logging hook plus a `Stop` hook that blocks once; take two user turns in one
-   session and compare the flag on the first fire of each. Untested.
-3. Does Ctrl+C route through `Stop`? Same logging hook; interrupt a turn and check
-   whether a `Stop` payload is written. Untested.
-4. Does `Stop` fire at the end of a `Task` subagent's turn? Same logging hook; run
-   a Task subagent and look for a `Stop` payload carrying the subagent's turn.
-   Untested — and `SubagentStop` being a distinct, unregistered event is not
-   evidence either way.
+1. Does `AskUserQuestion` emit `PreToolUse`? Register a logging-only
+   `PreToolUse` hook with matcher `.*` in a settings file, start an
+   interactive session, and trigger one `AskUserQuestion` call **and one
+   `Bash` call**. The `Bash` call is the control and is not optional:
+   without it, a log missing `AskUserQuestion` cannot be told apart from a
+   hook that never loaded.
+2. Does Ctrl+C route through `Stop`? Same logging hook; interrupt a turn
+   and check whether a `Stop` payload is written. Untested.
+3. Does `Stop` fire at the end of a `Task` subagent's turn? Same logging
+   hook; run a Task subagent and look for a `Stop` payload carrying the
+   subagent's turn. Untested — and `SubagentStop` being a distinct,
+   unregistered event is not evidence either way.
