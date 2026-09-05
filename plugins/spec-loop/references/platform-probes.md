@@ -63,8 +63,11 @@ Four more facts from the 2026-09-04 hook probes, on Claude Code 2.1.260
   that skips while the flag is true always yields on the immediately
   following fire, so it pushes ONCE PER STALL rather than blocking
   indefinitely. Not a one-shot per session: the gate re-arms on every user
-  turn, so it stands at every wave boundary, not only the first. Honouring
-  the flag is therefore required, not optional.
+  turn, so it stands at the first `Stop` attempt of every turn — but within
+  that same turn the fire that ends a block-caused continuation carries the
+  flag true and is skipped, so a turn that drives several wave boundaries is
+  only guarded at its first one. Honouring the flag is therefore required,
+  not optional.
 - **Whether `AskUserQuestion` emits `PreToolUse` at all is UNRESOLVED.**
   This is an absence of opportunity, not a negative result: the tool is not
   exposed in print mode — the headless model reported it is neither in its

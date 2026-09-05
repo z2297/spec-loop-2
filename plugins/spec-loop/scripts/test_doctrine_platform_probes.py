@@ -57,6 +57,14 @@ PER_TURN_NOT_A_FENCE = (
 PER_TURN_NOT_ONE_SHOT = (
     "Not a one-shot per session: the gate re-arms on every user turn"
 )
+PER_TURN_SCOPED_TO_FIRST_STOP = (
+    "so it stands at the first `Stop` attempt of every turn"
+)
+PER_TURN_WITHIN_TURN_GAP = (
+    "within that same turn the fire that ends a block-caused continuation "
+    "carries the flag true and is skipped, so a turn that drives several "
+    "wave boundaries is only guarded at its first one"
+)
 RETRACTED_UNTESTED_FRAMING = (
     "whether the gate re-arms per turn or is one-shot for the whole session"
 )
@@ -135,6 +143,18 @@ class TestConfirmedFactsKeepTheirEvidence(unittest.TestCase):
         self.assertIn(PER_TURN_EVIDENCE, self.text)
         self.assertIn(PER_TURN_NOT_A_FENCE, self.text)
         self.assertIn(PER_TURN_NOT_ONE_SHOT, self.text)
+
+    def test_the_per_turn_reset_does_not_overclaim_per_boundary_coverage(
+            self):
+        # evaluate() returns None whenever stop_hook_active is true, so a
+        # turn with several wave boundaries is only guarded at its first
+        # Stop attempt -- the register must say so, not claim coverage at
+        # every boundary.
+        self.assertIn(PER_TURN_SCOPED_TO_FIRST_STOP, self.text)
+        self.assertIn(PER_TURN_WITHIN_TURN_GAP, self.text)
+        self.assertNotIn(
+            "it stands at every wave boundary, not only the first",
+            self.text)
 
     def test_the_retracted_untested_framing_is_gone(self):
         self.assertNotIn(RETRACTED_UNTESTED_FRAMING, self.text)
