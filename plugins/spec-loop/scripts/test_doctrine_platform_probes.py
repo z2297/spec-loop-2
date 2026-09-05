@@ -238,8 +238,11 @@ class TestChangelogAgreesWithTheProbeRegister(unittest.TestCase):
         match = pattern.search(text)
         self.assertIsNotNone(match, "%s: count sentence not found" % label)
         word = match.group(1).lower()
-        self.assertIn(word, WORD_TO_INT, "%s: %r is not a number word"
-                      % (label, word))
+        # Bound to a name rather than wrapped as a call continuation: an
+        # aligned continuation's leading whitespace reads as nesting depth
+        # 4 to quality_gate.py, over its threshold of 3.
+        not_a_number = "%s: %r is not a number word" % (label, word)
+        self.assertIn(word, WORD_TO_INT, not_a_number)
         return WORD_TO_INT[word]
 
     def test_the_register_word_matches_its_numbered_list(self):
