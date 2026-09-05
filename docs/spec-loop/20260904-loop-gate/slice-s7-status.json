@@ -1,0 +1,242 @@
+{
+  "schema_version": 2,
+  "id": "s7",
+  "status": "DONE",
+  "branch": "spec-loop/20260904-loop-gate/s7",
+  "commits": {
+    "base": "5c4bb1e23a078f9c6a14e1a12503b6de93dba2f1",
+    "head": "6f1b874e984c6811cd99877b763be64601494c87"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 8,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 3,
+  "review": {
+    "confirmed": 1,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: The CONFIRMED per-turn-reset bullet never states that probe B2's two user turns were produced by a headless `claude -p --input-format stream-json` harness, while the same file reserves the word INTERACTIVE for what it considers unsettled (\"Three questions need an INTERACTIVE session to settle\"). The gate this fact underwrites runs in an interactive controller session, so a reader can take the promotion as an interactive measurement. The generalisation headless -> interactive is plausible and probe-results.md discloses the harness, but the register's whole job is that the provenance of a label travels with it — the same laundering path this slice exists to close. (Weighing against filing higher: the pre-existing probe-B CONFIRMED bullet omits its harness in the same way, and the block's lead-in scopes everything to \"the 2026-09-04 hook probes\".)",
+      "P3: The newly-written per-turn-reset bullet says the gate 'pushes ONCE PER STALL rather than blocking indefinitely,' while README.md:147 (untouched by this diff) describes the identical fact as 'so it pushes once per stall rather than fencing.' The two shipped docs now use different vocabulary for the same empirical fact, with no test pinning either phrase against the other, so they can drift further apart unnoticed. This exact wording was mandated verbatim by the plan (s7.md step 7) and was already surfaced and consciously left in place by the council as a deferred, log-only CONSISTENCY item ('Keep \"rather than fencing\" in the bullet; the new \"Not a fence:\" lead-in already carries the meaning'); reported here per instruction not to let deferred status suppress a verifiable finding, at its true (non-blocking) severity."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_radius.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_replan.test.mjs ; claude plugin validate .",
+    "result": "All segments passed. Segment 1: OK. Segment 2: 126 tests passed. Segment 3: 1474 tests passed. Segment 4: 1600 tests passed (3 skipped), coverage 97.0% PASS. Segment 5: 48 tests passed. Segment 6: 35 tests passed. Segment 7: 38 tests passed. Segment 8: 9 tests passed. Segment 9: 16 tests passed. Segment 10: Validation passed.",
+    "scope": "full",
+    "tree_sha": "aae88493cb4cc2f5e7458c8581f5907512d9dede"
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "Quality gate passed. 76 checks all passed. No violations. All function-level metrics for test_doctrine_platform_probes.py within thresholds: cyclomatic_complexity max 3, cognitive_complexity max 5, nesting_depth max 2, method_lines max 11. Class-level metrics within threshold (157 lines, threshold 300)."
+  },
+  "escalations": [],
+  "agents_used": 14,
+  "wave": 5,
+  "events": [
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 6,
+        "deferred": [
+          "CONSISTENCY -- the replacement bullet changes 'pushes ONCE PER STALL rather than fencing' to 'rather than blocking indefinitely'. Nothing required that change (it is pre-existing text the previous attempt got right), and README:147 says 'so it pushes once per stall rather than fencing' -- unpinned by any test, so the two shipped files would drift into different vocabulary for the same fact with no guard against it. Keep 'rather than fencing' in the bullet; the new 'Not a fence:' lead-in already carries the meaning.",
+          "SCOPE/RISK, log only -- after Task 3, README's three symbol-form citations (check_write, QUALITY_GATE_WRITE, check_bash) are pinned by no test, so they can rot back to digits exactly as the originals did; the ceiling defers pinning them in test_doctrine_run_docs.py, and the new module is scoped to platform-probes.md, so do NOT pin them here. Same class of pre-existing rot survives inside off-limits code at spec_loop_guard.py:159 ('the dashboard_server.py:74-89 idiom'), which the Task 3 grep pattern 'spec_loop_guard.py:[0-9]' will not surface. Record both as deferred; build neither."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "deferred",
+      "payload": {
+        "summary": "CONSISTENCY -- the replacement bullet changes 'pushes ONCE PER STALL rather than fencing' to 'rather than blocking indefinitely'. Nothing required that change (it is pre-existing text the previous attempt got right), and README:147 says 'so it pushes once per stall rather than fencing' -- unpinned by any test, so the two shipped files would drift into different vocabulary for the same fact with no guard against it. Keep 'rather than fencing' in the bullet; the new 'Not a fence:' lead-in already carries the meaning.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "deferred",
+      "payload": {
+        "summary": "SCOPE/RISK, log only -- after Task 3, README's three symbol-form citations (check_write, QUALITY_GATE_WRITE, check_bash) are pinned by no test, so they can rot back to digits exactly as the originals did; the ceiling defers pinning them in test_doctrine_run_docs.py, and the new module is scoped to platform-probes.md, so do NOT pin them here. Same class of pre-existing rot survives inside off-limits code at spec_loop_guard.py:159 ('the dashboard_server.py:74-89 idiom'), which the Task 3 grep pattern 'spec_loop_guard.py:[0-9]' will not surface. Record both as deferred; build neither.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "quality-gate",
+      "payload": {
+        "status": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "review-summary",
+      "payload": {
+        "findings": 3,
+        "confirmed": 1,
+        "refuted": 0,
+        "fix_rounds": 1,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s7",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

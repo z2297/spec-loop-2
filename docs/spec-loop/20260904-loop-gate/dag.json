@@ -1,0 +1,269 @@
+{
+  "schema_version": 2,
+  "run_id": "20260904-loop-gate",
+  "base_ref": "spec-loop-run/20260904-loop-gate",
+  "base_sha": "4b91d69393a02e233a000130f6baf7def7713c95",
+  "base_branch": "main",
+  "merge_mode": "single-branch",
+  "mode": "workflow",
+  "created_at": "2026-09-04T20:02:21Z",
+  "test_command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_radius.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_replan.test.mjs ; claude plugin validate .",
+  "shared_constraints": [
+    "The full 10-segment suite must stay green, and EVERY segment runs as its own tool call - a monolithic invocation nears the 10-minute tool ceiling and a kill reads as a false red.",
+    "spec_loop_guard.py must stay at or above its per-file coverage floor of 86. It measures 92.0% (127/138) today, the TIGHTEST margin in PER_FILE_FLOORS and the only one annotated 'kept at v1 floor', so roughly 6 points of headroom against real new line count. Anything added inside main() is measured; coverage_omit.txt exempts only the two-line __main__ shim and test_measure_coverage_manifest.py pins its size. New gate code MUST be covered.",
+    "spec_loop_guard.py is standard-library only. Keep it that way.",
+    "Do not invert the guard's fail-open-on-internal-error doctrine: an unexpected exception must still ALLOW the action, even for a gate whose job is to block. The alternative is a crashed guard wedging every turn end in every session on the machine. But make it fail open PER RUN, not with one try around the whole loop: with two active runs, a broken dag.json in run A must not fail open for run B. An .active marker with no dag.json is a REACHABLE state - find_active_runs tolerates it - and dag.load_dag raises DagError on it.",
+    "Branch on payload['hook_event_name'] BEFORE the tool dispatch in evaluate()/main(). A Stop payload carries NO tool_name key, so an implementation written as `if tool == \"Stop\"` passes every evaluate() unit test and never fires live. This is the single most likely way this run ships a silent no-op.",
+    "The Stop block needs its OWN emit path: top-level {\"decision\": \"block\", \"reason\": ...} on stdout, empirically confirmed this run. Reusing main()'s existing hookSpecificOutput shape produces a malformed block that is ignored, which reads as allow.",
+    "Judge runnability on next_wave's slice_ids being non-empty - NEVER on the absence of a 'done' key. next_wave returns {'index', 'slice_ids': [], 'deadlock': True} with no 'done' key at all, so `if not report.get('done')` would block both the deadlock escalation question and the Phase-5 publish prompt.",
+    "Import dag and run_state rather than re-reading dag.json: a second copy of next_wave would fork the split-parent readiness rule (a split parent is terminal; a dep on one is satisfied only when its children are recursively satisfied; a childless split parent is a deadlock, not a stall). Use FUNCTION-LOCAL imports inside the new gate paths only, so the Bash and Write hot paths keep their current cost and behaviour, in the try/import/except ImportError -> None form used at dashboard_server.py:74-89, and fail open on ImportError or DagError. Measured cost: 14ms to import both, 34ms total against a synthetic 4.5MB events file (20x the largest real run) against a 5-second budget.",
+    "Apply the controller-session narrowing ONLY to the new Stop gate - never to check_bash or check_write, whose Task-subagent coverage is a verified 2026-07-07 property of the guard.",
+    ".paused must allow ONLY the new gate. Do NOT thread it through find_active_runs(): if a paused run reads as non-blocking there, pausing silently unlocks push-before-publish, broad staging and commit-on-the-default-branch. A stale .paused is a silent permanent loss of the gate and deserves the same remediation treatment as a stale .active.",
+    "Every denial or block text names BOTH the compliant alternative and the stale-marker remediation, matching the existing _remediation() sentence. The Stop reason additionally names the literal .paused escape path and carries an 'if you are not the controller' clause. Put the visible-trace requirement in the FIRST-fire reason text: if the controller is deliberately stopping, its next message must say why, so the transcript carries it. Do NOT append to a log file under docs/spec-loop/<run-id>/ - an untracked file there dirties the tree and collides with the Phase-1 clean-tree guard.",
+    "The module docstring of spec_loop_guard.py opens 'PreToolUse guard' and becomes false the moment a Stop branch lands. Update it in the same change.",
+    "Add no new runtime .py script, no new *.test.mjs harness module, and no new command, agent or skill: test_doctrine_run_docs.py pins all of those counts in plugins/spec-loop/README.md against a real count on disk. A new test_*.py file is free - the script count excludes test_-prefixed files.",
+    "Exactly ONE prose count moves: escalation-gate SKILL.md:128 'Three things that look like stopping points' becomes four. Line 79 opens a DIFFERENT list (budget-exhausted, internal-error, the over-scope flag) and must not be touched. The tail clause 'exactly the six triggers above' at SKILL.md:129 is PINNED by test_doctrine_refactor_scope.py and must survive the edit verbatim.",
+    "Never write an artifact claiming a gate enforces something whose firing was not empirically established. Only the Stop gate's firing and its per-turn re-arming are proven.",
+    "The installed plugin is 2.2.0 while this repo is 2.3.0, so nothing this run adds to hooks.json protects this run. No artifact may imply otherwise, and no test will notice.",
+    "Emit any prose that quotes a git command through the Write/Edit tools, never a shell heredoc: the guard's own command-text patterns match the quoted example and deny the write. Observed live twice at this run's intake. Do NOT narrow those patterns to dodge quoted text - that would weaken the real guard; use the non-shell write path instead."
+  ],
+  "scope_ceiling": [
+    "GATE A - the PreToolUse gate on AskUserQuestion. Dropped by human decision at the intake round: its firing is unverified on 2.1.260, it would deny the controller's own dirty-tree escalation on the --resume path, and it breaks /spec-loop:knowledge-graph's opt-in prompt. Build no part of it, and register nothing for it.",
+    "The loop-boundary audit event and its run-state-v2.md event type - deferred by the human when choosing 'Gates + prose' over 'Gates + prose + audit event'.",
+    "Registering SubagentStop. Guardian found SubagentStop is a distinct event name in the 2.1.260 binary, so registering only Stop most likely leaves slice implementers ungated - which is correct. Telling an implementer to 'continue Phase 2 step 1' would be role confusion.",
+    "Narrowing check_bash's or check_write's existing command-text patterns for any reason, including the quoted-text false positive observed this run.",
+    "Any change to slice-wave.workflow.js, dag.py, run_state.py or worktrees.py LOGIC. The gate imports from dag.py and run_state.py; it does not modify them.",
+    "Fixing Phase 5's marker-vs-commit ordering, the reason runs orphan their completion markers. Recorded as deferred; the gitignore work in s3 removes the symptom, not the cause.",
+    "A new standalone hook script. The gate lives in spec_loop_guard.py.",
+    "Any release or version bump. This lands under CHANGELOG [Unreleased].",
+    "Weakening or re-tuning quality-gate thresholds."
+  ],
+  "slices": [
+    {
+      "id": "s1",
+      "goal": "Close the Phase-2 loop in prose at its point of use, and add the ordering rule that makes controller-originated escalations safe. In commands/spec-loop.md: add a step 9 'Close' to Phase 2 (re-run dag.py next-wave; runnable -> return to step 1 in the SAME turn with no status report; done -> Phase 5; deadlock -> escalate), matching the file's numbered-bold-step format and 3-space continuation indent; add one Invariants line stating a wave boundary is a dispatch point and not a reporting boundary; add a line making `run_state.py append-event --type escalation-opened` MANDATORY before any controller-originated AskUserQuestion (this is guardian's R1 fix and stands on its own merits); and have Phase 1 step 4 and the Resume section write `.controller-session` beside `.active`, with the `.paused` lifecycle spelled out - who writes it, when, who clears it, whether --resume clears it, and the remediation sentence that names it. In skills/escalation-gate/SKILL.md: add a fourth 'Not triggers' entry for the wave boundary, scoped EXPLICITLY to the runnable case so it cannot be misread as covering deadlock, and change line 128's count from three to four while leaving line 129's pinned tail clause verbatim. Pin the new counted prose with a doctrine test in the style of test_doctrine_run_docs.py.",
+      "files": [
+        "plugins/spec-loop/commands/spec-loop.md",
+        "plugins/spec-loop/skills/escalation-gate/SKILL.md",
+        "plugins/spec-loop/scripts/test_doctrine_loop_boundary.py"
+      ],
+      "subsystems": [
+        "controller-contract",
+        "escalation-doctrine"
+      ],
+      "deps": [],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s2",
+      "goal": "Add the Stop gate to spec_loop_guard.py and register it in hooks/hooks.json. It blocks a turn from ending while an active run has runnable slices, scoped to the controller session via the `.controller-session` marker matched against the payload's session_id, honouring `stop_hook_active` (empirically per-turn, so the gate re-arms each turn and gives one push per stop attempt) and honouring `.paused` as the human's hold. Reuse find_active_runs; branch on hook_event_name before the tool dispatch; emit the top-level decision/reason shape; judge runnability on non-empty slice_ids. Tests must cover, at minimum: the Stop output shape parses to top-level decision block with a reason and carries NO hookSpecificOutput; a real Stop payload with no tool_name still dispatches; deadlock allows; next_wave done allows; a non-matching session_id does not block; .paused allows the new gate while push and commit denials still fire; two active runs where one is stale; .active present with dag.json missing; the ImportError path allows; stop_hook_active true allows; the reason text names .paused literally and ends with the remediation sentence; and existing Bash and Write denials are unaffected.",
+      "files": [
+        "plugins/spec-loop/scripts/spec_loop_guard.py",
+        "plugins/spec-loop/scripts/test_spec_loop_guard.py",
+        "plugins/spec-loop/hooks/hooks.json"
+      ],
+      "subsystems": [
+        "guard-hook",
+        "hook-registration"
+      ],
+      "deps": [
+        "s1"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s3",
+      "goal": "Marker hygiene, so the gate cannot be turned against the repo by a committed marker. Stop tracking every run-state marker currently in the index across all four prior runs (20260825, 20260826, 20260827, 20260828) using an index-only removal that leaves the files on disk, add `.active`, `.done`, `.publish-choice` and `.paused` to .gitignore under a comment explaining why a committed marker is dangerous, and reconcile references/run-state-v2.md's Markers section with what the repo now enforces - its line 272 already says .active is never committed, which was false in practice twice. This also corrects the effect of this run's own pre-run housekeeping commit 4b91d69, which committed two runs' markers on a mistaken reading of convention. Do not rewrite history; correct forward.",
+      "files": [
+        ".gitignore",
+        "plugins/spec-loop/references/run-state-v2.md"
+      ],
+      "subsystems": [
+        "run-state-doctrine",
+        "repo-hygiene"
+      ],
+      "deps": [],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s4",
+      "goal": "Document exactly what shipped, and nothing more. Record this run's four platform probe results in references/platform-probes.md using that file's bulleted-batch format under a new dated intro sentence: the PreToolUse control (fires headlessly, `.*` matches, payload carries no project_dir so cwd is the only root signal); the Stop block CONFIRMED with its evidence; stop_hook_active CONFIRMED to reset per user turn, with both readings it rules out; and AskUserQuestion's PreToolUse firing UNRESOLVED, with the interactive verification procedure, its Bash control, and the two checks to fold into the same session (does Ctrl+C route through Stop, does Stop cover Task subagents). Update every passage of plugins/spec-loop/README.md that enumerates what the guard blocks - the exhaustive list at README.md:136-139 and the narrower restatement at 114-115. EXTEND the CHANGELOG [Unreleased] entry that slice s1 already created - do not create a second one and do not duplicate its content; add what s2, s3 and s5 shipped, in the 2.3.0 entry's style, and make sure the combined entry does not claim the AskUserQuestion gate exists. Every claim must match what s1, s2 and s3 actually built; Gate A is not built and must not appear as protection anywhere. Additionally, fix the two false claims s3's review recorded as P2 residuals in references/run-state-v2.md: its Markers section heading still says the contract is 'unchanged from v1' although two markers were just added that v1 never had, and the new prose asserts an enforcement mechanism (the .gitignore entries and test_doctrine_marker_hygiene.py) that exists only in this repository while the file is read by the controller in any repo the plugin is installed into. The reviewer's named remedy for the second is a qualifying clause in this file only; extending worktrees.py's ensure-gitignore path is barred by the scope ceiling. THREE things wave 2 obliges you to get right. First, plugins/spec-loop/README.md:114 ('a PreToolUse guard') and :137 ('scripts/spec_loop_guard.py (PreToolUse hook)') became FALSE the moment the Stop branch landed - s2's council flagged both line numbers and could not fix them because README.md is yours; no test pins either sentence, so nothing else will catch it. Second, do NOT claim the controller-session narrowing prevents subagent role confusion: s2's reviewer found a Task subagent inherits the parent's CLAUDE_CODE_SESSION_ID, so if Stop ever fires at a subagent turn end the marker MATCHES and the gate would tell an implementer to continue Phase 2 step 1. The only thing standing between us and that today is that SubagentStop is a distinct, unregistered event - which is not evidence that Stop does not fire for subagents. Add that question to the tracked probe follow-up alongside the AskUserQuestion and Ctrl+C checks. Third, record as an accepted residual risk that `.paused` disables the gate with ZERO observable trace: a Stop hook can only block or stay silent, so a paused gate never fires and therefore never gets to say why, which makes a stale `.paused` a permanent silent loss of the loop-boundary gate for that run, detectable only by a human who remembers the marker exists.",
+      "files": [
+        "plugins/spec-loop/references/run-state-v2.md",
+        "plugins/spec-loop/references/platform-probes.md",
+        "plugins/spec-loop/README.md",
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "docs",
+        "changelog"
+      ],
+      "deps": [
+        "s1",
+        "s2",
+        "s3",
+        "s5",
+        "s6"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s5",
+      "goal": "Remediate two P2 defects s1's review recorded against the new escalation-ordering paragraph in plugins/spec-loop/commands/spec-loop.md, and tighten the pin that should have caught them. (1) The paragraph mandates an `escalation-opened` event before any controller-originated AskUserQuestion but never mandates the matching `escalation-answered` write-back. `run_state.open_escalations()` treats any opened id with no answer event as OPEN forever, so a question recorded under this rule - a decomposition ambiguity, a config first-run choice, the Phase-5 publish prompt - is re-gathered by Phase 2 step 7 and re-asked at the next wave boundary, and dashboard_server.py keeps surfacing it. State the write-back as the second half of the same ordering rule, in the same voice. (2) The paragraph's closing sentence currently reads 'This excludes records a wave raised are already appended by `persist-slice` - never re-append those', which fuses an exclusion clause with a declarative one so the reader cannot tell whether wave-raised records are excluded from the rule or merely described. Rewrite it to say plainly what it means: records a wave raised are already appended by `persist-slice`, so the rule does not apply to them and they must never be re-appended. The existing lowercase substring pin in test_doctrine_loop_boundary.py must still pass - the reviewer confirmed a grammatical phrasing satisfies it; adjust the pin only if it genuinely cannot. (3) Fix the orphan ~51-column line the insertion left mid-paragraph, wrapping to the file's ~90-column convention. (4) In test_doctrine_loop_boundary.py, make `test_the_markers_are_stated_once_to_be_uncommitted` actually assert the sentence appears exactly once rather than merely present, since duplicate-claim drift is the risk it names, and add the new write-back sentence to the pinned set. Do not touch any other file, and do not re-litigate s1's design.",
+      "files": [
+        "plugins/spec-loop/commands/spec-loop.md",
+        "plugins/spec-loop/scripts/test_doctrine_loop_boundary.py"
+      ],
+      "subsystems": [
+        "controller-contract"
+      ],
+      "deps": [
+        "s1"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete",
+      "remediation": true
+    },
+    {
+      "id": "s6",
+      "goal": "Two narrow fixes, nothing else. (1) In plugins/spec-loop/scripts/spec_loop_guard.py, `_controller_marker` catches only OSError, so an undecodable `.controller-session` raises UnicodeDecodeError (a ValueError, not an OSError), escapes the per-run try structure and is caught only by main()'s blanket handler - failing open for the whole loop instead of for that run. Widen it to catch ValueError as well, matching its sibling readers `_blocking_slices` and `_has_open_escalation` which already do, and add a test writing undecodable bytes to the marker that asserts the gate still blocks for a SECOND, healthy active run in the same project - the per-run isolation is the property under test, not merely the absence of a crash. (2) In plugins/spec-loop/commands/spec-loop.md, the escalation-ordering paragraph now ends 'The rule does not apply to wave-raised escalations: records a wave raised are already appended by `persist-slice`, so never re-append those.' Read literally that exempts wave-raised escalations from the escalation-answered write-back too, which is wrong: Phase 2 step 7 writes answers back for ALL open escalations and open_escalations() holds any opened id open until its answered event lands, so following it literally would leave every wave-raised escalation open forever. Scope the exemption to the APPEND half only, in one sentence, keeping the paragraph's voice and the ~90-column wrap; extend the pin in test_doctrine_loop_boundary.py so the narrower scope is asserted rather than assumed. Change nothing else, and do not re-litigate the design of s1, s2 or s5.",
+      "files": [
+        "plugins/spec-loop/scripts/spec_loop_guard.py",
+        "plugins/spec-loop/scripts/test_spec_loop_guard_stop.py",
+        "plugins/spec-loop/commands/spec-loop.md",
+        "plugins/spec-loop/scripts/test_doctrine_loop_boundary.py"
+      ],
+      "subsystems": [
+        "guard-hook",
+        "controller-contract"
+      ],
+      "deps": [
+        "s2",
+        "s5"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete",
+      "remediation": true
+    },
+    {
+      "id": "s7",
+      "goal": "Close the three documentation defects the Phase-5 cross-slice review confirmed, and nothing else. (1) BLOCKING P1 - plugins/spec-loop/references/platform-probes.md around lines 40-41 states that the payload carries no project_dir key so 'cwd is the only root signal, which is what spec_loop_guard.py already relies on'. The second half is false: spec_loop_guard.py:297 resolves os.environ.get('CLAUDE_PROJECT_DIR') or payload.get('cwd') or os.getcwd(), so the environment variable wins and payload cwd is a fallback. Keep the true half - the payload really does carry no project_dir key - and state the guard's actual precedence. This file's whole purpose is recording empirically-true platform facts, so re-derive the sentence from the code, not from any artifact describing it. (2) P2 - plugins/spec-loop/README.md lines 114-116 now describe the quality-gate config block as 'the guard hook's PreToolUse Write/Edit branch', which is narrower than the code: check_bash's QUALITY_GATE_WRITE rule (spec_loop_guard.py:64-68) also denies shell-side writes - redirects, tee, mv, cp and sed -i - and README:138-141 already describes the same guard accurately and completely. Make 114-116 agree with both the code and that later passage. Note the shape of this defect: the sentence it replaced was vague but not wrong, so added precision is a NEW claim that needs its own evidence. (3) P2 - add a new plugins/spec-loop/scripts/test_doctrine_platform_probes.py pinning the register vocabulary of platform-probes.md, so a future edit cannot silently promote an UNRESOLVED probe to CONFIRMED with the whole suite still green. At minimum pin: that the AskUserQuestion PreToolUse bullet is present and still marked UNRESOLVED, that its 'absence of opportunity, not a negative result' framing survives, that the Ctrl+C and Task-subagent follow-ups are still listed as unsettled, and that the Stop-block and per-turn-re-arm facts stay marked CONFIRMED. Put it in its OWN module rather than bolting it onto test_doctrine_loop_boundary.py, whose docstring scopes it to commands/spec-loop.md and the escalation-gate skill - the reviewer flagged that mismatch specifically, and a new test-prefixed file does not disturb README's counted component inventory. (4) P3 - the block s4 appended to platform-probes.md wraps at ~80-83 columns while every pre-existing prose line in that file is at most 78; reflow the added lines to match. Change no other file, and change no code. RE-DISPATCH ADDENDUM (controller, after the quality-gate escalation). (5) Flatten test_the_per_turn_flag_fact_is_confirmed_with_its_evidence so nesting_depth drops from 4 to 3 or less, with the assertion set unchanged and no threshold touched. (6) Promote the per-turn stop_hook_active reset in platform-probes.md from Untested to CONFIRMED: probe-results.md now carries the previously-missing Probe B2 evidence (a two-turn session where the flag reads false, true, then FALSE AGAIN on turn 2), so the council guardrail that said probe-results.md wins now points at promotion. Update the count pins to follow the evidence. Leave the other three follow-ups unsettled. (7) Replace the bare file:line citations this slice introduced with the SYMBOL each names, since a pin on the digits guarantees the wrong number survives an insertion - the cite-file-and-line instruction was the controller's and this retracts it.",
+      "files": [
+        "plugins/spec-loop/references/platform-probes.md",
+        "plugins/spec-loop/README.md",
+        "plugins/spec-loop/scripts/test_doctrine_platform_probes.py"
+      ],
+      "subsystems": [
+        "docs",
+        "doctrine-tests"
+      ],
+      "deps": [
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "s5",
+        "s6"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete",
+      "remediation": true
+    },
+    {
+      "id": "s8",
+      "goal": "One blocking correction and one pin, nothing else. (1) BLOCKING P1 - CHANGELOG.md's [Unreleased] entry still carries the pre-remediation framing verbatim at roughly lines 36-40: 'the four questions that remain UNTESTED there', listing among them 'whether stop_hook_active resets at the start of a new user turn (so whether the gate re-arms per turn or is one-shot per session is NOT established)'. That is now false and contradicts plugins/spec-loop/references/platform-probes.md, which states that THREE questions need an interactive session and marks the per-turn reset CONFIRMED. Rewrite the bullet so it agrees with platform-probes.md: three open questions - whether AskUserQuestion emits PreToolUse, whether Ctrl+C routes through Stop, whether Stop fires for Task subagents - and the per-turn reset established, with one clause naming what established it (a two-turn session whose third fire showed the flag false again). Derive the corrected text from platform-probes.md and probe-results.md, not from the CHANGELOG's own prose. Keep every honest limitation the entry already carries, in particular that the installed plugin is 2.2.0 while the repo is 2.3.0 so nothing this run added protects the run itself, and do not upgrade any other claim while you are in there. (2) Add ONE pin so this class cannot recur silently: no test covers CHANGELOG consistency at all, which is why a shipped user-facing file could contradict the reference for a whole Phase-5 attempt. Assert that the CHANGELOG's count of open probe questions agrees with platform-probes.md's, deriving BOTH from the files rather than hard-coding the number in two places - a pin that hard-codes three would need editing the next time the count changes and would then be as stale as the prose it guards. Put it wherever module scoping actually fits: test_doctrine_platform_probes.py's subject is the probe register, and a CHANGELOG restating that register is arguably within it, but judge that yourself and say why in the docstring. (3) Change no other file, change no code, and do not re-open any deferred item.",
+      "files": [
+        "CHANGELOG.md",
+        "plugins/spec-loop/scripts/test_doctrine_platform_probes.py"
+      ],
+      "subsystems": [
+        "changelog",
+        "doctrine-tests"
+      ],
+      "deps": [
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "s5",
+        "s6",
+        "s7"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete",
+      "remediation": true
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "slice_ids": [
+        "s1",
+        "s3"
+      ],
+      "workflow_run_id": "wf_c569f821-131",
+      "status": "collected"
+    },
+    {
+      "index": 2,
+      "slice_ids": [
+        "s2",
+        "s5"
+      ],
+      "workflow_run_id": "wf_4b0a1827-aad",
+      "status": "collected"
+    },
+    {
+      "index": 3,
+      "slice_ids": [
+        "s6"
+      ],
+      "workflow_run_id": "wf_16d9538b-a6a",
+      "status": "collected"
+    },
+    {
+      "index": 4,
+      "slice_ids": [
+        "s4"
+      ],
+      "workflow_run_id": "wf_081456e6-e79",
+      "status": "collected"
+    },
+    {
+      "index": 5,
+      "slice_ids": [
+        "s7"
+      ],
+      "workflow_run_id": "wf_e6ffb9f1-a2f",
+      "status": "collected"
+    },
+    {
+      "index": 6,
+      "slice_ids": [
+        "s8"
+      ],
+      "workflow_run_id": "wf_ac5c6ea5-12d",
+      "status": "collected"
+    }
+  ]
+}
