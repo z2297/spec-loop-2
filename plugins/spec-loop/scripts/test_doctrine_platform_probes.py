@@ -12,6 +12,11 @@ guard relies on the payload's `cwd` as its only root signal, which
 `spec_loop_guard.py:297` contradicts. The corrected precedence sentence is
 pinned so it cannot silently revert.
 
+A third: the per-turn reset of stop_hook_active was written as Untested
+while the run's evidence file was missing probe B2. It is CONFIRMED by that
+probe's two-turn log, and the promotion is pinned in both directions here so
+neither the fact nor what it rules out can be dropped.
+
 Its own module rather than a class in test_doctrine_loop_boundary.py:
 that module's docstring scopes it to commands/spec-loop.md and the
 escalation-gate skill, and this file is neither.
@@ -33,6 +38,31 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 PROBES_MD = PLUGIN_ROOT / "references" / "platform-probes.md"
+
+# Expected substrings live at module scope, not inside the test bodies:
+# quality_gate.py derives python nesting depth from leading whitespace, so a
+# visually-aligned call continuation reads as depth 4. Hoisting keeps every
+# assertion body at depth 1 with the assertion set unchanged.
+PER_TURN_CONFIRMED = (
+    "resets to `false` again at the start of every NEW user turn "
+    "(CONFIRMED).**"
+)
+PER_TURN_EVIDENCE = (
+    "established by the THIRD fire of a two-turn session (probe B2)"
+)
+PER_TURN_NOT_A_FENCE = (
+    "pushes ONCE PER STALL rather than blocking indefinitely"
+)
+PER_TURN_NOT_ONE_SHOT = (
+    "Not a one-shot per session: the gate re-arms on every user turn"
+)
+RETRACTED_UNTESTED_FRAMING = (
+    "whether the gate re-arms per turn or is one-shot for the whole session"
+)
+RETRACTED_FOLLOWUP_QUESTION = (
+    "Does `stop_hook_active` reset to `false` at the start of a new user "
+    "turn?"
+)
 
 
 def prose(path):
@@ -63,20 +93,23 @@ class TestUnresolvedProbesStayUnresolved(unittest.TestCase):
 
     def test_the_interactive_followups_stay_listed_as_unsettled(self):
         self.assertIn(
-            "Four questions need an INTERACTIVE session to settle", self.text)
+            "Three questions need an INTERACTIVE session to settle",
+            self.text)
         self.assertIn("Does Ctrl+C route through `Stop`?", self.text)
         self.assertIn(
             "Does `Stop` fire at the end of a `Task` subagent's turn?",
             self.text)
-        # Three of the four carry an explicit "Untested." marker; the
+        # Two of the three carry an explicit "Untested." marker; the
         # AskUserQuestion entry is covered by its own bullet above.
-        self.assertEqual(self.text.count("Untested"), 3)
+        self.assertEqual(self.text.count("Untested"), 2)
 
 
 class TestConfirmedFactsKeepTheirEvidence(unittest.TestCase):
-    """Only two hook facts were established. Each keeps its CONFIRMED label
-    AND the sentence that earns it, so a label cannot outlive its
-    evidence."""
+    """Only two hook facts were established, and each keeps its CONFIRMED
+    label AND the sentence that earns it, so a label cannot outlive its
+    evidence. The per-turn reset was promoted from Untested once probe B2
+    was recorded; the framing that called it untested must not survive
+    alongside the promotion."""
 
     def setUp(self):
         self.text = prose(PROBES_MD)
@@ -88,10 +121,14 @@ class TestConfirmedFactsKeepTheirEvidence(unittest.TestCase):
         self.assertIn("Evidence, not inference", self.text)
 
     def test_the_per_turn_flag_fact_is_confirmed_with_its_evidence(self):
-        self.assertIn("(CONFIRMED).** Both fires were logged in one turn",
-                      self.text)
-        self.assertIn(
-            "pushes ONCE PER STALL rather than fencing", self.text)
+        self.assertIn(PER_TURN_CONFIRMED, self.text)
+        self.assertIn(PER_TURN_EVIDENCE, self.text)
+        self.assertIn(PER_TURN_NOT_A_FENCE, self.text)
+        self.assertIn(PER_TURN_NOT_ONE_SHOT, self.text)
+
+    def test_the_retracted_untested_framing_is_gone(self):
+        self.assertNotIn(RETRACTED_UNTESTED_FRAMING, self.text)
+        self.assertNotIn(RETRACTED_FOLLOWUP_QUESTION, self.text)
 
     def test_exactly_two_hook_facts_are_labelled_confirmed(self):
         self.assertEqual(self.text.count("(CONFIRMED)"), 2)
