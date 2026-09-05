@@ -39,10 +39,11 @@ Four more facts from the 2026-09-04 hook probes, on Claude Code 2.1.260
   matcher matches (control, PASS).** Established before either real probe
   was trusted, so a silent non-firing could not be mistaken for a negative
   result. The payload carries **no** `project_dir` key. That does not make
-  `cwd` the guard's root signal: `spec_loop_guard.py:297` resolves the root
-  as `CLAUDE_PROJECT_DIR` from the environment, then the payload's `cwd`,
-  then `os.getcwd()` — so the environment variable wins and the payload's
-  `cwd` is only the first fallback. The `Stop` payload likewise carries no
+  `cwd` the guard's root signal: `spec_loop_guard.py`'s `evaluate()`
+  resolves the project root as `CLAUDE_PROJECT_DIR` from the environment,
+  then the payload's `cwd`, then `os.getcwd()` — so the environment
+  variable wins and the payload's `cwd` is only the first fallback. The
+  `Stop` payload likewise carries no
   `project_dir`.
 - **A sync `Stop` hook honours a top-level `{"decision":"block","reason":…}`
   (CONFIRMED).** Evidence, not inference: the harness model was asked to

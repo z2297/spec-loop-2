@@ -8,9 +8,10 @@ the evidence sentence that earns the label, with the suite still green.
 The vocabulary is therefore pinned here.
 
 A second failure mode is already realised history: the file once said the
-guard relies on the payload's `cwd` as its only root signal, which
-`spec_loop_guard.py:297` contradicts. The corrected precedence sentence is
-pinned so it cannot silently revert.
+guard relies on the payload's `cwd` as its only root signal, which the
+guard's `evaluate()` contradicts. The corrected precedence sentence, and
+its citation-by-symbol form, are both pinned so neither can silently
+revert.
 
 A third: the per-turn reset of stop_hook_active was written as Untested
 while the run's evidence file was missing probe B2. It is CONFIRMED by that
@@ -62,6 +63,15 @@ RETRACTED_UNTESTED_FRAMING = (
 RETRACTED_FOLLOWUP_QUESTION = (
     "Does `stop_hook_active` reset to `false` at the start of a new user "
     "turn?"
+)
+ROOT_PRECEDENCE_BY_SYMBOL = (
+    "`spec_loop_guard.py`'s `evaluate()` resolves the project root as "
+    "`CLAUDE_PROJECT_DIR` from the environment, then the payload's `cwd`, "
+    "then `os.getcwd()`"
+)
+PRECEDENCE_CONSEQUENCE = (
+    "the environment variable wins and the payload's `cwd` is only the "
+    "first fallback"
 )
 
 
@@ -135,9 +145,11 @@ class TestConfirmedFactsKeepTheirEvidence(unittest.TestCase):
 
 
 class TestTheGuardRootSignalClaimStaysTrue(unittest.TestCase):
-    """The shipped false claim: that the payload's `cwd` is what the guard
-    relies on. `spec_loop_guard.py:297` prefers CLAUDE_PROJECT_DIR. The
-    corrected sentence carries its own citation."""
+    """The shipped false claim: that the payload's cwd is what the guard
+    relies on. The guard's evaluate() prefers CLAUDE_PROJECT_DIR. The
+    corrected sentence names that symbol, not a line number — a citation
+    pinned by its digits rots silently on the next insertion above it,
+    which is the failure this module exists to close."""
 
     def setUp(self):
         self.text = prose(PROBES_MD)
@@ -147,10 +159,11 @@ class TestTheGuardRootSignalClaimStaysTrue(unittest.TestCase):
 
     def test_the_true_precedence_is_stated_and_cited(self):
         self.assertIn("carries **no** `project_dir` key", self.text)
-        self.assertIn("`spec_loop_guard.py:297`", self.text)
-        self.assertIn(
-            "the environment variable wins and the payload's `cwd` is only "
-            "the first fallback", self.text)
+        self.assertIn(ROOT_PRECEDENCE_BY_SYMBOL, self.text)
+        self.assertIn(PRECEDENCE_CONSEQUENCE, self.text)
+
+    def test_no_citation_is_pinned_to_a_line_number(self):
+        self.assertNotIn("spec_loop_guard.py:", self.text)
 
 
 if __name__ == "__main__":
