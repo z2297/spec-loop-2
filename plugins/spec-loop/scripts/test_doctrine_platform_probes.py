@@ -213,9 +213,9 @@ class TestTheGuardRootSignalClaimStaysTrue(unittest.TestCase):
 
 class TestChangelogAgreesWithTheProbeRegister(unittest.TestCase):
     """CHANGELOG.md restates this register's open-question list, and a
-    restatement with no test is exactly how it went stale: the entry said
-    four questions remained UNTESTED for a whole phase after the per-turn
-    reset was promoted to CONFIRMED here.
+    restatement with no test is exactly how it went stale: the entry still
+    said four questions remained UNTESTED after the per-turn reset had been
+    promoted to CONFIRMED here.
 
     Scoped to THIS module rather than a new one: the subject under test is
     the probe register's contents, and a user-facing file asserting a
@@ -227,6 +227,13 @@ class TestChangelogAgreesWithTheProbeRegister(unittest.TestCase):
     settled -- and an unedited pin is as stale as the prose it guards. The
     register's spelled-out word is additionally cross-checked against its
     numbered list items on disk, so the link is to the list, not to a word.
+
+    Honest limit on that cross-check: it counts every `N. ` line in
+    platform-probes.md, and that register carries exactly one numbered
+    list today. A second, unrelated numbered list there would make this
+    test red without the open-question count having drifted -- a visible
+    false red, not a silent pass, and the fix is to scope the count to the
+    section rather than to drop the check.
     """
 
     def setUp(self):
