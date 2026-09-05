@@ -33,11 +33,13 @@ All notable changes to the spec-loop plugin are documented here. The format is
   on the block-caused continuation's fire, which makes the gate one push per stall rather than
   a fence — relaxed by a `.paused` marker that relaxes THIS gate alone, and fails open PER RUN
   (not globally) when a `.controller-session` marker cannot be decoded. The probe evidence and
-  its limits are recorded in `references/platform-probes.md`, together with the four questions
+  its limits are recorded in `references/platform-probes.md`, together with the three questions
   that remain UNTESTED there: whether `AskUserQuestion` emits `PreToolUse` at all, whether
-  `stop_hook_active` resets at the start of a new user turn (so whether the gate re-arms per
-  turn or is one-shot per session is NOT established), whether Ctrl+C routes through `Stop`,
-  and whether `Stop` fires for `Task` subagents. A PreToolUse gate on `AskUserQuestion` was
+  Ctrl+C routes through `Stop`, and whether `Stop` fires for `Task` subagents. The per-turn
+  reset is no longer one of them: `stop_hook_active` returning to `false` at the start of every
+  NEW user turn is CONFIRMED — established by the third `Stop` fire of a two-turn probe session,
+  where the flag read `false` again at the end of turn 2 — so the gate re-arms each turn instead
+  of being one-shot per session. A PreToolUse gate on `AskUserQuestion` was
   considered and DROPPED by human decision; no part of it was built and nothing in this release
   guards that path.
 
