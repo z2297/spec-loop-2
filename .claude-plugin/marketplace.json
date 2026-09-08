@@ -14,6 +14,16 @@
       "description": "Spec-driven autonomous loop, Opus 5-native — Workflow-orchestrated slices with consolidated review, scripted quality gates, and knowledge-graph integration"
     },
     {
+      "name": "spec-loop-2-4-0",
+      "source": {
+        "source": "git-subdir",
+        "url": "z2297/spec-loop-2",
+        "path": "plugins/spec-loop",
+        "ref": "v2.4.0"
+      },
+      "description": "ARCHIVE — spec-loop v2.4.0, pinned. Install to roll back to this exact release."
+    },
+    {
       "name": "spec-loop-2-3-0",
       "source": {
         "source": "git-subdir",

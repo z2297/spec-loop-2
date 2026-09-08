@@ -7,6 +7,7 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-08
 ### Added
 - **The controller's Phase-2 loop now closes itself in prose: a wave boundary with slices
   still runnable is a dispatch point, not a place to stop and report.** `commands/spec-loop.md`
@@ -584,7 +585,8 @@ schemas, agents, and internals redesigned; see
   and the `--budget` flag (cost control is structural: caps + bounds; the
   Workflow token ceiling activates when the session sets a token target).
 
-[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.4.0
 [2.3.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.3.0
 [2.2.2]: https://github.com/z2297/spec-loop-2/releases/tag/v2.2.2
 [2.2.1]: https://github.com/z2297/spec-loop-2/releases/tag/v2.2.1
