@@ -125,7 +125,7 @@ The controller repeats this check over every open record at the wave boundary.
 
 ### Not triggers (autonomous by design)
 
-Three things that look like stopping points but are handled by the loop itself, keeping the bar at
+Four things that look like stopping points but are handled by the loop itself, keeping the bar at
 exactly the six triggers above:
 
 - **Slice split.** A slice that turns out to be two-or-more independently shippable changes
@@ -140,6 +140,13 @@ exactly the six triggers above:
   asks not to be built is a `defer`-hinted concern recorded as one `deferred` event per
   concern. Both are records for the human to read at the runbook, not questions — and
   neither ever suppresses a finding.
+- **A wave boundary with slices still runnable.** When `dag.py next-wave` reports a non-empty
+  `slice_ids`, the boundary is a dispatch point, not a decision: the controller re-dispatches
+  the next wave in the SAME turn, and what the finished wave did is reported at the runbook
+  rather than mid-loop. Ending the turn there is the stall this list exists to prevent, not a
+  question. This entry covers the RUNNABLE case ONLY — a reported `deadlock` (nothing runnable
+  while slices remain) is the opposite: it is a genuine escalation the controller surfaces, and
+  nothing here downgrades it.
 
 ## Batching rule (critical for non-blocking operation)
 

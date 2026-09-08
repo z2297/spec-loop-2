@@ -1,0 +1,186 @@
+{
+  "schema_version": 2,
+  "id": "s8",
+  "status": "DONE",
+  "branch": "spec-loop/20260904-loop-gate/s8",
+  "commits": {
+    "base": "90ef235a1bacbaafa595d287ae9aac7fd0aac292",
+    "head": "fa9257dd901ef23629b36d6d3d845434c1ad05d6"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 12,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 2,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 0,
+    "residual": [
+      "P2: The pin reads and asserts over the ENTIRE CHANGELOG, but scripts/release.py rolls the [Unreleased] section into a frozen dated section inside the same file (re.subn on '^## \\[Unreleased\\]' inserts a new empty Unreleased above it). Once this entry is released it becomes immutable history, yet test_the_changelog_open_question_count_matches_the_register keeps asserting that history's count equals the LIVE register's. The first time a question is settled and platform-probes.md drops to 'Two questions', the pin goes red against a published entry that was accurate when written, and the only fixes are rewriting release history or deleting the pin. test_the_changelog_retracted_untested_framing_is_gone has the same whole-file scope: it forbids the string 'is one-shot per session is NOT established' anywhere in the CHANGELOG forever, including in a future entry that legitimately quotes the retracted claim while describing this very correction. Separately, CHANGELOG_OPEN_COUNT_RE.search returns only the FIRST match, so after a roll a newer entry's count is the one checked and older restatements are unchecked - defensible for history, but it means the pin silently stops guarding the text it was written for.",
+      "P3: PROBES_NUMBERED_ITEM_RE counts every '^N. ' line in the whole of platform-probes.md, not just the open-question list, so the cross-check between the register's spelled-out word and its list length is coupled to the file having exactly one numbered list. It has exactly one today (lines 81/87/89, which I counted on disk: 3 matches, matching 'Three'), so the check is sound as merged. Adding any unrelated numbered list to that register turns test_the_register_word_matches_its_numbered_list red without the open-question count having drifted at all. The implementer disclosed this and documented it in the class docstring; I confirmed the failure direction is a visible false red, never a silent pass, so it is a maintenance trap rather than a correctness hole.",
+      "P3: The count assertions are deliberately derived from both files so the pin never needs an edit, but CHANGELOG_TOPICS is three hard-coded literals with no link to the register's numbered items. When a question is settled, both files' counts drop together and the count tests stay green, while test_the_changelog_names_each_open_question fails on a stale literal for a question that correctly no longer exists - the exact 'unedited pin is as stale as the prose it guards' failure the docstring says the design avoids. The failure is a visible red, and deriving topics mechanically is real work (the two files word the same question differently: 'Does Ctrl+C route through `Stop`?' vs 'whether Ctrl+C routes through `Stop`'), so this is a scoped caveat, not a defect in what shipped.",
+      "P2: The new TestCase's docstring documents an honest limit for the numbered-item-count's file-wide scope, but omits the comparable and arguably more fragile limitation that CHANGELOG_TOPICS is three hard-coded literal strings with no mechanical link back to platform-probes.md's numbered questions -- so the docstring's framing ('Both counts are read out of the two files... an unedited pin is as stale as the prose it guards') reads as broader drift-proofing than the code actually delivers for per-question content, not just the count.",
+      "P3: CHANGELOG_INSTALL_VERSION_LIMIT is a module-scope name added by the implementer that is not listed in Task 2's Interfaces > Produces list (which enumerates CHANGELOG_MD, WORD_TO_INT, CHANGELOG_OPEN_COUNT_RE, PROBES_OPEN_COUNT_RE, PROBES_NUMBERED_ITEM_RE, CHANGELOG_TOPICS, CHANGELOG_RETRACTED_FRAMING, and the TestCase class only). It is a reasonable, well-justified quality-gate-driven hoist (self-disclosed by the implementer as a deviation), but it is unplanned scope per the plan's explicit Produces contract."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_radius.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_replan.test.mjs ; claude plugin validate .",
+    "result": "All 10 suite segments passed. Python: 126 + 1479 + 1605 tests = 3210 total with coverage 97.0% (floor 90%). Node: 48 + 35 + 38 + 9 + 16 = 146 tests. Marketplace and plugin validation both OK.",
+    "scope": "full",
+    "tree_sha": "83ceeeff0ca3cfb004a43e94423f94993db2317b"
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "All 36 builtin-heuristic checks passed. No failures recorded. 2 file types skipped: CHANGELOG.md (unsupported file type) and crap_score (no coverage report)."
+  },
+  "escalations": [],
+  "agents_used": 10,
+  "wave": 6,
+  "events": [
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 12,
+        "deferred": [],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "quality-gate",
+      "payload": {
+        "status": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "review-summary",
+      "payload": {
+        "findings": 5,
+        "confirmed": 0,
+        "refuted": 0,
+        "fix_rounds": 0,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s8",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

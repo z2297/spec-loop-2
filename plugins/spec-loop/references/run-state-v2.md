@@ -267,17 +267,52 @@ no pinned machine grammar in v2.
 | `runbook.md` | runbook-writer agent | end-of-run synthesis, committed |
 | `metrics.json` | `run_metrics.py --write` | atomic write |
 
-## Markers — guard-hook contract (unchanged from v1)
+## Markers — guard-hook contract (v1's three, plus two added in v2)
 
-- `.active` — created at Phase 1, recreated on resume, never committed. While
-  present, `spec_loop_guard.py` blocks pushes, broad staging, main-branch
+- `.active` — created at Phase 1, recreated on resume. While present,
+  `spec_loop_guard.py` blocks pushes, broad staging, main-branch
   commits/merges, and quality-gate config writes.
 - `.publish-choice` — written the instant the human answers the publish
   prompt, before the action is performed.
 - `.done` — `.active` renamed at run end.
+- `.paused` — present only while the human has deliberately suspended the
+  loop-boundary gate. It relaxes that one gate and nothing else; every
+  `.active` restriction above still applies.
+- `.controller-session` — identifies the controller's own session so the
+  loop-boundary gate applies to it and not to other sessions. Per-session
+  state, meaningful only inside the machine that wrote it. It discriminates
+  across SESSIONS and nothing finer: a `Task` subagent inherits its parent's
+  `CLAUDE_CODE_SESSION_ID`, so the marker would MATCH at a subagent's turn
+  end and the gate would tell an implementer to continue Phase 2 step 1.
+  Whether `Stop` fires at a subagent's turn end is untested, and
+  `SubagentStop` being a distinct, unregistered event is not evidence
+  either way. See `references/platform-probes.md`.
+
+None of these markers is ever committed. They are per-checkout state: the
+hooks fire on a marker's PRESENCE, so a committed `.active` would deny pushes
+and main-branch commits on every clone and in every fresh worktree, including
+sessions with no run at all. In the spec-loop repository itself, `.gitignore`
+enforces this with one bare, unanchored entry per marker name and
+`test_doctrine_marker_hygiene.py` fails if one re-enters the index. Neither
+exists in a repo the plugin is merely installed into: there, a `.paused` or
+`.active` is fully committable and nothing will stop it, so adding those five
+ignore entries is the installing repo's job. Markers did get committed twice
+in this repository before that pin existed; the correction is an
+index-only removal (`git rm --cached`) that leaves the files on disk for any
+run still reading them — never a history rewrite, and never a plain delete.
 
 A hook denial means the run has not earned that operation yet — never delete
-a marker to dodge one.
+a marker to dodge one. A stale marker is remediated by resuming the run or
+clearing the marker, in that order; that applies to a stale `.paused` exactly
+as it does to a stale `.active`.
+
+Accepted residual risk: `.paused` disables the loop-boundary gate with ZERO
+observable trace. A `Stop` hook can only block or stay silent, so a paused
+gate never fires and therefore never gets the chance to explain that it is
+paused. A `.paused` left behind after the reason for it passed is a
+permanent, silent loss of the loop-boundary gate for that run — detectable
+only by a human who remembers the marker exists. This is accepted, not
+mitigated.
 
 ## Worktrees & branches
 

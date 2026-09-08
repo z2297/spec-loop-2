@@ -1,42 +1,40 @@
 #!/usr/bin/env python3
-"""PreToolUse guard: deterministic enforcement of spec-loop's git invariants.
+"""PreToolUse + Stop guard: deterministic enforcement of spec-loop's invariants.
 
-Registered by the plugin's hooks/hooks.json for Bash and Write|Edit tool calls.
-While a spec-loop run is active (a `docs/spec-loop/<run-id>/.active` marker
-exists under the project root), this hook mechanically blocks the operations
-the loop's prompts forbid:
+Registered by the plugin's hooks/hooks.json for Bash and Write|Edit tool calls and for the Stop
+event. While a spec-loop run is active (a `docs/spec-loop/<run-id>/.active` marker exists under
+the project root), this hook mechanically blocks the operations the loop's prompts forbid:
 
-- `git push` before the human's publish choice (`.publish-choice` marker) —
-  except in `per-slice-pr` merge mode, where slices legitimately push.
-  Only pushes that plausibly belong to the run are denied: bare `git push`,
-  pushes naming the run's integration branch (`base_ref`), or `spec-loop/`
-  worktree branches.
-- `git add -A` / `--all` / `git add .` — the runbook commit must stage only
-  the run directory by explicit pathspec.
-- `git commit` / `git merge` while sitting on `main`/`master` (or a compound
-  command that checks out main and commits/merges/pushes) before the publish
-  choice.
-- Any write to the quality-gate config — the global file
-  (`~/.claude/spec-loop-2/quality-gate.json`) or the per-repo overlay
-  (`.spec-loop/quality-gate.json`) — thresholds must never be weakened mid-run.
+- `git push` before the human's publish choice (`.publish-choice` marker), except in
+  `per-slice-pr` merge mode where slices legitimately push. Only pushes that plausibly belong to
+  the run are denied: bare pushes, pushes naming the run's integration branch (`base_ref`), or
+  `spec-loop/` branches.
+- `git add -A` / `--all` / `git add .` — the runbook commit must stage only the run directory,
+  by explicit pathspec.
+- `git commit` / `git merge` while sitting on `main`/`master` (or a compound command that checks
+  out main and commits/merges/pushes) before that choice.
+- Any write to the quality-gate config, global (`~/.claude/spec-loop-2/quality-gate.json`) or
+  per-repo overlay (`.spec-loop/quality-gate.json`): thresholds are never weakened mid-run.
+- Ending the turn (`Stop`) while an active, unpaused run still has runnable slices and no open
+  escalation — a wave boundary is a dispatch point, not a reporting boundary. Narrowed to the
+  controller session: the payload's `session_id` must appear in the run's `.controller-session`
+  marker, written in Phase 1. Skipped when `stop_hook_active` is true, and relaxed by a
+  `.paused` marker, which relaxes THIS gate only, never the rules above.
 
-Design decisions:
-- **Fail-open on internal errors.** This hook is defense-in-depth; the skill
-  prompts remain the primary control. A crashed guard must not deny every
-  tool call in the session, so any unexpected exception allows the action.
-- Denials **fail closed** with a reason that names the compliant alternative
-  and the stale-marker remediation (`/spec-loop --resume <run-id>` or clearing
-  the `.active` marker).
-- Subagent coverage: verified empirically (2026-07-07, instrumented hook +
-  headless `claude -p` probe) that PreToolUse fires for Bash calls made inside
-  Task subagents as well as the main session — so this guard also covers slice
-  workers. The platform docs don't state this explicitly, so it is worth
-  re-probing after major Claude Code upgrades; every controller-owned operation
-  (integration merge, runbook commit, publish push) runs in the main session
-  regardless.
+Design decisions. **Fail-open on internal errors:** this hook is defense-in-depth and the skill
+prompts remain the primary control, so any unexpected exception allows the action rather than
+denying every tool call in the session. Denials **fail closed**, naming the compliant
+alternative and the stale-marker remediation (`/spec-loop --resume <run-id>` or clearing the
+`.active` marker). Subagent coverage is empirical (2026-07-07, instrumented hook + headless
+`claude -p` probe): PreToolUse fires for Bash calls made inside Task subagents as well as the
+main session, so this guard also covers slice workers. The platform docs don't state that, so it
+is worth re-probing after major Claude Code upgrades; every controller-owned operation
+(integration merge, runbook commit, publish push) runs in the main session regardless.
 
-Standard library only. Reads the hook payload from stdin; a denial is exit 0
-plus a permissionDecision JSON on stdout; an allow is exit 0 with no output.
+Standard library only; the loop-boundary gate imports the sibling `dag` and `run_state` modules
+function-locally, so the tool hot paths pay nothing and an absent module fails open. Reads the
+payload from stdin; a PreToolUse denial is exit 0 plus a permissionDecision JSON, a Stop block
+is exit 0 plus a top-level decision/reason JSON, and an allow is exit 0 with no output.
 """
 
 from __future__ import annotations
@@ -134,6 +132,51 @@ def _push_targets_run(command, run):
     return False
 
 
+def _controller_marker(run):
+    """Raw text of the run's `.controller-session` marker, or None.
+
+    Absent or blank => no recorded controller, so the gate declines to block
+    at all; check_stop matches it as a substring (a labelled marker works).
+    ValueError is caught alongside OSError — an undecodable marker raises
+    UnicodeDecodeError, which is a ValueError, not an OSError — so this run
+    fails open on its own, matching _blocking_slices and never escaping to
+    main()'s blanket handler, which would unlock the gate for every run.
+    """
+    marker_path = os.path.join(run["dir"], ".controller-session")
+    try:
+        with open(marker_path, "r", encoding="utf-8") as fh:
+            return fh.read().strip() or None
+    except (OSError, ValueError):
+        return None
+
+
+def _blocking_slices(run):
+    """Runnable slice ids that make ending the turn wrong, or None to ALLOW.
+
+    `dag.next_wave` is the ONE implementation of wave membership; a copy here
+    would fork the split-parent rule. An open escalation means the human owes
+    an answer, so the turn must be free to end: that too returns None. The
+    imports are function-local (the dashboard_server.py:74-89 idiom) so the
+    tool hot paths pay nothing, and every failure mode returns None per run,
+    so one broken run cannot unlock the gate for another.
+    """
+    try:
+        import dag as dag_module
+        import run_state as run_state_module
+    except ImportError:  # packaging drift, not a logic path
+        return None
+    try:
+        report = dag_module.next_wave(dag_module.load_dag(run["dir"]))
+        if run_state_module.open_escalations(run["dir"]):
+            return None
+    except (dag_module.DagError, OSError, ValueError, TypeError, AttributeError):
+        return None
+    # Runnability is non-empty slice_ids, NEVER a missing 'done' key: a
+    # deadlock report carries no 'done' at all.
+    slice_ids = report.get("slice_ids")
+    return slice_ids if isinstance(slice_ids, list) else None
+
+
 def check_bash(command, cwd, runs):
     """Return a deny reason for this Bash command, or None to allow."""
     blocking = [r for r in runs if not r["publish_choice"]]
@@ -210,12 +253,58 @@ def check_write(file_path, runs, project_root):
     return None
 
 
+def _stop_block_reason(run, runnable):
+    """The block text for one runnable, unescalated, controller-owned run."""
+    rid = run["run_id"]
+    return (
+        "spec-loop run %s has %d runnable slice(s) (%s) and no open escalation: a wave "
+        "boundary is a dispatch point, not a reporting boundary. Continue Phase 2 step 1 "
+        "in THIS turn — compute the wave, prepare worktrees, dispatch — instead of "
+        "reporting status. If a wave you already dispatched is still in flight, wait for "
+        "its completion notification rather than re-dispatching: slice status stays "
+        "pending until collection, so these ids can include work already running. If "
+        "you are deliberately ending the turn anyway, say why in your next message so "
+        "the transcript carries the reason. If the human asked you to hold, write "
+        "docs/spec-loop/%s/.paused, which relaxes this gate alone. If you are not the "
+        "controller of this run, this gate is not aimed at you — only the session "
+        "recorded in docs/spec-loop/%s/.controller-session is blocked. %s"
+        % (rid, len(runnable), ", ".join(runnable), rid, rid, _remediation(run))
+    )
+
+
+def check_stop(session_id, runs):
+    """Return a reason to block this turn from ending, or None to allow.
+
+    Narrowed to the controller session, unlike check_bash/check_write: this
+    gate denies INACTION, so its false positives are not self-limiting.
+    `.paused` relaxes THIS gate only, never find_active_runs.
+    """
+    for run in runs:
+        if os.path.exists(os.path.join(run["dir"], ".paused")):
+            continue
+        marker = _controller_marker(run)
+        if not marker or not session_id or session_id not in marker:
+            continue
+        runnable = _blocking_slices(run)
+        if not runnable:
+            continue
+        return _stop_block_reason(run, runnable)
+    return None
+
+
 def evaluate(payload):
     """Return a deny reason for this hook payload, or None to allow."""
     project_root = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or os.getcwd()
     runs = find_active_runs(project_root)
     if not runs:
         return None
+
+    # Branch on the EVENT first: a Stop payload carries no tool_name key at
+    # all, so a tool-keyed branch would pass unit tests and never fire live.
+    if payload.get("hook_event_name") == "Stop":
+        if payload.get("stop_hook_active"):
+            return None  # this fire ends the continuation a block caused
+        return check_stop(payload.get("session_id"), runs)
 
     tool = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
@@ -232,18 +321,18 @@ def main(argv=None):
         reason = evaluate(payload)
     except Exception:  # noqa: BLE001 — deliberate fail-open (see module docstring)
         return 0
-    if reason:
-        print(
-            json.dumps(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "permissionDecision": "deny",
-                        "permissionDecisionReason": reason,
-                    }
-                }
-            )
-        )
+    if not reason:
+        return 0
+    if payload.get("hook_event_name") == "Stop":
+        # A Stop block is a DIFFERENT wire shape: top-level decision/reason,
+        # confirmed on Claude Code 2.1.260. The shape below is ignored here.
+        print(json.dumps({"decision": "block", "reason": reason}))
+        return 0
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": reason,
+    }}))
     return 0
 
 

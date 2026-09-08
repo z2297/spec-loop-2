@@ -1,0 +1,319 @@
+{
+  "schema_version": 2,
+  "id": "s2",
+  "status": "DONE",
+  "branch": "spec-loop/20260904-loop-gate/s2",
+  "commits": {
+    "base": "080b265f86c921ba4d264011532ff5459880dc50",
+    "head": "bbd7e055a7e26bf1288d21f256a778bc3447d44f"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "OBJECT",
+    "concerns": 10,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 5,
+  "review": {
+    "confirmed": 6,
+    "refuted": 2,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: `_controller_marker` catches only `OSError`, so an undecodable `.controller-session` raises `UnicodeDecodeError` (a `ValueError`, not an `OSError`) which escapes the per-run try structure entirely and is only swallowed by `main()`'s blanket `except Exception` — i.e. it fails open for the WHOLE loop, not per run. I verified the mechanism against the real function: writing b'\\xff\\xfe\\x00bad' to `.controller-session` and calling `_controller_marker({'dir': d})` raises `UnicodeDecodeError` (isinstance ValueError=True, isinstance OSError=False). This is the one asymmetry in the slice's per-run isolation: `_runnable_slices` and `_has_open_escalation` both catch `ValueError`, and the binding constraint says \"make it fail open PER RUN, not with one try around the whole loop\". Reachability is low (the marker is a controller-written UUID), which is why this is P2 and not P1, but with two active runs a corrupt/truncated marker in run A silently disables the gate for run B as well.",
+      "P2: The controller-session narrowing discriminates across SESSIONS but not across Task subagents inside one session: the implementer's own Task-5 probe reports that this Task subagent reads the parent's `CLAUDE_CODE_SESSION_ID` (f96cd4a5-...), so a subagent's turn end carries the SAME `session_id` the controller wrote into `.controller-session`. If `Stop` ever fires at a subagent turn end, `check_stop` matches and emits text ordering the agent to \"Continue Phase 2 step 1 ... compute the wave, prepare worktrees, dispatch\" — the exact role confusion the run's scope ceiling names when it declines to register `SubagentStop`. The mitigation today is entirely that `SubagentStop` is a distinct, unregistered event (guardian finding), which is not the same as evidence that `Stop` does not fire for subagents; and the guard's own docstring records that PreToolUse DOES fire inside Task subagents. Low confidence because no probe covers Stop-in-subagent either way; flagged so s4 does not claim the narrowing prevents it.",
+      "P3: `payload.get(\"stop_hook_active\")` treats an ABSENT key as false, so if a future Claude Code release renames or drops the key the gate blocks every stop attempt in the controller session with no self-limit — the model is pushed, continues, attempts to stop, and is pushed again. The probe pins the key as present on 2.1.260 so this is not reachable today, and it is recoverable (human interrupt plus the `.paused` path the reason text names), hence P3. Worth noting only because it is the one place where the run's \"must not wedge every turn end\" doctrine depends on a platform key rather than on the guard's own control flow."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_radius.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_replan.test.mjs ; claude plugin validate .",
+    "result": "All 10 suite segments passed. Total tests: 126 (scripts) + 1458 (plugins) + 1584 (coverage) + 48 + 35 + 38 + 9 + 16 (node tests) = 3314 tests passed. Coverage: all per-file floors met (spec_loop_guard.py at 93.9%, floor 86%). Plugin validation passed.",
+    "scope": "full",
+    "tree_sha": "555d0f5c0b0b569de43bebc706ce1890f066d461"
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "Quality gate passed all 218 checks. No violations found. Gate config loaded successfully."
+  },
+  "escalations": [],
+  "agents_used": 19,
+  "wave": 2,
+  "events": [
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "OBJECT",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 7,
+        "deferred": [
+          "DESIGN - the stronger version of the in-flight fix is a readiness exemption (skip the block when `dag.json` carries a wave with status `dispatched` whose `slice_ids` intersect the runnable set, reading `dag.waves_of` - a read, not a change to dag.py, so it stays inside the ceiling). Do NOT build it in s2 unblindly: `commands/spec-loop.md:136` marks the wave collected at step 6, but it is ambiguous whether a wave with ESCALATED slices is marked collected, and if it is not, this exemption would silently disable the gate at exactly the escalation re-dispatch boundary - the failure mode the run exists to fix. Log it and decide it against evidence about the workflow tool's synchronicity.",
+          "CONSISTENCY - the moment the Stop branch lands, `plugins/spec-loop/README.md:114` (\"a PreToolUse guard\") and `:137` (\"`scripts/spec_loop_guard.py` (PreToolUse hook)\") become false, exactly like the module docstring Task 4 corrects. README.md belongs to slice s4 (its `files` list carries it), so s2 must NOT edit it - but s2's task report should name both line numbers explicitly so s4 does not ship the stale claim. No test pins either sentence, so nothing will catch it otherwise.",
+          "Residual risk, no in-slice mitigation available: `.paused` disables the gate with zero observable trace. A Stop hook can only block or be silent, so at the paused decision point (check_stop's `continue`) the gate cannot say anything - which means a stale `.paused` is a permanent, silent loss of the loop-boundary gate for that run, detectable only by a human remembering the marker exists. The shared constraint asks for \"the same remediation treatment as a stale .active\", but _remediation() text only reaches a human when the gate FIRES, and a paused gate never fires. The only control is the s1 prose at commands/spec-loop.md:202-208 (human asks, controller writes it, controller deletes it on resume, --resume does not clear it). Worth logging as accepted residual risk rather than solved; any real detector (an age bound on the marker, or surfacing paused runs somewhere the human reads) is new design and outside this slice."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "replan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "deferred",
+      "payload": {
+        "summary": "DESIGN - the stronger version of the in-flight fix is a readiness exemption (skip the block when `dag.json` carries a wave with status `dispatched` whose `slice_ids` intersect the runnable set, reading `dag.waves_of` - a read, not a change to dag.py, so it stays inside the ceiling). Do NOT build it in s2 unblindly: `commands/spec-loop.md:136` marks the wave collected at step 6, but it is ambiguous whether a wave with ESCALATED slices is marked collected, and if it is not, this exemption would silently disable the gate at exactly the escalation re-dispatch boundary - the failure mode the run exists to fix. Log it and decide it against evidence about the workflow tool's synchronicity.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "deferred",
+      "payload": {
+        "summary": "CONSISTENCY - the moment the Stop branch lands, `plugins/spec-loop/README.md:114` (\"a PreToolUse guard\") and `:137` (\"`scripts/spec_loop_guard.py` (PreToolUse hook)\") become false, exactly like the module docstring Task 4 corrects. README.md belongs to slice s4 (its `files` list carries it), so s2 must NOT edit it - but s2's task report should name both line numbers explicitly so s4 does not ship the stale claim. No test pins either sentence, so nothing will catch it otherwise.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "deferred",
+      "payload": {
+        "summary": "Residual risk, no in-slice mitigation available: `.paused` disables the gate with zero observable trace. A Stop hook can only block or be silent, so at the paused decision point (check_stop's `continue`) the gate cannot say anything - which means a stale `.paused` is a permanent, silent loss of the loop-boundary gate for that run, detectable only by a human remembering the marker exists. The shared constraint asks for \"the same remediation treatment as a stale .active\", but _remediation() text only reaches a human when the gate FIRES, and a paused gate never fires. The only control is the s1 prose at commands/spec-loop.md:202-208 (human asks, controller writes it, controller deletes it on resume, --resume does not clear it). Worth logging as accepted residual risk rather than solved; any real detector (an age bound on the marker, or surfacing paused runs somewhere the human reads) is new design and outside this slice.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t4",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t5",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 7
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-5 refuted by batched verifier",
+        "rationale": "grep '^class' plugins/spec-loop/scripts/spec_loop_guard.py returns no matches — the file (394 lines total) defines no class at all, only module-level functions. A 'class_lines: 347' metric for this file is factually impossible; there is no class construct to measure.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: plugins/spec-loop/scripts/test_spec_loop_guard_stop.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "review-summary",
+      "payload": {
+        "findings": 3,
+        "confirmed": 6,
+        "refuted": 2,
+        "fix_rounds": 1,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "debug-fix",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:2",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

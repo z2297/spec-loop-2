@@ -111,8 +111,11 @@ arrive as ONE question round per wave boundary, recommended default first.
 
 `scripts/quality_gate.py` measures the slice diff (cyclomatic/cognitive
 complexity, method/class length, parameters, nesting, CRAP with coverage) —
-deterministic, script-first, agents cannot weaken it: a PreToolUse guard
-denies writes to the config while a run is active. Global config
+deterministic, script-first, agents cannot weaken it: while a run is
+active the guard hook denies both a `Write`/`Edit`/`MultiEdit` targeting
+the config (`check_write` in `spec_loop_guard.py`) and a shell-side write
+to it — redirect, `tee`, `mv`, `cp` or `sed -i` (the
+`QUALITY_GATE_WRITE` pattern, enforced in `check_bash`). Global config
 `~/.claude/spec-loop-2/quality-gate.json` (first run offers presets or import
 from v1); a committed per-repo overlay `.spec-loop/quality-gate.json`
 deep-merges over it and hosts `tier3_surfaces`. Gate violations join review
@@ -134,10 +137,16 @@ Everything durable lives under `docs/spec-loop/<run-id>/` —
 `dag.json` (structure + recorded waves), per-slice sidecars, `events.jsonl`
 (the machine channel `run_metrics.py` reads), rendered prose logs, and the
 committed `runbook.md`. Contract: `references/run-state-v2.md`. While a run's
-`.active` marker exists, `scripts/spec_loop_guard.py` (PreToolUse hook)
-blocks pushes, broad staging (`git add -A`), commits/merges on
-`main`/`master`, and quality-gate config edits. Markers, not vibes: the run
-ends when the human's publish choice is recorded.
+`.active` marker exists, `scripts/spec_loop_guard.py` — registered on
+`PreToolUse` for `Bash` and `Write|Edit|MultiEdit`, and on `Stop` — blocks,
+in ANY session, pushes, broad staging (`git add -A`), commits/merges on
+`main`/`master` and quality-gate config edits. One further block applies
+only in the session recorded in `.controller-session`: that session may not
+end its turn at a wave boundary while the run still has runnable slices and
+no open escalation. That loop-boundary block is additionally skipped when
+`stop_hook_active` is true, so it pushes once per stall rather than fencing,
+and is relaxed — alone among the blocks — by a `.paused` marker. Markers,
+not vibes: the run ends when the human's publish choice is recorded.
 Work the council judged out of scope and asked not to be built is logged as its own
 `deferred` event and rendered into `decisions-log.md`; a malformed scope record fails the
 sidecar closed rather than reading as clean.

@@ -18,7 +18,9 @@ Invariants (non-negotiable): single-branch integration — every slice merges in
 integration branch, never `main`/`master`; the loop never pushes before the human's publish
 choice (`--per-slice-pr` is the sole exception); merges are yours alone, serial, `--no-ff`;
 timestamps are yours alone (`date -u +%Y-%m-%dT%H:%M:%SZ`) — workflows have no clock; every
-artifact you hand an agent is a file path, never pasted content.
+artifact you hand an agent is a file path, never pasted content; a wave boundary is a
+dispatch point, not a reporting boundary — while any slice is runnable, Phase 2 step 9
+re-dispatches in the SAME turn.
 
 ## Phase 0 — Intake
 
@@ -69,6 +71,10 @@ artifact you hand an agent is a file path, never pasted content.
    the optional run-level `scope_ceiling` from Phase 0), and empty `events.jsonl`;
    append a `run-created` event via `run_state.py append-event`. Ensure `.worktrees/` is
    gitignored. Validate: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dag.py" validate --run-dir <dir>`.
+   Write `.controller-session` beside `.active`, containing your session id: the
+   loop-boundary gate reads it and tells your turns from any other session's on this machine.
+   Neither marker is ever committed — `.gitignore` covers both, bare and unanchored, and
+   `test_doctrine_marker_hygiene.py` fails if either re-enters the index.
 5. Knowledge graph (if enabled): one `knowledge_graph.py batch` seeding the system hub + run
    MOC (`ensure_base: true`).
 
@@ -183,6 +189,24 @@ deadlock is itself an escalation):
    the loss to one wave.)
 8. Knowledge graph (if enabled): one `batch` call upserting the wave's `decision` nodes and
    touched `component` hubs, extracted from the wave's events.
+9. **Close**: re-run `dag.py next-wave` and act on it in THIS turn —
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dag.py" next-wave --run-dir <dir>`. Non-empty
+   `slice_ids` → return to step 1 immediately, in the same turn, with no status report and no
+   question: a wave boundary is a dispatch point, not a reporting boundary, and what the wave
+   just did is reported at the runbook. `done: true` → Phase 5. `deadlock: true` → escalate
+   with the `blocked` list; that is a real escalation, never a stall to sit on. Judge
+   runnability on `slice_ids` being non-empty and never on the absence of a `done` key — a
+   deadlock report carries no `done` key at all, so reading a missing `done` as "keep going"
+   would swallow both the deadlock question and the Phase 5 publish prompt. If you do end the
+   turn here anyway, say why in your next message so the transcript carries the reason.
+   `.paused` is the one deliberate escape from the loop-boundary gate: the HUMAN asks for it
+   and YOU write `docs/spec-loop/<run-id>/.paused`. It relaxes the loop-boundary gate alone —
+   every other `.active` restriction (pushes before the publish choice, broad staging,
+   default-branch commits and merges, gate-config writes) still applies. You delete it yourself
+   the moment the human says resume; `--resume` does NOT clear it, so a resumed run is unpaused
+   only once you remove the file. Never write it to get past a gate of your own accord. Like a
+   stale `.active`, a stale `.paused` is remediated by resuming the run or clearing the marker,
+   in that order — and it is never committed.
 
 ## Phase 5 — Integration gate & finish
 
@@ -201,13 +225,14 @@ Executive Readout, verbatim.
 ## Resume
 
 `--resume <run-id>`: read `dag.json` (recover branch, mode, wave history), recreate
-`.active`, checkout the integration branch (clean-tree guard), `worktrees.py prepare
---resume` for the incomplete wave's slices, drain EVERY answered escalation of the run into
-the `answers` map (every round, already-dispatched ones included, per step 7's
-cumulative-map invariant), and re-enter the wave loop at the first incomplete wave —
-same-session
-with `resumeFromRunId`, fresh invocation otherwise. All slices terminal → straight to
-Phase 5 (regenerating `runbook.md` is safe).
+`.active`, rewrite `.controller-session` with your NEW session id (the previous
+session's id is stale the moment this one starts), checkout the integration branch
+(clean-tree guard), `worktrees.py prepare --resume` for the incomplete wave's slices, drain
+EVERY answered escalation of the run into the `answers` map (every round,
+already-dispatched ones included, per step 7's cumulative-map invariant), and re-enter the
+wave loop at the first incomplete wave — same-session with `resumeFromRunId`, fresh
+invocation otherwise. All slices terminal → straight to Phase 5 (regenerating `runbook.md`
+is safe).
 
 ## Escalation discipline
 
@@ -218,7 +243,24 @@ question, including your own. Announce every question you do ask: immediately be
 `printf '\a'; command -v osascript >/dev/null 2>&1 && osascript -e 'display notification
 "spec-loop run needs a decision" with title "spec-loop"' || true` — so an unattended run is
 never silently parked (a finished run once waited 7.6 hours at the publish prompt). An alert
-failure is ignored, never a reason to delay the question. Every autonomous decision = one `decision` event with
-rationale and reversibility. When a workflow result surprises you (empty, malformed,
-contradicting its own events), read the workflow journal before re-dispatching — never
-re-run work you merely failed to look at.
+failure is ignored, never a reason to delay the question.
+
+Before ANY controller-originated `AskUserQuestion` — a reported deadlock, a decomposition
+ambiguity, a config first-run choice, the publish prompt, any question you raise yourself
+rather than a wave — append the record FIRST, then ask:
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_state.py" append-event --run-dir <dir> --ts <now>
+--scope run --type escalation-opened --payload <EscalationRecord JSON>`. The order is the
+point: `open-escalations` reads events.jsonl, so a question asked before its record exists is
+invisible to a resume and to anything else reading run state, and the `escalation-answered`
+event you write back pairs by an `id` that was never opened. Closing the record is the second
+half of the same rule: the moment the human answers, append the matching
+`escalation-answered` event keyed by the same `id` verbatim, before you act on the answer.
+`open-escalations` holds an opened id with no answer event open forever, so an unclosed
+record is re-gathered by Phase 2 step 7, re-asked at the next wave boundary, and surfaced
+by the dashboard until it is closed. The append half alone does not apply to wave-raised
+escalations: records a wave raised are already appended by `persist-slice`, so never
+re-append those — the write-back half above still applies to them in full.
+
+Every autonomous decision = one `decision` event with rationale and reversibility. When a
+workflow result surprises you (empty, malformed, contradicting its own events), read the
+workflow journal before re-dispatching — never re-run work you merely failed to look at.

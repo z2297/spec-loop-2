@@ -1,4 +1,9 @@
-"""Tests for spec_loop_guard.py.
+"""Tests for spec_loop_guard.py's PreToolUse gates (push/staging/main-branch/
+quality-gate-config) plus the shared GuardTestCase fixture.
+
+test_spec_loop_guard_stop.py covers the Stop loop-boundary gate separately
+(split out to stay under the per-file class_lines ceiling) and imports
+GuardTestCase from this module.
 
 Standard library only; no live git required (current_branch is patched).
 Builds throwaway run-state directories with tempfile and drives evaluate()
@@ -29,7 +34,8 @@ class GuardTestCase(unittest.TestCase):
         self.addCleanup(branch.stop)
 
     def make_run(self, run_id="20260707-demo", active=True, publish_choice=False,
-                 merge_mode="single-branch", base_ref="csv-export"):
+                 merge_mode="single-branch", base_ref="csv-export",
+                 slices=(), controller_session=None, paused=False):
         run_dir = os.path.join(self.root, "docs", "spec-loop", run_id)
         os.makedirs(run_dir, exist_ok=True)
         if active:
@@ -38,8 +44,16 @@ class GuardTestCase(unittest.TestCase):
         if publish_choice:
             with open(os.path.join(run_dir, ".publish-choice"), "w") as fh:
                 fh.write("push-feature-branch")
+        if controller_session:
+            with open(os.path.join(run_dir, ".controller-session"), "w") as fh:
+                fh.write(controller_session + "\n")
+        if paused:
+            with open(os.path.join(run_dir, ".paused"), "w") as fh:
+                fh.write("human asked to hold\n")
         with open(os.path.join(run_dir, "dag.json"), "w") as fh:
-            json.dump({"base_ref": base_ref, "merge_mode": merge_mode, "slices": []}, fh)
+            json.dump(
+                {"base_ref": base_ref, "merge_mode": merge_mode, "slices": list(slices)}, fh
+            )
         return run_dir
 
     @staticmethod
@@ -49,6 +63,22 @@ class GuardTestCase(unittest.TestCase):
     @staticmethod
     def write(file_path):
         return {"tool_name": "Write", "tool_input": {"file_path": file_path}, "cwd": "/tmp"}
+
+    @staticmethod
+    def stop(session_id="sess-ctl", stop_hook_active=False, cwd="/tmp/wt"):
+        """A realistic Stop payload: the probed key set, and NO tool_name."""
+        return {
+            "hook_event_name": "Stop",
+            "session_id": session_id,
+            "stop_hook_active": stop_hook_active,
+            "cwd": cwd,
+            "transcript_path": "/tmp/transcript.jsonl",
+            "last_assistant_message": "Wave 1 merged. Here is a status report.",
+            "permission_mode": "acceptEdits",
+            "prompt_id": "p-1",
+            "background_tasks": [],
+            "session_crons": [],
+        }
 
 
 class NoActiveRunTests(GuardTestCase):

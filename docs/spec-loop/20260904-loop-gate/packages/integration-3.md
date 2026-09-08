@@ -1,0 +1,2079 @@
+# Review package: 4b91d69393a02e233a000130f6baf7def7713c95..HEAD  (context: -U5)
+
+## Commits
+c83dbfe spec-loop(20260904-loop-gate): merge slice s8 — correct the CHANGELOG probe register and pin it against platform-probes.md
+fa9257d test(doctrine): state the numbered-list cross-check's file-wide scope
+0bf35db test(doctrine): hoist the count-helper message to keep nesting at depth 2
+9251144 test(doctrine): pin CHANGELOG open-probe-question count against the register
+718edbb docs(changelog): correct open-probe-question list to match platform-probes
+90ef235 spec-loop(20260904-loop-gate): merge slice s7 — Phase-5 remediation: true root-resolution claim, complete quality-gate description, per-turn reset promoted to CONFIRMED, rot-proof citations, probes doctrine pin
+6f1b874 docs(spec-loop): scope the per-turn reset bullet to its evidence
+c5cbd5a docs(spec-loop): README names both guard branches by symbol
+f43b45c docs(spec-loop): cite the guard root precedence by symbol, not line
+5c5d9be docs(spec-loop): promote stop_hook_active per-turn reset to CONFIRMED
+df124fa test(spec-loop): pin platform-probes register vocabulary
+e3359be docs(spec-loop): README quality-gate block names both guard branches
+a88eb55 docs(spec-loop): correct probe root-signal claim and reflow block
+5c4bb1e spec-loop(20260904-loop-gate): merge slice s4 — probe results, README guard description, run-state marker doctrine, changelog
+dae2404 docs(changelog): extend the Unreleased entry with the Stop gate, marker hygiene and the docs corrections
+36cd4ce docs(run-state): truthful marker heading, repo-scoped enforcement, paused residual risk
+9801b2e docs(readme): describe the guard's real registrations and the loop-boundary block
+890aee4 docs(probes): record the 2026-09-04 hook probe results and the interactive follow-ups
+b4141b6 spec-loop(20260904-loop-gate): merge slice s6 — per-run fail-open for an undecodable controller marker, and scope the wave-raised exemption to the append half
+3f10b96 refactor(guard): rewrap module docstring to bring class_lines under the 300 floor
+5d4a8e6 docs(spec-loop): scope the wave-raised exemption to the append half
+ed753a7 fix(guard): fail open per run on an undecodable controller marker
+46feefc spec-loop(20260904-loop-gate): merge slice s5 — remediate the escalation-ordering paragraph: mandate the answered write-back, de-fuse the exclusion
+3c5322a spec-loop(20260904-loop-gate): merge slice s2 — the Stop gate: block a turn end while the controller session has runnable slices
+bbd7e05 refactor(guard): name the merged readiness read _blocking_slices
+9a05762 fix(guard): bring spec_loop_guard.py back under the class_lines ceiling
+d2b1fbb fix(guard): behavior-preserving refactors for quality-gate nesting/class-lines findings
+e18cd3d feat(hooks): register the Stop event for spec_loop_guard
+470d60b feat(guard): emit the Stop block as top-level decision/reason
+6c63bb9 test(guard): per-run fail-open, .paused and stop_hook_active coverage for the Stop gate
+a3a9570 feat(guard): Stop loop-boundary gate core (check_stop + event dispatch)
+65ff49a test(spec-loop): assert the uncommitted-markers sentence appears exactly once
+8cc5fd5 docs(spec-loop): state the escalation-answered write-back and de-fuse the wave-raised exclusion
+080b265 spec-loop(20260904-loop-gate): merge slice s1 — Phase-2 step 9 Close, wave-boundary invariant, escalation-opened ordering, controller-session and paused lifecycle
+159dca7 fix(spec-loop): reformat continuation lines in test_doctrine_loop_boundary.py
+d0333b8 docs(changelog): loop-boundary prose and its doctrine pin
+049d21b docs(controller): session marker at Phase 1 and Resume, .paused lifecycle
+3fea0d7 docs(controller): record escalation-opened before asking the human
+f3fcf04 docs(controller): Phase 2 step 9 closes the wave loop in the same turn
+f4ba3d4 docs(escalation-gate): a runnable wave boundary is not a stopping point
+c83b8fb spec-loop(20260904-loop-gate): merge slice s3 — marker hygiene: untrack run-state markers, gitignore all five
+8dc2887 fix(tests): reduce nesting depth in marker-hygiene unanchored test
+d0e0102 docs(run-state): state marker hygiene the repo now enforces
+4b0e9a7 fix(hygiene): untrack run-state markers and ignore the marker names
+
+## Files changed
+ .gitignore                                         |  12 +
+ CHANGELOG.md                                       |  62 +++++
+ docs/spec-loop/20260825-scope-ceiling/.done        |   0
+ .../20260825-scope-ceiling/.publish-choice         |   1 -
+ docs/spec-loop/20260826-crash-classification/.done |   0
+ .../20260826-crash-classification/.publish-choice  |   1 -
+ docs/spec-loop/20260827-deferral-sweep/.done       |   0
+ .../20260827-deferral-sweep/.publish-choice        |   1 -
+ docs/spec-loop/20260828-refactor-escalation/.done  |   0
+ .../20260828-refactor-escalation/.publish-choice   |  13 -
+ plugins/spec-loop/README.md                        |  21 +-
+ plugins/spec-loop/commands/spec-loop.md            |  66 ++++-
+ plugins/spec-loop/hooks/hooks.json                 |  11 +
+ plugins/spec-loop/references/platform-probes.md    |  60 +++++
+ plugins/spec-loop/references/run-state-v2.md       |  43 ++-
+ plugins/spec-loop/scripts/spec_loop_guard.py       | 189 ++++++++++----
+ .../scripts/test_doctrine_loop_boundary.py         | 272 +++++++++++++++++++
+ .../scripts/test_doctrine_marker_hygiene.py        | 159 ++++++++++++
+ .../scripts/test_doctrine_platform_probes.py       | 278 ++++++++++++++++++++
+ plugins/spec-loop/scripts/test_spec_loop_guard.py  |  36 ++-
+ .../spec-loop/scripts/test_spec_loop_guard_stop.py | 287 +++++++++++++++++++++
+ plugins/spec-loop/skills/escalation-gate/SKILL.md  |   9 +-
+ 22 files changed, 1429 insertions(+), 92 deletions(-)
+
+## Hunk index (HEAD-side changed line ranges)
+```hunk-index
+{
+".gitignore": [
+[
+7,
+18
+]
+],
+"CHANGELOG.md": [
+[
+10,
+71
+]
+],
+"plugins/spec-loop/README.md": [
+[
+114,
+118
+],
+[
+140,
+149
+]
+],
+"plugins/spec-loop/commands/spec-loop.md": [
+[
+21,
+23
+],
+[
+74,
+77
+],
+[
+192,
+209
+],
+[
+228,
+235
+],
+[
+246,
+266
+]
+],
+"plugins/spec-loop/hooks/hooks.json": [
+[
+24,
+34
+]
+],
+"plugins/spec-loop/references/platform-probes.md": [
+[
+33,
+92
+]
+],
+"plugins/spec-loop/references/run-state-v2.md": [
+[
+270,
+270
+],
+[
+272,
+273
+],
+[
+278,
+302
+],
+[
+305,
+315
+]
+],
+"plugins/spec-loop/scripts/spec_loop_guard.py": [
+[
+2,
+37
+],
+[
+135,
+179
+],
+[
+256,
+294
+],
+[
+302,
+308
+],
+[
+324,
+335
+]
+],
+"plugins/spec-loop/scripts/test_doctrine_loop_boundary.py": [
+[
+1,
+272
+]
+],
+"plugins/spec-loop/scripts/test_doctrine_marker_hygiene.py": [
+[
+1,
+159
+]
+],
+"plugins/spec-loop/scripts/test_doctrine_platform_probes.py": [
+[
+1,
+278
+]
+],
+"plugins/spec-loop/scripts/test_spec_loop_guard.py": [
+[
+1,
+6
+],
+[
+37,
+38
+],
+[
+47,
+52
+],
+[
+54,
+56
+],
+[
+67,
+82
+]
+],
+"plugins/spec-loop/scripts/test_spec_loop_guard_stop.py": [
+[
+1,
+287
+]
+],
+"plugins/spec-loop/skills/escalation-gate/SKILL.md": [
+[
+128,
+128
+],
+[
+143,
+149
+]
+]
+}
+```
+
+## Diff
+diff --git a/.gitignore b/.gitignore
+index 9320d7f..900817b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -2,5 +2,17 @@
+ .worktrees/
+ 
+ # Python cache (release/validation scripts)
+ __pycache__/
+ *.pyc
++
++# spec-loop run-state markers (never commit)
++# The guard hooks fire on these files' PRESENCE. A committed marker arrives on
++# every clone and every fresh worktree, so a committed .active would deny
++# pushes and main-branch commits in sessions that have no run at all. They are
++# per-checkout, per-session state, like .worktrees/. Bare names on purpose:
++# they must be ignored at any depth, under any run directory.
++.active
++.controller-session
++.done
++.paused
++.publish-choice
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 2e88e18..44efbc1 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -5,10 +5,72 @@ All notable changes to the spec-loop plugin are documented here. The format is
+ [SemVer](https://semver.org/). History before 2.0.0 lives in the
+ [v1 repository](https://github.com/z2297/spec-loop).
+ 
+ ## [Unreleased]
+ 
++### Added
++- **The controller's Phase-2 loop now closes itself in prose: a wave boundary with slices
++  still runnable is a dispatch point, not a place to stop and report.** `commands/spec-loop.md`
++  gains a Phase 2 step 9 **Close** that re-runs `dag.py next-wave` in the same turn and routes
++  the three outcomes — runnable back to step 1, `done` to Phase 5, `deadlock` to an escalation
++  — judging runnability on a non-empty `slice_ids` rather than on a missing `done` key, which a
++  deadlock report does not carry. The Invariants line states the same rule, an
++  `escalation-opened` event is now mandatory before any controller-originated
++  `AskUserQuestion`, Phase 1 and Resume write `.controller-session` beside `.active`, and the
++  `.paused` lifecycle (human asks, controller writes, controller clears, `--resume` does not)
++  is written down with its stale-marker remediation. `skills/escalation-gate/SKILL.md` adds a
++  fourth "Not triggers" entry for the RUNNABLE boundary only — a reported deadlock stays a
++  genuine escalation — and `scripts/test_doctrine_loop_boundary.py` pins every one of those
++  sentences, counting the list's bullets on disk rather than trusting the number in the prose.
++  This is prose and a pin; the enforcing gate is separate.
++- **The loop-boundary gate itself: a `Stop` hook that blocks the controller's turn from ending
++  while its run still has runnable slices and no open escalation — the run's one proven
++  LEVER.** `scripts/spec_loop_guard.py` gains `check_stop()` plus event dispatch in
++  `evaluate()`/`main()`, and `hooks/hooks.json` registers the `Stop` event; a `Stop` block is a
++  different wire shape from a `PreToolUse` denial (top-level `decision`/`reason`, not a
++  `permissionDecision`). The gate is narrowed to the session recorded in
++  `.controller-session`, skipped when `stop_hook_active` is true — probed on Claude Code
++  2.1.260 and CONFIRMED within a single turn to be `false` on the turn-ending fire and `true`
++  on the block-caused continuation's fire, which makes the gate one push per stall rather than
++  a fence — relaxed by a `.paused` marker that relaxes THIS gate alone, and fails open PER RUN
++  (not globally) when a `.controller-session` marker cannot be decoded. The probe evidence and
++  its limits are recorded in `references/platform-probes.md`, together with the three questions
++  that remain UNTESTED there: whether `AskUserQuestion` emits `PreToolUse` at all, whether
++  Ctrl+C routes through `Stop`, and whether `Stop` fires for `Task` subagents. The per-turn
++  reset is no longer one of them: `stop_hook_active` returning to `false` at the start of every
++  NEW user turn is CONFIRMED — established by the third `Stop` fire of a two-turn probe session,
++  where the flag read `false` again at the end of turn 2 — so the gate re-arms each turn instead
++  of being one-shot per session. A PreToolUse gate on `AskUserQuestion` was
++  considered and DROPPED by human decision; no part of it was built and nothing in this release
++  guards that path.
++
++### Changed
++- **Run-state markers are now untracked, ignored and pinned, and the contract that describes
++  them says what it actually enforces and where.** Eight previously committed markers across
++  four runs are removed from the index (index-only, leaving the files on disk for any run still
++  reading them), `.gitignore` gains one bare unanchored entry per marker name for all five
++  (`.active`, `.publish-choice`, `.done`, `.paused`, `.controller-session`), and
++  `scripts/test_doctrine_marker_hygiene.py` fails if one re-enters the index.
++  `references/run-state-v2.md` documents the two markers v2 adds, scopes that enforcement claim
++  to this repository — an installing repo has neither the ignore entries nor the pin — declines
++  to claim the `.controller-session` narrowing separates a `Task` subagent from its parent (it
++  inherits the same session id), and records as an ACCEPTED residual risk that `.paused`
++  disables the loop-boundary gate with zero observable trace, since a silent hook cannot
++  announce that it is paused. `README.md` stops describing `spec_loop_guard.py` as a
++  PreToolUse-only hook and adds the loop-boundary block to its exhaustive blocked-actions list.
++- **The escalation-ordering rule now states both halves**, in `commands/spec-loop.md`: the
++  mandatory `escalation-opened` event before any controller-originated `AskUserQuestion`, and
++  the write-back once the human answers. The wave-raised exclusion is scoped to the append half
++  only, so a wave-raised escalation still gets its answer recorded.
++
++### Known limitation
++- **Nothing this release added to `hooks/hooks.json` protected the run that produced it.** The
++  installed plugin was 2.2.0 while this repository is 2.3.0, so the `Stop` registration shipped
++  here was never loaded during the run, and no test in the suite would have failed if the gate
++  had been inert — the suite pins the script's behaviour, not the running session's hooks. The
++  gate's effect on a live controller session is therefore unobserved as of this entry.
++
+ ## [2.3.0] - 2026-08-29
+ ### Added
+ - **The wave now halts a slice at PLAN time when its plan declares a rewrite of existing code
+   larger than the run's configured ceiling — the run's one new LEVER.**
+   `slice-wave.workflow.js` gains an optional `refactor_radius` block on `PLAN_RESULT` that the
+diff --git a/docs/spec-loop/20260825-scope-ceiling/.done b/docs/spec-loop/20260825-scope-ceiling/.done
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/docs/spec-loop/20260825-scope-ceiling/.publish-choice b/docs/spec-loop/20260825-scope-ceiling/.publish-choice
+deleted file mode 100644
+index 8976109..0000000
+--- a/docs/spec-loop/20260825-scope-ceiling/.publish-choice
++++ /dev/null
+@@ -1 +0,0 @@
+-push-feature-branch-and-open-pr
+diff --git a/docs/spec-loop/20260826-crash-classification/.done b/docs/spec-loop/20260826-crash-classification/.done
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/docs/spec-loop/20260826-crash-classification/.publish-choice b/docs/spec-loop/20260826-crash-classification/.publish-choice
+deleted file mode 100644
+index 8976109..0000000
+--- a/docs/spec-loop/20260826-crash-classification/.publish-choice
++++ /dev/null
+@@ -1 +0,0 @@
+-push-feature-branch-and-open-pr
+diff --git a/docs/spec-loop/20260827-deferral-sweep/.done b/docs/spec-loop/20260827-deferral-sweep/.done
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/docs/spec-loop/20260827-deferral-sweep/.publish-choice b/docs/spec-loop/20260827-deferral-sweep/.publish-choice
+deleted file mode 100644
+index c090cc4..0000000
+--- a/docs/spec-loop/20260827-deferral-sweep/.publish-choice
++++ /dev/null
+@@ -1 +0,0 @@
+-merge-onto-main-and-cut-patch-release
+diff --git a/docs/spec-loop/20260828-refactor-escalation/.done b/docs/spec-loop/20260828-refactor-escalation/.done
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/docs/spec-loop/20260828-refactor-escalation/.publish-choice b/docs/spec-loop/20260828-refactor-escalation/.publish-choice
+deleted file mode 100644
+index d086a9c..0000000
+--- a/docs/spec-loop/20260828-refactor-escalation/.publish-choice
++++ /dev/null
+@@ -1,13 +0,0 @@
+-choice: merge-main-and-push
+-decided: 2026-08-29
+-run_id: 20260828-refactor-escalation
+-integration_branch: spec-loop-run/20260828-refactor-escalation
+-base_branch: main
+-head: b2e65a2
+-detail: >
+-  Human chose to merge the integration branch onto local main with --no-ff and
+-  push main to origin. Recorded BEFORE any publish action was taken.
+-note: >
+-  origin/main was 117 commits behind local main before this run, from prior runs
+-  that were never pushed. Pushing main therefore publishes those 117 commits plus
+-  this run's 45.
+diff --git a/plugins/spec-loop/README.md b/plugins/spec-loop/README.md
+index cabfaf6..e5a5443 100644
+--- a/plugins/spec-loop/README.md
++++ b/plugins/spec-loop/README.md
+@@ -109,12 +109,15 @@ arrive as ONE question round per wave boundary, recommended default first.
+ 
+ ## Quality gate
+ 
+ `scripts/quality_gate.py` measures the slice diff (cyclomatic/cognitive
+ complexity, method/class length, parameters, nesting, CRAP with coverage) —
+-deterministic, script-first, agents cannot weaken it: a PreToolUse guard
+-denies writes to the config while a run is active. Global config
++deterministic, script-first, agents cannot weaken it: while a run is
++active the guard hook denies both a `Write`/`Edit`/`MultiEdit` targeting
++the config (`check_write` in `spec_loop_guard.py`) and a shell-side write
++to it — redirect, `tee`, `mv`, `cp` or `sed -i` (the
++`QUALITY_GATE_WRITE` pattern, enforced in `check_bash`). Global config
+ `~/.claude/spec-loop-2/quality-gate.json` (first run offers presets or import
+ from v1); a committed per-repo overlay `.spec-loop/quality-gate.json`
+ deep-merges over it and hosts `tier3_surfaces`. Gate violations join review
+ findings in the same fix loop as behavior-preserving refactors.
+ 
+@@ -132,14 +135,20 @@ subfolder.
+ 
+ Everything durable lives under `docs/spec-loop/<run-id>/` —
+ `dag.json` (structure + recorded waves), per-slice sidecars, `events.jsonl`
+ (the machine channel `run_metrics.py` reads), rendered prose logs, and the
+ committed `runbook.md`. Contract: `references/run-state-v2.md`. While a run's
+-`.active` marker exists, `scripts/spec_loop_guard.py` (PreToolUse hook)
+-blocks pushes, broad staging (`git add -A`), commits/merges on
+-`main`/`master`, and quality-gate config edits. Markers, not vibes: the run
+-ends when the human's publish choice is recorded.
++`.active` marker exists, `scripts/spec_loop_guard.py` — registered on
++`PreToolUse` for `Bash` and `Write|Edit|MultiEdit`, and on `Stop` — blocks,
++in ANY session, pushes, broad staging (`git add -A`), commits/merges on
++`main`/`master` and quality-gate config edits. One further block applies
++only in the session recorded in `.controller-session`: that session may not
++end its turn at a wave boundary while the run still has runnable slices and
++no open escalation. That loop-boundary block is additionally skipped when
++`stop_hook_active` is true, so it pushes once per stall rather than fencing,
++and is relaxed — alone among the blocks — by a `.paused` marker. Markers,
++not vibes: the run ends when the human's publish choice is recorded.
+ Work the council judged out of scope and asked not to be built is logged as its own
+ `deferred` event and rendered into `decisions-log.md`; a malformed scope record fails the
+ sidecar closed rather than reading as clean.
+ 
+ ## Components
+diff --git a/plugins/spec-loop/commands/spec-loop.md b/plugins/spec-loop/commands/spec-loop.md
+index 0ab88ce..9fa45ab 100644
+--- a/plugins/spec-loop/commands/spec-loop.md
++++ b/plugins/spec-loop/commands/spec-loop.md
+@@ -16,11 +16,13 @@ Single-home contracts you follow (read on demand, never restate): run-state and
+ 
+ Invariants (non-negotiable): single-branch integration — every slice merges into ONE local
+ integration branch, never `main`/`master`; the loop never pushes before the human's publish
+ choice (`--per-slice-pr` is the sole exception); merges are yours alone, serial, `--no-ff`;
+ timestamps are yours alone (`date -u +%Y-%m-%dT%H:%M:%SZ`) — workflows have no clock; every
+-artifact you hand an agent is a file path, never pasted content.
++artifact you hand an agent is a file path, never pasted content; a wave boundary is a
++dispatch point, not a reporting boundary — while any slice is runnable, Phase 2 step 9
++re-dispatches in the SAME turn.
+ 
+ ## Phase 0 — Intake
+ 
+ 1. `--resume <run-id>` short-circuits to **Resume** below (wins over every other flag).
+ 2. Parse flags. Defaults: `--max-parallel 5`, `--risk-floor 1`. `--from-plan` reads the given
+@@ -67,10 +69,14 @@ artifact you hand an agent is a file path, never pasted content.
+ 4. Create `docs/spec-loop/<run-id>/` with `.active`, `request.md`, `conventions.md`,
+    `dag.json` (schema per run-state-v2.md, `mode: "workflow"`, plus `shared_constraints` and
+    the optional run-level `scope_ceiling` from Phase 0), and empty `events.jsonl`;
+    append a `run-created` event via `run_state.py append-event`. Ensure `.worktrees/` is
+    gitignored. Validate: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dag.py" validate --run-dir <dir>`.
++   Write `.controller-session` beside `.active`, containing your session id: the
++   loop-boundary gate reads it and tells your turns from any other session's on this machine.
++   Neither marker is ever committed — `.gitignore` covers both, bare and unanchored, and
++   `test_doctrine_marker_hygiene.py` fails if either re-enters the index.
+ 5. Knowledge graph (if enabled): one `knowledge_graph.py batch` seeding the system hub + run
+    MOC (`ensure_base: true`).
+ 
+ ## Phase 2 — Wave loop
+ 
+@@ -181,10 +187,28 @@ deadlock is itself an escalation):
+    result arrives for a slice you did not include, discard it without persisting. (A journal
+    lost to a session restart just means the remaining slices re-run live — sidecars bound
+    the loss to one wave.)
+ 8. Knowledge graph (if enabled): one `batch` call upserting the wave's `decision` nodes and
+    touched `component` hubs, extracted from the wave's events.
++9. **Close**: re-run `dag.py next-wave` and act on it in THIS turn —
++   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dag.py" next-wave --run-dir <dir>`. Non-empty
++   `slice_ids` → return to step 1 immediately, in the same turn, with no status report and no
++   question: a wave boundary is a dispatch point, not a reporting boundary, and what the wave
++   just did is reported at the runbook. `done: true` → Phase 5. `deadlock: true` → escalate
++   with the `blocked` list; that is a real escalation, never a stall to sit on. Judge
++   runnability on `slice_ids` being non-empty and never on the absence of a `done` key — a
++   deadlock report carries no `done` key at all, so reading a missing `done` as "keep going"
++   would swallow both the deadlock question and the Phase 5 publish prompt. If you do end the
++   turn here anyway, say why in your next message so the transcript carries the reason.
++   `.paused` is the one deliberate escape from the loop-boundary gate: the HUMAN asks for it
++   and YOU write `docs/spec-loop/<run-id>/.paused`. It relaxes the loop-boundary gate alone —
++   every other `.active` restriction (pushes before the publish choice, broad staging,
++   default-branch commits and merges, gate-config writes) still applies. You delete it yourself
++   the moment the human says resume; `--resume` does NOT clear it, so a resumed run is unpaused
++   only once you remove the file. Never write it to get past a gate of your own accord. Like a
++   stale `.active`, a stale `.paused` is remediated by resuming the run or clearing the marker,
++   in that order — and it is never committed.
+ 
+ ## Phase 5 — Integration gate & finish
+ 
+ Follow `references/phase-5-integration.md`: full suite on the integration branch → ONE
+ cross-slice `pr-reviewer` (mode `integration`, session model, high effort) over
+@@ -199,26 +223,44 @@ a fragmented run dir is an escalation, not a `.done`. Your final output is the r
+ Executive Readout, verbatim.
+ 
+ ## Resume
+ 
+ `--resume <run-id>`: read `dag.json` (recover branch, mode, wave history), recreate
+-`.active`, checkout the integration branch (clean-tree guard), `worktrees.py prepare
+---resume` for the incomplete wave's slices, drain EVERY answered escalation of the run into
+-the `answers` map (every round, already-dispatched ones included, per step 7's
+-cumulative-map invariant), and re-enter the wave loop at the first incomplete wave —
+-same-session
+-with `resumeFromRunId`, fresh invocation otherwise. All slices terminal → straight to
+-Phase 5 (regenerating `runbook.md` is safe).
++`.active`, rewrite `.controller-session` with your NEW session id (the previous
++session's id is stale the moment this one starts), checkout the integration branch
++(clean-tree guard), `worktrees.py prepare --resume` for the incomplete wave's slices, drain
++EVERY answered escalation of the run into the `answers` map (every round,
++already-dispatched ones included, per step 7's cumulative-map invariant), and re-enter the
++wave loop at the first incomplete wave — same-session with `resumeFromRunId`, fresh
++invocation otherwise. All slices terminal → straight to Phase 5 (regenerating `runbook.md`
++is safe).
+ 
+ ## Escalation discipline
+ 
+ You are the only layer that can ask the human. Never ask mid-wave, never one-at-a-time;
+ apply the `escalation-gate` six-trigger test and precedent check to every candidate
+ question, including your own. Announce every question you do ask: immediately before ANY
+ `AskUserQuestion` (escalation rounds, the publish prompt), fire a best-effort desktop alert —
+ `printf '\a'; command -v osascript >/dev/null 2>&1 && osascript -e 'display notification
+ "spec-loop run needs a decision" with title "spec-loop"' || true` — so an unattended run is
+ never silently parked (a finished run once waited 7.6 hours at the publish prompt). An alert
+-failure is ignored, never a reason to delay the question. Every autonomous decision = one `decision` event with
+-rationale and reversibility. When a workflow result surprises you (empty, malformed,
+-contradicting its own events), read the workflow journal before re-dispatching — never
+-re-run work you merely failed to look at.
++failure is ignored, never a reason to delay the question.
++
++Before ANY controller-originated `AskUserQuestion` — a reported deadlock, a decomposition
++ambiguity, a config first-run choice, the publish prompt, any question you raise yourself
++rather than a wave — append the record FIRST, then ask:
++`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_state.py" append-event --run-dir <dir> --ts <now>
++--scope run --type escalation-opened --payload <EscalationRecord JSON>`. The order is the
++point: `open-escalations` reads events.jsonl, so a question asked before its record exists is
++invisible to a resume and to anything else reading run state, and the `escalation-answered`
++event you write back pairs by an `id` that was never opened. Closing the record is the second
++half of the same rule: the moment the human answers, append the matching
++`escalation-answered` event keyed by the same `id` verbatim, before you act on the answer.
++`open-escalations` holds an opened id with no answer event open forever, so an unclosed
++record is re-gathered by Phase 2 step 7, re-asked at the next wave boundary, and surfaced
++by the dashboard until it is closed. The append half alone does not apply to wave-raised
++escalations: records a wave raised are already appended by `persist-slice`, so never
++re-append those — the write-back half above still applies to them in full.
++
++Every autonomous decision = one `decision` event with rationale and reversibility. When a
++workflow result surprises you (empty, malformed, contradicting its own events), read the
++workflow journal before re-dispatching — never re-run work you merely failed to look at.
+diff --git a/plugins/spec-loop/hooks/hooks.json b/plugins/spec-loop/hooks/hooks.json
+index de5acd4..aa58d09 100644
+--- a/plugins/spec-loop/hooks/hooks.json
++++ b/plugins/spec-loop/hooks/hooks.json
+@@ -19,8 +19,19 @@
+             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/spec_loop_guard.py\"",
+             "timeout": 5
+           }
+         ]
+       }
++    ],
++    "Stop": [
++      {
++        "hooks": [
++          {
++            "type": "command",
++            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/spec_loop_guard.py\"",
++            "timeout": 5
++          }
++        ]
++      }
+     ]
+   }
+ }
+diff --git a/plugins/spec-loop/references/platform-probes.md b/plugins/spec-loop/references/platform-probes.md
+index 20bfc40..5244dea 100644
+--- a/plugins/spec-loop/references/platform-probes.md
++++ b/plugins/spec-loop/references/platform-probes.md
+@@ -28,5 +28,65 @@ Two more facts verified 2026-07-30 by the E2E dry run:
+   cheap (0 agents) but total.
+ - **The integration branch name must not prefix the slice-branch namespace**:
+   git rejects creating `spec-loop/<run-id>/<slice-id>` when a branch
+   `spec-loop/<run-id>` exists (ref-directory collision). Hence the
+   `spec-loop-run/<run-id>` default.
++
++Four more facts from the 2026-09-04 hook probes, on Claude Code 2.1.260
++(darwin arm64); the raw payloads are in
++`docs/spec-loop/20260904-loop-gate/probe-results.md`:
++
++- **`PreToolUse` fires in a headless (`claude -p`) session and a `.*`
++  matcher matches (control, PASS).** Established before either real probe
++  was trusted, so a silent non-firing could not be mistaken for a negative
++  result. The payload carries **no** `project_dir` key. That does not make
++  `cwd` the guard's root signal: `spec_loop_guard.py`'s `evaluate()`
++  resolves the project root as `CLAUDE_PROJECT_DIR` from the environment,
++  then the payload's `cwd`, then `os.getcwd()` — so the environment
++  variable wins and the payload's `cwd` is only the first fallback. The
++  `Stop` payload likewise carries no
++  `project_dir`.
++- **A sync `Stop` hook honours a top-level `{"decision":"block","reason":…}`
++  (CONFIRMED).** Evidence, not inference: the harness model was asked to
++  reply with one word, the hook blocked its turn end with a `reason`
++  instructing a different token, and the session output was that token — so
++  the reason text reached the model and the model continued its turn
++  instead of ending it. This is the loop-boundary gate's one proven lever.
++- **Within a single turn, `stop_hook_active` is `false` on the fire that
++  ends the turn and `true` on the fire that ends the block-caused
++  continuation, and it resets to `false` again at the start of every NEW
++  user turn (CONFIRMED).** Both single-turn fires were logged in one turn of
++  probe B; the per-turn reset is established by the THIRD fire of a two-turn
++  session (probe B2), where the flag reads `false` at the end of turn 1,
++  `true` on the block-caused continuation, and `false` AGAIN at the end of
++  turn 2 — reproduced byte-identically on re-run. That third fire closes both
++  readings probe B left open, in opposite directions. Not a fence: a gate
++  that skips while the flag is true always yields on the immediately
++  following fire, so it pushes ONCE PER STALL rather than blocking
++  indefinitely. Not a one-shot per session: the gate re-arms on every user
++  turn, so it stands at the first `Stop` attempt of every turn — but within
++  that same turn the fire that ends a block-caused continuation carries the
++  flag true and is skipped, so a turn that drives several wave boundaries is
++  only guarded at its first one. Honouring the flag is therefore required,
++  not optional.
++- **Whether `AskUserQuestion` emits `PreToolUse` at all is UNRESOLVED.**
++  This is an absence of opportunity, not a negative result: the tool is not
++  exposed in print mode — the headless model reported it is neither in its
++  tool list nor fetchable via ToolSearch — so the `AskUserQuestion` matcher
++  never had a call to match. Nothing here licenses the claim that the event
++  does or does not fire.
++
++Three questions need an INTERACTIVE session to settle. None is answered
++today, and no shipped behaviour may be described as depending on an answer:
++
++1. Does `AskUserQuestion` emit `PreToolUse`? Register a logging-only
++   `PreToolUse` hook with matcher `.*` in a settings file, start an
++   interactive session, and trigger one `AskUserQuestion` call **and one
++   `Bash` call**. The `Bash` call is the control and is not optional:
++   without it, a log missing `AskUserQuestion` cannot be told apart from a
++   hook that never loaded.
++2. Does Ctrl+C route through `Stop`? Same logging hook; interrupt a turn
++   and check whether a `Stop` payload is written. Untested.
++3. Does `Stop` fire at the end of a `Task` subagent's turn? Same logging
++   hook; run a Task subagent and look for a `Stop` payload carrying the
++   subagent's turn. Untested — and `SubagentStop` being a distinct,
++   unregistered event is not evidence either way.
+diff --git a/plugins/spec-loop/references/run-state-v2.md b/plugins/spec-loop/references/run-state-v2.md
+index 10fcc6d..cc69f9f 100644
+--- a/plugins/spec-loop/references/run-state-v2.md
++++ b/plugins/spec-loop/references/run-state-v2.md
+@@ -265,21 +265,56 @@ no pinned machine grammar in v2.
+ | `review-<slice-id>-round<N>.md` | pr-reviewer agent | findings prose (the structured findings live in the workflow return) |
+ | `slice-<id>-report.md` | controller | short human summary rendered from the sidecar |
+ | `runbook.md` | runbook-writer agent | end-of-run synthesis, committed |
+ | `metrics.json` | `run_metrics.py --write` | atomic write |
+ 
+-## Markers — guard-hook contract (unchanged from v1)
++## Markers — guard-hook contract (v1's three, plus two added in v2)
+ 
+-- `.active` — created at Phase 1, recreated on resume, never committed. While
+-  present, `spec_loop_guard.py` blocks pushes, broad staging, main-branch
++- `.active` — created at Phase 1, recreated on resume. While present,
++  `spec_loop_guard.py` blocks pushes, broad staging, main-branch
+   commits/merges, and quality-gate config writes.
+ - `.publish-choice` — written the instant the human answers the publish
+   prompt, before the action is performed.
+ - `.done` — `.active` renamed at run end.
++- `.paused` — present only while the human has deliberately suspended the
++  loop-boundary gate. It relaxes that one gate and nothing else; every
++  `.active` restriction above still applies.
++- `.controller-session` — identifies the controller's own session so the
++  loop-boundary gate applies to it and not to other sessions. Per-session
++  state, meaningful only inside the machine that wrote it. It discriminates
++  across SESSIONS and nothing finer: a `Task` subagent inherits its parent's
++  `CLAUDE_CODE_SESSION_ID`, so the marker would MATCH at a subagent's turn
++  end and the gate would tell an implementer to continue Phase 2 step 1.
++  Whether `Stop` fires at a subagent's turn end is untested, and
++  `SubagentStop` being a distinct, unregistered event is not evidence
++  either way. See `references/platform-probes.md`.
++
++None of these markers is ever committed. They are per-checkout state: the
++hooks fire on a marker's PRESENCE, so a committed `.active` would deny pushes
++and main-branch commits on every clone and in every fresh worktree, including
++sessions with no run at all. In the spec-loop repository itself, `.gitignore`
++enforces this with one bare, unanchored entry per marker name and
++`test_doctrine_marker_hygiene.py` fails if one re-enters the index. Neither
++exists in a repo the plugin is merely installed into: there, a `.paused` or
++`.active` is fully committable and nothing will stop it, so adding those five
++ignore entries is the installing repo's job. Markers did get committed twice
++in this repository before that pin existed; the correction is an
++index-only removal (`git rm --cached`) that leaves the files on disk for any
++run still reading them — never a history rewrite, and never a plain delete.
+ 
+ A hook denial means the run has not earned that operation yet — never delete
+-a marker to dodge one.
++a marker to dodge one. A stale marker is remediated by resuming the run or
++clearing the marker, in that order; that applies to a stale `.paused` exactly
++as it does to a stale `.active`.
++
++Accepted residual risk: `.paused` disables the loop-boundary gate with ZERO
++observable trace. A `Stop` hook can only block or stay silent, so a paused
++gate never fires and therefore never gets the chance to explain that it is
++paused. A `.paused` left behind after the reason for it passed is a
++permanent, silent loss of the loop-boundary gate for that run — detectable
++only by a human who remembers the marker exists. This is accepted, not
++mitigated.
+ 
+ ## Worktrees & branches
+ 
+ - Worktree: `.worktrees/spec-loop/<run-id>/<slice-id>` (gitignored).
+ - Branch: `spec-loop/<run-id>/<slice-id>`, cut from the current tip of
+diff --git a/plugins/spec-loop/scripts/spec_loop_guard.py b/plugins/spec-loop/scripts/spec_loop_guard.py
+index 5e28a8c..1bead42 100644
+--- a/plugins/spec-loop/scripts/spec_loop_guard.py
++++ b/plugins/spec-loop/scripts/spec_loop_guard.py
+@@ -1,44 +1,42 @@
+ #!/usr/bin/env python3
+-"""PreToolUse guard: deterministic enforcement of spec-loop's git invariants.
+-
+-Registered by the plugin's hooks/hooks.json for Bash and Write|Edit tool calls.
+-While a spec-loop run is active (a `docs/spec-loop/<run-id>/.active` marker
+-exists under the project root), this hook mechanically blocks the operations
+-the loop's prompts forbid:
+-
+-- `git push` before the human's publish choice (`.publish-choice` marker) —
+-  except in `per-slice-pr` merge mode, where slices legitimately push.
+-  Only pushes that plausibly belong to the run are denied: bare `git push`,
+-  pushes naming the run's integration branch (`base_ref`), or `spec-loop/`
+-  worktree branches.
+-- `git add -A` / `--all` / `git add .` — the runbook commit must stage only
+-  the run directory by explicit pathspec.
+-- `git commit` / `git merge` while sitting on `main`/`master` (or a compound
+-  command that checks out main and commits/merges/pushes) before the publish
+-  choice.
+-- Any write to the quality-gate config — the global file
+-  (`~/.claude/spec-loop-2/quality-gate.json`) or the per-repo overlay
+-  (`.spec-loop/quality-gate.json`) — thresholds must never be weakened mid-run.
+-
+-Design decisions:
+-- **Fail-open on internal errors.** This hook is defense-in-depth; the skill
+-  prompts remain the primary control. A crashed guard must not deny every
+-  tool call in the session, so any unexpected exception allows the action.
+-- Denials **fail closed** with a reason that names the compliant alternative
+-  and the stale-marker remediation (`/spec-loop --resume <run-id>` or clearing
+-  the `.active` marker).
+-- Subagent coverage: verified empirically (2026-07-07, instrumented hook +
+-  headless `claude -p` probe) that PreToolUse fires for Bash calls made inside
+-  Task subagents as well as the main session — so this guard also covers slice
+-  workers. The platform docs don't state this explicitly, so it is worth
+-  re-probing after major Claude Code upgrades; every controller-owned operation
+-  (integration merge, runbook commit, publish push) runs in the main session
+-  regardless.
+-
+-Standard library only. Reads the hook payload from stdin; a denial is exit 0
+-plus a permissionDecision JSON on stdout; an allow is exit 0 with no output.
++"""PreToolUse + Stop guard: deterministic enforcement of spec-loop's invariants.
++
++Registered by the plugin's hooks/hooks.json for Bash and Write|Edit tool calls and for the Stop
++event. While a spec-loop run is active (a `docs/spec-loop/<run-id>/.active` marker exists under
++the project root), this hook mechanically blocks the operations the loop's prompts forbid:
++
++- `git push` before the human's publish choice (`.publish-choice` marker), except in
++  `per-slice-pr` merge mode where slices legitimately push. Only pushes that plausibly belong to
++  the run are denied: bare pushes, pushes naming the run's integration branch (`base_ref`), or
++  `spec-loop/` branches.
++- `git add -A` / `--all` / `git add .` — the runbook commit must stage only the run directory,
++  by explicit pathspec.
++- `git commit` / `git merge` while sitting on `main`/`master` (or a compound command that checks
++  out main and commits/merges/pushes) before that choice.
++- Any write to the quality-gate config, global (`~/.claude/spec-loop-2/quality-gate.json`) or
++  per-repo overlay (`.spec-loop/quality-gate.json`): thresholds are never weakened mid-run.
++- Ending the turn (`Stop`) while an active, unpaused run still has runnable slices and no open
++  escalation — a wave boundary is a dispatch point, not a reporting boundary. Narrowed to the
++  controller session: the payload's `session_id` must appear in the run's `.controller-session`
++  marker, written in Phase 1. Skipped when `stop_hook_active` is true, and relaxed by a
++  `.paused` marker, which relaxes THIS gate only, never the rules above.
++
++Design decisions. **Fail-open on internal errors:** this hook is defense-in-depth and the skill
++prompts remain the primary control, so any unexpected exception allows the action rather than
++denying every tool call in the session. Denials **fail closed**, naming the compliant
++alternative and the stale-marker remediation (`/spec-loop --resume <run-id>` or clearing the
++`.active` marker). Subagent coverage is empirical (2026-07-07, instrumented hook + headless
++`claude -p` probe): PreToolUse fires for Bash calls made inside Task subagents as well as the
++main session, so this guard also covers slice workers. The platform docs don't state that, so it
++is worth re-probing after major Claude Code upgrades; every controller-owned operation
++(integration merge, runbook commit, publish push) runs in the main session regardless.
++
++Standard library only; the loop-boundary gate imports the sibling `dag` and `run_state` modules
++function-locally, so the tool hot paths pay nothing and an absent module fails open. Reads the
++payload from stdin; a PreToolUse denial is exit 0 plus a permissionDecision JSON, a Stop block
++is exit 0 plus a top-level decision/reason JSON, and an allow is exit 0 with no output.
+ """
+ 
+ from __future__ import annotations
+ 
+ import glob
+@@ -132,10 +130,55 @@ def _push_targets_run(command, run):
+         if run["base_ref"] and re.search(r"\b%s\b" % re.escape(run["base_ref"]), tail):
+             return True
+     return False
+ 
+ 
++def _controller_marker(run):
++    """Raw text of the run's `.controller-session` marker, or None.
++
++    Absent or blank => no recorded controller, so the gate declines to block
++    at all; check_stop matches it as a substring (a labelled marker works).
++    ValueError is caught alongside OSError — an undecodable marker raises
++    UnicodeDecodeError, which is a ValueError, not an OSError — so this run
++    fails open on its own, matching _blocking_slices and never escaping to
++    main()'s blanket handler, which would unlock the gate for every run.
++    """
++    marker_path = os.path.join(run["dir"], ".controller-session")
++    try:
++        with open(marker_path, "r", encoding="utf-8") as fh:
++            return fh.read().strip() or None
++    except (OSError, ValueError):
++        return None
++
++
++def _blocking_slices(run):
++    """Runnable slice ids that make ending the turn wrong, or None to ALLOW.
++
++    `dag.next_wave` is the ONE implementation of wave membership; a copy here
++    would fork the split-parent rule. An open escalation means the human owes
++    an answer, so the turn must be free to end: that too returns None. The
++    imports are function-local (the dashboard_server.py:74-89 idiom) so the
++    tool hot paths pay nothing, and every failure mode returns None per run,
++    so one broken run cannot unlock the gate for another.
++    """
++    try:
++        import dag as dag_module
++        import run_state as run_state_module
++    except ImportError:  # packaging drift, not a logic path
++        return None
++    try:
++        report = dag_module.next_wave(dag_module.load_dag(run["dir"]))
++        if run_state_module.open_escalations(run["dir"]):
++            return None
++    except (dag_module.DagError, OSError, ValueError, TypeError, AttributeError):
++        return None
++    # Runnability is non-empty slice_ids, NEVER a missing 'done' key: a
++    # deadlock report carries no 'done' at all.
++    slice_ids = report.get("slice_ids")
++    return slice_ids if isinstance(slice_ids, list) else None
++
++
+ def check_bash(command, cwd, runs):
+     """Return a deny reason for this Bash command, or None to allow."""
+     blocking = [r for r in runs if not r["publish_choice"]]
+ 
+     if GIT_ADD_BROAD.search(command):
+@@ -208,17 +251,63 @@ def check_write(file_path, runs, project_root):
+             % (run["run_id"], _remediation(run))
+         )
+     return None
+ 
+ 
++def _stop_block_reason(run, runnable):
++    """The block text for one runnable, unescalated, controller-owned run."""
++    rid = run["run_id"]
++    return (
++        "spec-loop run %s has %d runnable slice(s) (%s) and no open escalation: a wave "
++        "boundary is a dispatch point, not a reporting boundary. Continue Phase 2 step 1 "
++        "in THIS turn — compute the wave, prepare worktrees, dispatch — instead of "
++        "reporting status. If a wave you already dispatched is still in flight, wait for "
++        "its completion notification rather than re-dispatching: slice status stays "
++        "pending until collection, so these ids can include work already running. If "
++        "you are deliberately ending the turn anyway, say why in your next message so "
++        "the transcript carries the reason. If the human asked you to hold, write "
++        "docs/spec-loop/%s/.paused, which relaxes this gate alone. If you are not the "
++        "controller of this run, this gate is not aimed at you — only the session "
++        "recorded in docs/spec-loop/%s/.controller-session is blocked. %s"
++        % (rid, len(runnable), ", ".join(runnable), rid, rid, _remediation(run))
++    )
++
++
++def check_stop(session_id, runs):
++    """Return a reason to block this turn from ending, or None to allow.
++
++    Narrowed to the controller session, unlike check_bash/check_write: this
++    gate denies INACTION, so its false positives are not self-limiting.
++    `.paused` relaxes THIS gate only, never find_active_runs.
++    """
++    for run in runs:
++        if os.path.exists(os.path.join(run["dir"], ".paused")):
++            continue
++        marker = _controller_marker(run)
++        if not marker or not session_id or session_id not in marker:
++            continue
++        runnable = _blocking_slices(run)
++        if not runnable:
++            continue
++        return _stop_block_reason(run, runnable)
++    return None
++
++
+ def evaluate(payload):
+     """Return a deny reason for this hook payload, or None to allow."""
+     project_root = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or os.getcwd()
+     runs = find_active_runs(project_root)
+     if not runs:
+         return None
+ 
++    # Branch on the EVENT first: a Stop payload carries no tool_name key at
++    # all, so a tool-keyed branch would pass unit tests and never fire live.
++    if payload.get("hook_event_name") == "Stop":
++        if payload.get("stop_hook_active"):
++            return None  # this fire ends the continuation a block caused
++        return check_stop(payload.get("session_id"), runs)
++
+     tool = payload.get("tool_name", "")
+     tool_input = payload.get("tool_input") or {}
+     if tool == "Bash":
+         return check_bash(tool_input.get("command", ""), payload.get("cwd"), runs)
+     if tool in ("Write", "Edit", "MultiEdit"):
+@@ -230,22 +319,22 @@ def main(argv=None):
+     try:
+         payload = json.load(sys.stdin)
+         reason = evaluate(payload)
+     except Exception:  # noqa: BLE001 — deliberate fail-open (see module docstring)
+         return 0
+-    if reason:
+-        print(
+-            json.dumps(
+-                {
+-                    "hookSpecificOutput": {
+-                        "hookEventName": "PreToolUse",
+-                        "permissionDecision": "deny",
+-                        "permissionDecisionReason": reason,
+-                    }
+-                }
+-            )
+-        )
++    if not reason:
++        return 0
++    if payload.get("hook_event_name") == "Stop":
++        # A Stop block is a DIFFERENT wire shape: top-level decision/reason,
++        # confirmed on Claude Code 2.1.260. The shape below is ignored here.
++        print(json.dumps({"decision": "block", "reason": reason}))
++        return 0
++    print(json.dumps({"hookSpecificOutput": {
++        "hookEventName": "PreToolUse",
++        "permissionDecision": "deny",
++        "permissionDecisionReason": reason,
++    }}))
+     return 0
+ 
+ 
+ if __name__ == "__main__":  # pragma: no cover
+     sys.exit(main())
+diff --git a/plugins/spec-loop/scripts/test_doctrine_loop_boundary.py b/plugins/spec-loop/scripts/test_doctrine_loop_boundary.py
+new file mode 100644
+index 0000000..824cacb
+--- /dev/null
++++ b/plugins/spec-loop/scripts/test_doctrine_loop_boundary.py
+@@ -0,0 +1,272 @@
++#!/usr/bin/env python3
++"""Doctrine checks for the Phase-2 loop-boundary prose.
++
++The loop's failure this slice exists to fix is prose-shaped: a controller
++that reaches a wave boundary with slices still runnable and ends its turn
++to report. Nothing in the shipped prose said the boundary is a dispatch
++point, and the escalation-gate's "Not triggers" list did not name it.
++Those sentences are now load-bearing, so they are pinned here.
++
++Honest limits: these are substring assertions over collapsed prose plus
++one count of bullets on disk. They prove a sentence is present and that
++its superseded form is gone. They prove nothing about whether a
++controller obeys it, and they are NOT a behavioural test of the Stop
++gate - that gate lives in spec_loop_guard.py and is tested there.
++
++A separate module rather than a class in test_doctrine_refactor_scope.py
++or test_doctrine_run_docs.py: those are owned by other slices' doctrine,
++and slice_wave_contract_base.py is at its 300-line class ceiling.
++
++Usage:
++    python3 -m unittest discover -s plugins/spec-loop/scripts \\
++        -p 'test_doctrine_loop_boundary.py'
++"""
++
++import re
++import unittest
++from pathlib import Path
++
++PLUGIN_ROOT = Path(__file__).resolve().parents[1]
++COMMAND_MD = PLUGIN_ROOT / "commands" / "spec-loop.md"
++SKILL_MD = PLUGIN_ROOT / "skills" / "escalation-gate" / "SKILL.md"
++
++NUMBER_WORDS = {2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six"}
++
++NOT_TRIGGERS_HEADING = "### Not triggers (autonomous by design)"
++
++
++def prose(path):
++    """One file's text with every whitespace run collapsed to a space. (PURE)"""
++    return re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
++
++
++def not_trigger_bullet_count():
++    """Count the `- **` bullets under SKILL.md's "Not triggers" heading.
++
++    Read off the file rather than remembered, so the count word in the
++    section's own opening sentence cannot drift away from the list it
++    counts. The section ends at the next `## ` heading.
++    """
++    lines = SKILL_MD.read_text(encoding="utf-8").splitlines()
++    start = next(
++        i for i, line in enumerate(lines)
++        if line.strip() == NOT_TRIGGERS_HEADING
++    )
++    count = 0
++    for line in lines[start + 1:]:
++        if line.startswith("## "):
++            break
++        if line.startswith("- **"):
++            count += 1
++    return count
++
++
++# ---- the skill: a runnable wave boundary is not a stopping point ----
++
++SKILL_BOUNDARY_BULLET = "**A wave boundary with slices still runnable.**"
++SKILL_DISPATCH_POINT = "a dispatch point, not a decision"
++SKILL_RUNNABLE_ONLY = "This entry covers the RUNNABLE case ONLY"
++SKILL_DEADLOCK_KEPT = "is the opposite: it is a genuine escalation"
++SKILL_PINNED_TAIL = "exactly the six triggers above"
++SKILL_OTHER_LIST = "Three things that are deliberately NOT judgment triggers"
++SKILL_STALE_COUNT = "Three things that look like stopping points"
++
++
++class TestTheSkillNamesTheRunnableWaveBoundary(unittest.TestCase):
++    """The list of things that look like stopping points but are handled by
++    the loop grows a fourth entry. It must be readable ONLY as the runnable
++    case: a reported deadlock is a real escalation, and a reader who
++    generalised this entry would swallow it."""
++
++    def setUp(self):
++        self.text = prose(SKILL_MD)
++
++    def test_the_fourth_not_trigger_is_the_runnable_wave_boundary(self):
++        self.assertIn(SKILL_BOUNDARY_BULLET, self.text)
++        self.assertIn(SKILL_DISPATCH_POINT, self.text)
++
++    def test_the_entry_is_scoped_to_runnable_and_spares_deadlock(self):
++        self.assertIn(SKILL_RUNNABLE_ONLY, self.text)
++        self.assertIn(SKILL_DEADLOCK_KEPT, self.text)
++
++    def test_the_count_word_matches_the_bullets_on_disk(self):
++        count = not_trigger_bullet_count()
++        self.assertEqual(count, 4)
++        word = NUMBER_WORDS[count]
++        self.assertIn(
++            "%s things that look like stopping points" % word, self.text)
++
++    def test_the_superseded_three_count_is_gone(self):
++        self.assertNotIn(SKILL_STALE_COUNT, self.text)
++
++    def test_the_pinned_tail_clause_and_the_other_list_are_untouched(self):
++        self.assertIn(SKILL_PINNED_TAIL, self.text)
++        self.assertIn(SKILL_OTHER_LIST, self.text)
++
++
++# ---- the command: Phase 2 closes its own loop ----
++
++CLOSE_STEP = "9. **Close**:"
++CLOSE_RECOMPUTE = "re-run `dag.py next-wave` and act on it in THIS turn"
++CLOSE_SAME_TURN = "return to step 1 immediately, in the same turn, with no status report"
++CLOSE_DONE = "`done: true` → Phase 5"
++CLOSE_DEADLOCK = "`deadlock: true` → escalate with the `blocked` list"
++CLOSE_ON_SLICE_IDS = (
++    "Judge runnability on `slice_ids` being non-empty and never on the absence "
++    "of a `done` key")
++CLOSE_NO_DONE_KEY = "a deadlock report carries no `done` key at all"
++CLOSE_VISIBLE_TRACE = "say why in your next message so the transcript carries the reason"
++INVARIANT_BOUNDARY = "a wave boundary is a dispatch point, not a reporting boundary"
++
++
++class TestPhase2ClosesTheWaveLoopInTheSameTurn(unittest.TestCase):
++    """The controller command is the only place the loop's turn discipline is
++    written. Phase 2 ended at step 8 with no instruction to recompute, which
++    is how a turn ends with slices still runnable."""
++
++    def setUp(self):
++        self.text = prose(COMMAND_MD)
++
++    def test_phase_2_has_a_closing_step(self):
++        self.assertIn(CLOSE_STEP, self.text)
++        self.assertIn(CLOSE_RECOMPUTE, self.text)
++
++    def test_the_closing_step_states_all_three_outcomes(self):
++        for pin in (CLOSE_SAME_TURN, CLOSE_DONE, CLOSE_DEADLOCK):
++            self.assertIn(pin, self.text)
++
++    def test_runnability_is_judged_on_slice_ids_not_a_missing_done_key(self):
++        self.assertIn(CLOSE_ON_SLICE_IDS, self.text)
++        self.assertIn(CLOSE_NO_DONE_KEY, self.text)
++
++    def test_a_deliberate_stop_must_leave_a_visible_reason(self):
++        self.assertIn(CLOSE_VISIBLE_TRACE, self.text)
++
++    def test_the_invariants_line_names_the_boundary_as_a_dispatch_point(self):
++        self.assertIn(INVARIANT_BOUNDARY, self.text)
++        head = self.text.index("Invariants (non-negotiable)")
++        self.assertLess(head, self.text.index(INVARIANT_BOUNDARY))
++        self.assertLess(
++            self.text.index(INVARIANT_BOUNDARY),
++            self.text.index("## Phase 0 — Intake"),
++        )
++
++
++# ---- the command: record the escalation BEFORE asking ----
++
++OPEN_FIRST = "append the record FIRST, then ask"
++OPEN_CLI = "--type escalation-opened"
++OPEN_SCOPE = "any question you raise yourself rather than a wave"
++OPEN_WHY = "a question asked before its record exists is invisible to a resume"
++OPEN_NO_DOUBLE = "records a wave raised are already appended by `persist-slice`"
++ANSWER_BACK = "append the matching `escalation-answered` event keyed by the same `id`"
++ANSWER_WHY = "an opened id with no answer event open forever"
++ANSWER_RE_ASK = "re-gathered by Phase 2 step 7"
++OPEN_NO_DOUBLE_TAIL = "so never re-append those"
++OPEN_APPEND_ONLY = "The append half alone does not apply to wave-raised escalations"
++OPEN_STALE_UNSCOPED = "The rule does not apply to wave-raised escalations"
++OPEN_WRITE_BACK_STILL = (
++    "the write-back half above still applies to them in full")
++
++
++class TestControllerQuestionsAreRecordedBeforeTheyAreAsked(unittest.TestCase):
++    """`open-escalations` reads events.jsonl, so an unrecorded question is a
++    question no resume and no run-state reader can see, and an answer written
++    back pairs by an id that was never opened. An opened record never answered
++    back is re-asked at every later wave boundary, so the write-back is pinned
++    with the ordering."""
++
++    def setUp(self):
++        self.text = prose(COMMAND_MD)
++
++    def test_the_record_is_appended_before_the_question_is_asked(self):
++        self.assertIn(OPEN_FIRST, self.text)
++        self.assertIn(OPEN_CLI, self.text)
++
++    def test_the_rule_names_which_questions_it_covers(self):
++        self.assertIn(OPEN_SCOPE, self.text)
++
++    def test_the_rule_says_why_the_order_matters(self):
++        self.assertIn(OPEN_WHY, self.text)
++
++    def test_wave_raised_records_are_not_re_appended(self):
++        self.assertIn(OPEN_NO_DOUBLE, self.text)
++        self.assertIn(OPEN_NO_DOUBLE_TAIL, self.text)
++
++    def test_the_exemption_covers_only_the_append_half(self):
++        # Read unscoped, the exemption would excuse the write-back too,
++        # and open_escalations() would then hold every wave-raised id
++        # open forever. The scope is the assertion, not the sentence.
++        self.assertIn(OPEN_APPEND_ONLY, self.text)
++        self.assertNotIn(OPEN_STALE_UNSCOPED, self.text)
++
++    def test_the_write_back_still_applies_to_wave_raised_escalations(self):
++        self.assertIn(OPEN_WRITE_BACK_STILL, self.text)
++        self.assertLess(
++            self.text.index(ANSWER_BACK), self.text.index(OPEN_WRITE_BACK_STILL))
++
++    def test_the_answer_write_back_is_the_second_half_of_the_rule(self):
++        self.assertIn(ANSWER_BACK, self.text)
++        self.assertLess(self.text.index(OPEN_FIRST), self.text.index(ANSWER_BACK))
++
++    def test_the_rule_says_why_an_unclosed_record_is_re_asked(self):
++        self.assertIn(ANSWER_WHY, self.text)
++        self.assertIn(ANSWER_RE_ASK, self.text)
++
++    def test_the_rule_lives_in_the_escalation_discipline_section(self):
++        head = self.text.index("## Escalation discipline")
++        self.assertLess(head, self.text.index(OPEN_FIRST))
++
++
++# ---- the command: the two session/pause markers ----
++
++SESSION_WRITE = "`.controller-session` beside `.active`, containing your session id"
++SESSION_PURPOSE = "tells your turns from any other session's on this machine"
++SESSION_NEVER_COMMITTED = "Neither marker is ever committed"
++SESSION_RESUME = "rewrite `.controller-session` with your NEW session id"
++PAUSED_WHO = "the HUMAN asks for it and YOU write"
++PAUSED_ONE_GATE = "relaxes the loop-boundary gate alone"
++PAUSED_CLEAR = "delete it yourself the moment the human says resume"
++PAUSED_RESUME = "`--resume` does NOT clear it"
++PAUSED_REMEDIATION = (
++    "a stale `.paused` is remediated by resuming the run or clearing the marker, "
++    "in that order")
++PAUSED_NEVER_SELF = "Never write it to get past a gate of your own accord"
++
++
++class TestTheMarkerLifecyclesAreWrittenDown(unittest.TestCase):
++    """`.controller-session` scopes the gate to the controller and `.paused` is
++    its only deliberate escape. A `.paused` nobody clears is a gate lost with
++    no report, so who writes it, who clears it, and what resume does with it
++    all have to be on the page."""
++
++    def setUp(self):
++        self.text = prose(COMMAND_MD)
++
++    def test_phase_1_writes_the_controller_session_marker(self):
++        self.assertIn(SESSION_WRITE, self.text)
++        self.assertIn(SESSION_PURPOSE, self.text)
++
++    def test_the_markers_are_stated_once_to_be_uncommitted(self):
++        """The name says once, so count it: the drift this pin guards against is a
++        SECOND copy of the claim appearing in another phase and the two falling out
++        of step, which a mere `assertIn` would never see."""
++        self.assertEqual(self.text.count(SESSION_NEVER_COMMITTED), 1)
++
++    def test_resume_rewrites_the_session_marker(self):
++        self.assertIn(SESSION_RESUME, self.text)
++        self.assertLess(
++            self.text.index("## Resume"),
++            self.text.index(SESSION_RESUME),
++        )
++
++    def test_the_paused_lifecycle_names_who_writes_and_who_clears(self):
++        for pin in (PAUSED_WHO, PAUSED_CLEAR, PAUSED_NEVER_SELF):
++            self.assertIn(pin, self.text)
++
++    def test_paused_relaxes_one_gate_and_survives_a_resume(self):
++        self.assertIn(PAUSED_ONE_GATE, self.text)
++        self.assertIn(PAUSED_RESUME, self.text)
++
++    def test_the_stale_paused_remediation_sentence_is_present(self):
++        self.assertIn(PAUSED_REMEDIATION, self.text)
+diff --git a/plugins/spec-loop/scripts/test_doctrine_marker_hygiene.py b/plugins/spec-loop/scripts/test_doctrine_marker_hygiene.py
+new file mode 100644
+index 0000000..6d0fbc3
+--- /dev/null
++++ b/plugins/spec-loop/scripts/test_doctrine_marker_hygiene.py
+@@ -0,0 +1,159 @@
++#!/usr/bin/env python3
++"""Doctrine checks for spec-loop run-state marker hygiene.
++
++The guard hooks key off on-disk markers under docs/spec-loop/<run-id>/:
++.active, .done, .publish-choice, .paused, and .controller-session. A marker
++that is COMMITTED arrives on every clone and every fresh worktree, which
++turns the guard against the repo - a committed .active denies pushes and
++main-branch commits forever, for everyone, in sessions that have no run at
++all.
++
++This happened: .active entered the index twice (commits 5de8f42 and
++a413b93) and two runs' .done / .publish-choice markers rode in on the
++feature merges 7fdd7e2 and e9460f8, while references/run-state-v2.md
++already said .active is "never committed". Prose alone did not hold the
++line, so this module pins it.
++
++Honest limits: the tracking assertion shells out to `git ls-files` and is
++skipped only when there is no .git entry at REPO_ROOT (a source tarball).
++When git IS present it fails loudly rather than skipping, so the pin cannot
++degrade into a silent no-op. The .gitignore assertions check literal
++entries and the absence of a leading slash; they prove the patterns are
++present and unanchored, not that git's matcher behaves as intended - that
++part is covered by the tracking assertion, which is the property that
++actually matters.
++
++Usage:
++    python3 -m unittest discover -s plugins/spec-loop/scripts \\
++        -p 'test_doctrine_marker_hygiene.py'
++"""
++
++import re
++import subprocess
++import unittest
++from pathlib import Path
++
++REPO_ROOT = Path(__file__).resolve().parents[3]
++GITIGNORE = REPO_ROOT / ".gitignore"
++RUN_STATE_MD = (
++    Path(__file__).resolve().parents[1] / "references" / "run-state-v2.md"
++)
++MARKERS = (
++    ".active",
++    ".controller-session",
++    ".done",
++    ".paused",
++    ".publish-choice",
++)
++
++
++def prose(path):
++    """One file's text with every whitespace run collapsed to a space. (PURE)"""
++    return re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
++
++
++def ignore_lines():
++    """The non-blank, non-comment lines of .gitignore, stripped."""
++    return [
++        line.strip()
++        for line in GITIGNORE.read_text(encoding="utf-8").splitlines()
++        if line.strip() and not line.strip().startswith("#")
++    ]
++
++
++def marker_suffix(line):
++    """The marker `line` ends with, or None. (PURE)"""
++    for marker in MARKERS:
++        if line.endswith(marker):
++            return marker
++    return None
++
++
++def repo_has_git():
++    """True when REPO_ROOT has a .git dir OR a .git file (linked worktree)."""
++    return (REPO_ROOT / ".git").exists()
++
++
++def git(*args):
++    """Stripped stdout of a git command in REPO_ROOT. Raises on failure."""
++    done = subprocess.run(
++        ("git", "-C", str(REPO_ROOT)) + args,
++        capture_output=True,
++        text=True,
++        timeout=30,
++    )
++    if done.returncode != 0:
++        raise RuntimeError(
++            "git %s failed with exit %d: %s"
++            % (" ".join(args), done.returncode, done.stderr.strip())
++        )
++    return done.stdout.strip()
++
++
++class TestMarkersAreNotTracked(unittest.TestCase):
++    """No run-state marker may be in the index, and all five are ignored."""
++
++    def test_no_run_state_marker_is_tracked(self):
++        if not repo_has_git():
++            self.skipTest("no .git at repo root (source tarball)")
++        listing = git("ls-files", "--", "docs/spec-loop")
++        tracked = [
++            path
++            for path in listing.splitlines()
++            if Path(path).name in MARKERS
++        ]
++        self.assertEqual(
++            tracked,
++            [],
++            "these run-state markers are committed and will fire the guard "
++            "on every checkout; remove them from the index only, leaving "
++            "them on disk: %s" % tracked,
++        )
++
++    def test_every_marker_name_is_gitignored(self):
++        lines = ignore_lines()
++        for marker in MARKERS:
++            self.assertIn(
++                marker,
++                lines,
++                "%s is not a literal .gitignore entry, so the next run can "
++                "commit it again" % marker,
++            )
++
++    def test_marker_ignore_patterns_are_unanchored(self):
++        for line in ignore_lines():
++            marker = marker_suffix(line)
++            if marker is None:
++                continue
++            self.assertEqual(
++                line,
++                marker,
++                "%s must be matched at any depth, so its .gitignore "
++                "entry must be the bare name, not %r" % (marker, line),
++            )
++
++
++class TestRunStateDocStatesMarkerHygiene(unittest.TestCase):
++    """The Markers section must name every marker and the ignore rule."""
++
++    def test_every_marker_is_documented(self):
++        text = prose(RUN_STATE_MD)
++        for marker in MARKERS:
++            self.assertIn("`%s`" % marker, text, "%s undocumented" % marker)
++
++    def test_the_class_wide_never_committed_rule_is_stated(self):
++        self.assertIn(
++            "None of these markers is ever committed",
++            prose(RUN_STATE_MD),
++        )
++
++    def test_gitignore_is_named_as_the_enforcement(self):
++        text = prose(RUN_STATE_MD)
++        self.assertIn("`.gitignore`", text)
++        self.assertIn("index-only removal", text)
++
++    def test_the_do_not_delete_a_marker_sentence_survives(self):
++        self.assertIn(
++            "never delete a marker to dodge one",
++            prose(RUN_STATE_MD),
++        )
+diff --git a/plugins/spec-loop/scripts/test_doctrine_platform_probes.py b/plugins/spec-loop/scripts/test_doctrine_platform_probes.py
+new file mode 100644
+index 0000000..0502c80
+--- /dev/null
++++ b/plugins/spec-loop/scripts/test_doctrine_platform_probes.py
+@@ -0,0 +1,278 @@
++#!/usr/bin/env python3
++"""Doctrine checks for `references/platform-probes.md`'s register.
++
++That file's whole job is separating what was empirically established from
++what was not. The failure mode it must survive is a quiet promotion: an
++UNRESOLVED probe re-worded as a settled fact, or a CONFIRMED fact losing
++the evidence sentence that earns the label, with the suite still green.
++The vocabulary is therefore pinned here.
++
++A second failure mode is already realised history: the file once said the
++guard relies on the payload's `cwd` as its only root signal, which the
++guard's `evaluate()` contradicts. The corrected precedence sentence, and
++its citation-by-symbol form, are both pinned so neither can silently
++revert.
++
++A third: the per-turn reset of stop_hook_active was written as Untested
++while the run's evidence file was missing probe B2. It is CONFIRMED by that
++probe's two-turn log, and the promotion is pinned in both directions here so
++neither the fact nor what it rules out can be dropped.
++
++Its own module rather than a class in test_doctrine_loop_boundary.py:
++that module's docstring scopes it to commands/spec-loop.md and the
++escalation-gate skill, and this file is neither.
++
++Honest limits: these are substring assertions over collapsed prose. They
++prove a sentence is present or absent. They prove nothing about the
++platform's behaviour, and they are not a test of spec_loop_guard.py --
++that code is tested in test_spec_loop_guard.py and
++test_spec_loop_guard_stop.py.
++
++Usage:
++    python3 -m unittest discover -s plugins/spec-loop/scripts \\
++        -p 'test_doctrine_platform_probes.py'
++"""
++
++import re
++import unittest
++from pathlib import Path
++
++PLUGIN_ROOT = Path(__file__).resolve().parents[1]
++PROBES_MD = PLUGIN_ROOT / "references" / "platform-probes.md"
++
++# Expected substrings live at module scope, not inside the test bodies:
++# quality_gate.py derives python nesting depth from leading whitespace, so a
++# visually-aligned call continuation reads as depth 4. Hoisting keeps every
++# assertion body at depth 1 with the assertion set unchanged.
++PER_TURN_CONFIRMED = (
++    "resets to `false` again at the start of every NEW user turn "
++    "(CONFIRMED).**"
++)
++PER_TURN_EVIDENCE = (
++    "established by the THIRD fire of a two-turn session (probe B2)"
++)
++PER_TURN_NOT_A_FENCE = (
++    "pushes ONCE PER STALL rather than blocking indefinitely"
++)
++PER_TURN_NOT_ONE_SHOT = (
++    "Not a one-shot per session: the gate re-arms on every user turn"
++)
++PER_TURN_SCOPED_TO_FIRST_STOP = (
++    "so it stands at the first `Stop` attempt of every turn"
++)
++PER_TURN_WITHIN_TURN_GAP = (
++    "within that same turn the fire that ends a block-caused continuation "
++    "carries the flag true and is skipped, so a turn that drives several "
++    "wave boundaries is only guarded at its first one"
++)
++RETRACTED_UNTESTED_FRAMING = (
++    "whether the gate re-arms per turn or is one-shot for the whole session"
++)
++RETRACTED_FOLLOWUP_QUESTION = (
++    "Does `stop_hook_active` reset to `false` at the start of a new user "
++    "turn?"
++)
++ROOT_PRECEDENCE_BY_SYMBOL = (
++    "`spec_loop_guard.py`'s `evaluate()` resolves the project root as "
++    "`CLAUDE_PROJECT_DIR` from the environment, then the payload's `cwd`, "
++    "then `os.getcwd()`"
++)
++PRECEDENCE_CONSEQUENCE = (
++    "the environment variable wins and the payload's `cwd` is only the "
++    "first fallback"
++)
++
++# CHANGELOG.md restates this register's open-question list, so the two are
++# cross-checked below. Neither count is written here: both are read out of
++# the files at run time.
++REPO_ROOT = PLUGIN_ROOT.parents[1]
++CHANGELOG_MD = REPO_ROOT / "CHANGELOG.md"
++
++WORD_TO_INT = {
++    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
++    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
++}
++CHANGELOG_OPEN_COUNT_RE = re.compile(
++    r"the (\w+) questions that remain UNTESTED there")
++PROBES_OPEN_COUNT_RE = re.compile(
++    r"(\w+) questions need an INTERACTIVE session to settle")
++PROBES_NUMBERED_ITEM_RE = re.compile(r"^\d+\. ", re.MULTILINE)
++CHANGELOG_TOPICS = (
++    "whether `AskUserQuestion` emits `PreToolUse` at all",
++    "whether Ctrl+C routes through `Stop`",
++    "whether `Stop` fires for `Task` subagents",
++)
++CHANGELOG_RETRACTED_FRAMING = "is one-shot per session is NOT established"
++CHANGELOG_INSTALL_VERSION_LIMIT = (
++    "The installed plugin was 2.2.0 while this repository is 2.3.0"
++)
++
++
++def prose(path):
++    """One file's text with every whitespace run collapsed to a space. (PURE)"""
++    return re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
++
++
++class TestUnresolvedProbesStayUnresolved(unittest.TestCase):
++    """The AskUserQuestion probe produced no observation at all. Its bullet
++    must keep saying so, in those words: an absence of opportunity reads as
++    a negative result to anyone who skims, and a negative result is one
++    edit away from being re-written as a settled fact."""
++
++    def setUp(self):
++        self.text = prose(PROBES_MD)
++
++    def test_the_askuserquestion_bullet_is_present_and_unresolved(self):
++        self.assertIn(
++            "Whether `AskUserQuestion` emits `PreToolUse` at all is "
++            "UNRESOLVED", self.text)
++
++    def test_the_absence_of_opportunity_framing_survives(self):
++        self.assertIn(
++            "absence of opportunity, not a negative result", self.text)
++        self.assertIn(
++            "Nothing here licenses the claim that the event does or does "
++            "not fire", self.text)
++
++    def test_the_interactive_followups_stay_listed_as_unsettled(self):
++        self.assertIn(
++            "Three questions need an INTERACTIVE session to settle",
++            self.text)
++        self.assertIn("Does Ctrl+C route through `Stop`?", self.text)
++        self.assertIn(
++            "Does `Stop` fire at the end of a `Task` subagent's turn?",
++            self.text)
++        # Two of the three carry an explicit "Untested." marker; the
++        # AskUserQuestion entry is covered by its own bullet above.
++        self.assertEqual(self.text.count("Untested"), 2)
++
++
++class TestConfirmedFactsKeepTheirEvidence(unittest.TestCase):
++    """Only two hook facts were established, and each keeps its CONFIRMED
++    label AND the sentence that earns it, so a label cannot outlive its
++    evidence. The per-turn reset was promoted from Untested once probe B2
++    was recorded; the framing that called it untested must not survive
++    alongside the promotion."""
++
++    def setUp(self):
++        self.text = prose(PROBES_MD)
++
++    def test_the_stop_block_fact_is_confirmed_with_its_evidence(self):
++        self.assertIn(
++            "A sync `Stop` hook honours a top-level "
++            "`{\"decision\":\"block\",\"reason\":…}` (CONFIRMED).", self.text)
++        self.assertIn("Evidence, not inference", self.text)
++
++    def test_the_per_turn_flag_fact_is_confirmed_with_its_evidence(self):
++        self.assertIn(PER_TURN_CONFIRMED, self.text)
++        self.assertIn(PER_TURN_EVIDENCE, self.text)
++        self.assertIn(PER_TURN_NOT_A_FENCE, self.text)
++        self.assertIn(PER_TURN_NOT_ONE_SHOT, self.text)
++
++    def test_the_per_turn_reset_does_not_overclaim_per_boundary_coverage(
++            self):
++        # evaluate() returns None whenever stop_hook_active is true, so a
++        # turn with several wave boundaries is only guarded at its first
++        # Stop attempt -- the register must say so, not claim coverage at
++        # every boundary.
++        self.assertIn(PER_TURN_SCOPED_TO_FIRST_STOP, self.text)
++        self.assertIn(PER_TURN_WITHIN_TURN_GAP, self.text)
++        self.assertNotIn(
++            "it stands at every wave boundary, not only the first",
++            self.text)
++
++    def test_the_retracted_untested_framing_is_gone(self):
++        self.assertNotIn(RETRACTED_UNTESTED_FRAMING, self.text)
++        self.assertNotIn(RETRACTED_FOLLOWUP_QUESTION, self.text)
++
++    def test_exactly_two_hook_facts_are_labelled_confirmed(self):
++        self.assertEqual(self.text.count("(CONFIRMED)"), 2)
++
++
++class TestTheGuardRootSignalClaimStaysTrue(unittest.TestCase):
++    """The shipped false claim: that the payload's cwd is what the guard
++    relies on. The guard's evaluate() prefers CLAUDE_PROJECT_DIR. The
++    corrected sentence names that symbol, not a line number — a citation
++    pinned by its digits rots silently on the next insertion above it,
++    which is the failure this module exists to close."""
++
++    def setUp(self):
++        self.text = prose(PROBES_MD)
++
++    def test_the_false_only_root_signal_claim_is_gone(self):
++        self.assertNotIn("is the only root signal", self.text)
++
++    def test_the_true_precedence_is_stated_and_cited(self):
++        self.assertIn("carries **no** `project_dir` key", self.text)
++        self.assertIn(ROOT_PRECEDENCE_BY_SYMBOL, self.text)
++        self.assertIn(PRECEDENCE_CONSEQUENCE, self.text)
++
++    def test_no_citation_is_pinned_to_a_line_number(self):
++        self.assertNotIn("spec_loop_guard.py:", self.text)
++
++
++class TestChangelogAgreesWithTheProbeRegister(unittest.TestCase):
++    """CHANGELOG.md restates this register's open-question list, and a
++    restatement with no test is exactly how it went stale: the entry still
++    said four questions remained UNTESTED after the per-turn reset had been
++    promoted to CONFIRMED here.
++
++    Scoped to THIS module rather than a new one: the subject under test is
++    the probe register's contents, and a user-facing file asserting a
++    different count is a claim about that register. A separate module would
++    have to re-derive the register's own count anyway.
++
++    Both counts are read out of the two files. Hard-coding three in the
++    assertion would make this pin need an edit the next time a question is
++    settled -- and an unedited pin is as stale as the prose it guards. The
++    register's spelled-out word is additionally cross-checked against its
++    numbered list items on disk, so the link is to the list, not to a word.
++
++    Honest limit on that cross-check: it counts every `N. ` line in
++    platform-probes.md, and that register carries exactly one numbered
++    list today. A second, unrelated numbered list there would make this
++    test red without the open-question count having drifted -- a visible
++    false red, not a silent pass, and the fix is to scope the count to the
++    section rather than to drop the check.
++    """
++
++    def setUp(self):
++        self.changelog = prose(CHANGELOG_MD)
++        self.probes = prose(PROBES_MD)
++        self.probes_raw = PROBES_MD.read_text(encoding="utf-8")
++
++    def _count(self, pattern, text, label):
++        match = pattern.search(text)
++        self.assertIsNotNone(match, "%s: count sentence not found" % label)
++        word = match.group(1).lower()
++        # Bound to a name rather than wrapped as a call continuation: an
++        # aligned continuation's leading whitespace reads as nesting depth
++        # 4 to quality_gate.py, over its threshold of 3.
++        not_a_number = "%s: %r is not a number word" % (label, word)
++        self.assertIn(word, WORD_TO_INT, not_a_number)
++        return WORD_TO_INT[word]
++
++    def test_the_register_word_matches_its_numbered_list(self):
++        stated = self._count(PROBES_OPEN_COUNT_RE, self.probes, "probes")
++        items = len(PROBES_NUMBERED_ITEM_RE.findall(self.probes_raw))
++        self.assertEqual(stated, items)
++
++    def test_the_changelog_open_question_count_matches_the_register(self):
++        changelog = self._count(
++            CHANGELOG_OPEN_COUNT_RE, self.changelog, "changelog")
++        probes = self._count(PROBES_OPEN_COUNT_RE, self.probes, "probes")
++        self.assertEqual(changelog, probes)
++
++    def test_the_changelog_names_each_open_question(self):
++        for topic in CHANGELOG_TOPICS:
++            self.assertIn(topic, self.changelog)
++
++    def test_the_changelog_retracted_untested_framing_is_gone(self):
++        self.assertNotIn(CHANGELOG_RETRACTED_FRAMING, self.changelog)
++
++    def test_the_changelog_keeps_its_install_version_limitation(self):
++        self.assertIn(CHANGELOG_INSTALL_VERSION_LIMIT, self.changelog)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/plugins/spec-loop/scripts/test_spec_loop_guard.py b/plugins/spec-loop/scripts/test_spec_loop_guard.py
+index ef8cd1e..b320be7 100644
+--- a/plugins/spec-loop/scripts/test_spec_loop_guard.py
++++ b/plugins/spec-loop/scripts/test_spec_loop_guard.py
+@@ -1,6 +1,11 @@
+-"""Tests for spec_loop_guard.py.
++"""Tests for spec_loop_guard.py's PreToolUse gates (push/staging/main-branch/
++quality-gate-config) plus the shared GuardTestCase fixture.
++
++test_spec_loop_guard_stop.py covers the Stop loop-boundary gate separately
++(split out to stay under the per-file class_lines ceiling) and imports
++GuardTestCase from this module.
+ 
+ Standard library only; no live git required (current_branch is patched).
+ Builds throwaway run-state directories with tempfile and drives evaluate()
+ plus the CLI entry with fixture hook payloads.
+ """
+@@ -27,31 +32,56 @@ class GuardTestCase(unittest.TestCase):
+         branch = mock.patch.object(guard, "current_branch", return_value="csv-export")
+         self.branch_mock = branch.start()
+         self.addCleanup(branch.stop)
+ 
+     def make_run(self, run_id="20260707-demo", active=True, publish_choice=False,
+-                 merge_mode="single-branch", base_ref="csv-export"):
++                 merge_mode="single-branch", base_ref="csv-export",
++                 slices=(), controller_session=None, paused=False):
+         run_dir = os.path.join(self.root, "docs", "spec-loop", run_id)
+         os.makedirs(run_dir, exist_ok=True)
+         if active:
+             with open(os.path.join(run_dir, ".active"), "w") as fh:
+                 fh.write("2026-07-07T00:00:00 " + run_id)
+         if publish_choice:
+             with open(os.path.join(run_dir, ".publish-choice"), "w") as fh:
+                 fh.write("push-feature-branch")
++        if controller_session:
++            with open(os.path.join(run_dir, ".controller-session"), "w") as fh:
++                fh.write(controller_session + "\n")
++        if paused:
++            with open(os.path.join(run_dir, ".paused"), "w") as fh:
++                fh.write("human asked to hold\n")
+         with open(os.path.join(run_dir, "dag.json"), "w") as fh:
+-            json.dump({"base_ref": base_ref, "merge_mode": merge_mode, "slices": []}, fh)
++            json.dump(
++                {"base_ref": base_ref, "merge_mode": merge_mode, "slices": list(slices)}, fh
++            )
+         return run_dir
+ 
+     @staticmethod
+     def bash(command, cwd="/tmp/wt"):
+         return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd}
+ 
+     @staticmethod
+     def write(file_path):
+         return {"tool_name": "Write", "tool_input": {"file_path": file_path}, "cwd": "/tmp"}
+ 
++    @staticmethod
++    def stop(session_id="sess-ctl", stop_hook_active=False, cwd="/tmp/wt"):
++        """A realistic Stop payload: the probed key set, and NO tool_name."""
++        return {
++            "hook_event_name": "Stop",
++            "session_id": session_id,
++            "stop_hook_active": stop_hook_active,
++            "cwd": cwd,
++            "transcript_path": "/tmp/transcript.jsonl",
++            "last_assistant_message": "Wave 1 merged. Here is a status report.",
++            "permission_mode": "acceptEdits",
++            "prompt_id": "p-1",
++            "background_tasks": [],
++            "session_crons": [],
++        }
++
+ 
+ class NoActiveRunTests(GuardTestCase):
+     def test_everything_allowed_without_marker(self):
+         self.make_run(active=False)
+         self.assertIsNone(guard.evaluate(self.bash("git push")))
+diff --git a/plugins/spec-loop/scripts/test_spec_loop_guard_stop.py b/plugins/spec-loop/scripts/test_spec_loop_guard_stop.py
+new file mode 100644
+index 0000000..ec5221f
+--- /dev/null
++++ b/plugins/spec-loop/scripts/test_spec_loop_guard_stop.py
+@@ -0,0 +1,287 @@
++"""Tests for spec_loop_guard.py's Stop loop-boundary gate.
++
++Split out of test_spec_loop_guard.py (which keeps the PreToolUse coverage)
++purely to stay under the per-file class_lines ceiling; GuardTestCase is the
++shared fixture base for both files. Standard library only; no live git
++required (current_branch is patched).
++"""
++
++import io
++import json
++import os
++import sys
++import unittest
++from unittest import mock
++
++import run_state
++import spec_loop_guard as guard
++from test_spec_loop_guard import GuardTestCase
++
++PENDING = [{"id": "s4", "status": "pending", "deps": []}]
++DEADLOCKED = [
++    {"id": "s4", "status": "pending", "deps": ["s9"]},
++    {"id": "s9", "status": "pending", "deps": ["s4"]},
++]
++ALL_DONE = [{"id": "s1", "status": "complete", "deps": []}]
++
++
++def _remediation_sentence(run_id):
++    """The exact _remediation() text every denial and block ends with."""
++    return guard._remediation({"run_id": run_id})
++
++
++class StopGateTests(GuardTestCase):
++    def test_runnable_slice_blocks_the_controller_turn(self):
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        reason = guard.evaluate(self.stop(session_id="sess-ctl"))
++        self.assertIsNotNone(reason)
++        self.assertIn("s4", reason)
++
++    def test_stop_payload_has_no_tool_name_and_still_dispatches(self):
++        # Regression guard for the silent no-op: an implementation that keys
++        # off tool_name never fires live, because Stop carries no such key.
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        payload = self.stop(session_id="sess-ctl")
++        self.assertNotIn("tool_name", payload)
++        self.assertIsNotNone(guard.evaluate(payload))
++
++    def test_deadlock_allows(self):
++        # next_wave reports {'slice_ids': [], 'deadlock': True} with NO 'done'
++        # key: the deadlock escalation question must be askable.
++        self.make_run(slices=DEADLOCKED, controller_session="sess-ctl")
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_done_allows_the_publish_prompt(self):
++        self.make_run(slices=ALL_DONE, controller_session="sess-ctl")
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_other_session_not_blocked(self):
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-other")))
++
++    def test_labelled_marker_still_matches(self):
++        # Matching is substring-tolerant: a marker written with a label or
++        # extra lines must still narrow to the same session. It can never
++        # match a session whose id is absent from the file.
++        self.make_run(
++            slices=PENDING,
++            controller_session="session_id: sess-ctl (controller)",
++        )
++        self.assertIsNotNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_missing_controller_session_marker_allows(self):
++        self.make_run(slices=PENDING)
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_empty_controller_session_marker_allows(self):
++        run_dir = self.make_run(slices=PENDING, controller_session="sess-ctl")
++        with open(os.path.join(run_dir, ".controller-session"), "w") as fh:
++            fh.write("   \n")
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_payload_without_session_id_allows(self):
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        payload = self.stop()
++        del payload["session_id"]
++        self.assertIsNone(guard.evaluate(payload))
++
++    def test_open_escalation_allows(self):
++        run_dir = self.make_run(slices=PENDING, controller_session="sess-ctl")
++        with open(os.path.join(run_dir, "events.jsonl"), "w") as fh:
++            fh.write(json.dumps({
++                "ts": "2026-09-04T00:00:00Z", "scope": "run",
++                "type": "escalation-opened",
++                "payload": {"id": "esc-1", "trigger": "ambiguity", "status": "OPEN"},
++            }) + "\n")
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_answered_escalation_still_blocks(self):
++        run_dir = self.make_run(slices=PENDING, controller_session="sess-ctl")
++        with open(os.path.join(run_dir, "events.jsonl"), "w") as fh:
++            for event in (
++                {"ts": "2026-09-04T00:00:00Z", "scope": "run", "type": "escalation-opened",
++                 "payload": {"id": "esc-1", "trigger": "ambiguity", "status": "OPEN"}},
++                {"ts": "2026-09-04T00:01:00Z", "scope": "run", "type": "escalation-answered",
++                 "payload": {"id": "esc-1", "answer": "option a"}},
++            ):
++                fh.write(json.dumps(event) + "\n")
++        self.assertIsNotNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_no_active_run_allows(self):
++        self.make_run(active=False, slices=PENDING, controller_session="sess-ctl")
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++
++class StopGateFailOpenTests(GuardTestCase):
++    def test_stop_hook_active_allows(self):
++        # Empirically (2026-09-04, CC 2.1.260) stop_hook_active is true only
++        # on the fire that ends the continuation a block caused, and resets
++        # on every new user turn: honouring it makes the gate one push per
++        # stop attempt, re-armed per turn, never a fence.
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        self.assertIsNone(
++            guard.evaluate(self.stop(session_id="sess-ctl", stop_hook_active=True))
++        )
++
++    def test_paused_marker_allows_the_stop_gate(self):
++        self.make_run(slices=PENDING, controller_session="sess-ctl", paused=True)
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_paused_marker_does_not_unlock_push_or_main_commits(self):
++        # .paused relaxes the loop-boundary gate ALONE. If it leaked into
++        # find_active_runs it would silently unlock push-before-publish,
++        # broad staging and default-branch commits.
++        self.make_run(slices=PENDING, controller_session="sess-ctl", paused=True)
++        self.assertIsNotNone(guard.evaluate(self.bash("git push")))
++        self.assertIsNotNone(guard.evaluate(self.bash("git add -A")))
++        self.branch_mock.return_value = "main"
++        self.assertIsNotNone(guard.evaluate(self.bash("git commit -m x")))
++
++    def test_active_marker_without_dag_json_allows(self):
++        # Reachable state: find_active_runs tolerates it, dag.load_dag
++        # raises DagError on it, and the gate must fail OPEN there.
++        run_dir = self.make_run(slices=PENDING, controller_session="sess-ctl")
++        os.unlink(os.path.join(run_dir, "dag.json"))
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_half_written_dag_json_allows(self):
++        run_dir = self.make_run(slices=PENDING, controller_session="sess-ctl")
++        with open(os.path.join(run_dir, "dag.json"), "w") as fh:
++            fh.write('{"slices": [')
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_broken_run_does_not_fail_open_for_a_healthy_run(self):
++        # Two active runs: run-a's dag.json is missing, run-b is runnable
++        # and controlled by this session. The gate must still block. If this
++        # fails, the implementation put ONE try around the whole loop.
++        broken = self.make_run("20260901-run-a", controller_session="sess-ctl")
++        os.unlink(os.path.join(broken, "dag.json"))
++        self.make_run("20260902-run-b", slices=PENDING, controller_session="sess-ctl")
++        reason = guard.evaluate(self.stop(session_id="sess-ctl"))
++        self.assertIsNotNone(reason)
++        self.assertIn("20260902-run-b", reason)
++
++    def test_undecodable_marker_does_not_fail_open_for_a_healthy_run(self):
++        # A .controller-session that is not valid UTF-8 raises
++        # UnicodeDecodeError — a ValueError, NOT an OSError. If
++        # _controller_marker lets it escape, main()'s blanket handler
++        # swallows it and the gate unlocks for EVERY run, not just this
++        # one. The property under test is that isolation, so a second
++        # healthy run controlled by the same session must still block.
++        broken = self.make_run("20260901-run-a", controller_session="sess-ctl")
++        with open(os.path.join(broken, ".controller-session"), "wb") as fh:
++            fh.write(b"\xff\xfe\x00bad")
++        self.make_run(
++            "20260902-run-b", slices=PENDING, controller_session="sess-ctl")
++        reason = guard.evaluate(self.stop(session_id="sess-ctl"))
++        self.assertIsNotNone(reason)
++        self.assertIn("20260902-run-b", reason)
++        self.assertIn("s4", reason)
++
++    def test_stale_other_run_is_skipped_not_blamed(self):
++        # A stale .active owned by a different session must not block this one.
++        self.make_run("20260901-stale", slices=PENDING, controller_session="sess-old")
++        self.make_run("20260902-mine", slices=ALL_DONE, controller_session="sess-ctl")
++        self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_import_error_on_dag_allows(self):
++        # A None entry in sys.modules makes `import dag` raise ImportError
++        # ("import of dag halted; None in sys.modules") — the standard idiom,
++        # and unlike patching builtins.__import__ it intercepts nothing else.
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        with mock.patch.dict(sys.modules, {"dag": None}):
++            self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_import_error_on_run_state_allows(self):
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        with mock.patch.dict(sys.modules, {"run_state": None}):
++            self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_open_escalations_raising_allows(self):
++        # Exercises the REAL defensive except in _blocking_slices by patching
++        # the dependency (run_state.open_escalations), not the function under
++        # test. open_escalations does not raise for a missing or unreadable
++        # events.jsonl, so this is the only way to reach it.
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        with mock.patch.object(run_state, "open_escalations", side_effect=OSError):
++            self.assertIsNone(guard.evaluate(self.stop(session_id="sess-ctl")))
++
++    def test_pretooluse_bash_and_write_unaffected_by_the_stop_branch(self):
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        self.assertIsNotNone(guard.evaluate(self.bash("git push")))
++        self.assertIsNotNone(
++            guard.evaluate(self.write(os.path.expanduser(guard.QUALITY_GATE_CONFIG)))
++        )
++        self.assertIsNone(guard.evaluate(self.bash("ls -la")))
++        self.assertIsNone(guard.evaluate(self.write("/tmp/notes.md")))
++
++
++class StopEmitTests(GuardTestCase):
++    def _run_main(self, payload):
++        with mock.patch("sys.stdin", io.StringIO(json.dumps(payload))):
++            with mock.patch("sys.stdout", io.StringIO()) as out:
++                self.assertEqual(guard.main(), 0)
++        return out.getvalue()
++
++    def test_stop_block_uses_the_top_level_decision_shape(self):
++        # Reusing the PreToolUse hookSpecificOutput shape produces a
++        # malformed block that the harness ignores, which reads as allow.
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        emitted = json.loads(self._run_main(self.stop(session_id="sess-ctl")))
++        self.assertEqual(emitted["decision"], "block")
++        self.assertIn("s4", emitted["reason"])
++        self.assertNotIn("hookSpecificOutput", emitted)
++
++    def test_stop_allow_is_silent(self):
++        self.make_run(slices=ALL_DONE, controller_session="sess-ctl")
++        self.assertEqual(self._run_main(self.stop(session_id="sess-ctl")), "")
++
++    def test_pretooluse_deny_still_uses_hook_specific_output(self):
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        emitted = json.loads(self._run_main(self.bash("git push")))
++        self.assertNotIn("decision", emitted)
++        self.assertEqual(
++            emitted["hookSpecificOutput"]["hookEventName"], "PreToolUse"
++        )
++        self.assertEqual(emitted["hookSpecificOutput"]["permissionDecision"], "deny")
++
++
++class StopReasonTextTests(GuardTestCase):
++    def _reason(self):
++        self.make_run(slices=PENDING, controller_session="sess-ctl")
++        reason = guard.evaluate(self.stop(session_id="sess-ctl"))
++        self.assertIsNotNone(reason)
++        return reason
++
++    def test_reason_names_the_runnable_slices_and_the_compliant_alternative(self):
++        reason = self._reason()
++        self.assertIn("s4", reason)
++        self.assertIn("Phase 2 step 1", reason)
++
++    def test_reason_warns_against_re_dispatching_an_in_flight_wave(self):
++        # dag has no in-flight status (SLICE_STATUSES is pending/complete/
++        # split) and record_wave leaves slices pending, so a dispatched-but-
++        # uncollected wave still reads as runnable. The push must not be
++        # readable as an order to double-dispatch.
++        reason = self._reason()
++        self.assertIn("still in flight", reason)
++        self.assertIn("rather than re-dispatching", reason)
++
++    def test_reason_names_the_literal_paused_path(self):
++        self.assertIn("docs/spec-loop/20260707-demo/.paused", self._reason())
++
++    def test_reason_carries_the_not_the_controller_clause(self):
++        self.assertIn("not the controller", self._reason())
++
++    def test_reason_demands_a_visible_trace(self):
++        self.assertIn("say why in your next message", self._reason())
++
++    def test_reason_ends_with_the_standard_remediation_sentence(self):
++        reason = self._reason()
++        self.assertTrue(
++            reason.endswith(_remediation_sentence("20260707-demo")), reason
++        )
++
++
++if __name__ == "__main__":  # pragma: no cover
++    unittest.main()
+diff --git a/plugins/spec-loop/skills/escalation-gate/SKILL.md b/plugins/spec-loop/skills/escalation-gate/SKILL.md
+index f74c17a..baf3928 100644
+--- a/plugins/spec-loop/skills/escalation-gate/SKILL.md
++++ b/plugins/spec-loop/skills/escalation-gate/SKILL.md
+@@ -123,11 +123,11 @@ on the text, never on a pinned format.
+ 
+ The controller repeats this check over every open record at the wave boundary.
+ 
+ ### Not triggers (autonomous by design)
+ 
+-Three things that look like stopping points but are handled by the loop itself, keeping the bar at
++Four things that look like stopping points but are handled by the loop itself, keeping the bar at
+ exactly the six triggers above:
+ 
+ - **Slice split.** A slice that turns out to be two-or-more independently shippable changes
+   returns `SPLIT`; the controller grafts the children into the DAG (`dag.py ingest-split`) —
+   logged, no human contact. Only a proposal that is malformed or already at the depth cap falls
+@@ -138,10 +138,17 @@ exactly the six triggers above:
+ - **Over-scope and deferred scope.** A plan that exceeds the run's scope ceiling is flagged
+   (`over_scope`) and, when the goal genuinely asks for it, still built; work the council
+   asks not to be built is a `defer`-hinted concern recorded as one `deferred` event per
+   concern. Both are records for the human to read at the runbook, not questions — and
+   neither ever suppresses a finding.
++- **A wave boundary with slices still runnable.** When `dag.py next-wave` reports a non-empty
++  `slice_ids`, the boundary is a dispatch point, not a decision: the controller re-dispatches
++  the next wave in the SAME turn, and what the finished wave did is reported at the runbook
++  rather than mid-loop. Ending the turn there is the stall this list exists to prevent, not a
++  question. This entry covers the RUNNABLE case ONLY — a reported `deadlock` (nothing runnable
++  while slices remain) is the opposite: it is a genuine escalation the controller surfaces, and
++  nothing here downgrades it.
+ 
+ ## Batching rule (critical for non-blocking operation)
+ 
+ **Never interrupt mid-wave, never one question at a time.** Workflow stages cannot prompt the
+ human, so:
