@@ -66,3 +66,4 @@ Rendered from the run's events; append-only, and nothing parses it back.
 [run] INTEGRATION-CHECK: green — Exactly one slice merged and the integration tree is byte-identical to the tree s8 verified green. Transferred: 10 segments green - 126 root; 1479 plugin; coverage 1605 tests, floors met, TOTAL 97.0%… — AT: 2026-09-05T02:00:32Z
 [run] DECISION: Kept the CHANGELOG pins failure-direction concern as an accepted P2 after testing both scenarios directly, rather than opening a fourth remediation. — AT: 2026-09-05T02:00:32Z
 [run] PHASE5-GATE: PASS — AT: 2026-09-05T02:03:34Z
+[run] DEFERRED: Phase 5s marker-vs-commit ordering defect is deeper than the markers: the publish-choice EVENT also lands after the run-state commit, so the committed audit trail is missing its own final entry. — AT: 2026-09-08T14:36:29Z
