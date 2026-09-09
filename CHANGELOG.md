@@ -6,7 +6,25 @@ All notable changes to the spec-loop plugin are documented here. The format is
 [v1 repository](https://github.com/z2297/spec-loop).
 
 ## [Unreleased]
+
+## [2.5.0] - 2026-09-09
 ### Added
+- **`/spec-loop:jira-intake`: read a Jira card, refine it, confirm, and write decisions back.**
+  `scripts/jira_client.py` is a stdlib-only, read-first Jira Cloud REST v3 client that resolves
+  one issue key to a normalized record with paginated comments, authenticating from
+  `JIRA_BASE_URL`/`JIRA_EMAIL`/`JIRA_API_TOKEN` and failing closed when any is unset;
+  `scripts/jira_intake.py` plus `commands/jira-intake.md` produce a refined-understanding
+  artifact under the gitignored `.spec-loop-jira/` root, ask every gap in one batched question
+  round, preview the comments they would post, and print the `/spec-loop:spec-loop --from-plan
+  <path>` handoff — the command carries neither `Workflow` nor `Edit`, so it structurally cannot
+  start the loop. The comment write-back lane posts confirmed-understanding, decision and
+  open-question comments only behind a preview-then-confirm gate and `--post`, embeds a visible
+  marker per comment, dedupes against the card's own paginated comment list, and refuses a batch
+  with duplicate markers before any request is sent. Both modules are registered in
+  `scripts/measure_coverage.py` at 94% and 91% floors. Known, documented residuals: the dedupe is
+  per invocation, not cross-process; a comment that merely quotes a marker reads as already
+  posted (fails toward not writing); the partial-post recovery depends on the rendered
+  `comments.json` surviving. Run 20260908-jira-intake.
 - **Re-entry: a re-dispatched slice resumes at a stage against its real head instead of
   replaying the pipeline from its goal.** `slices[].entry {stage: plan|review|fix|verify, head,
   fix_rounds, review_tier, residual, orders}` on the wave args — `verify` runs stage Z alone,
@@ -637,7 +655,8 @@ schemas, agents, and internals redesigned; see
   and the `--budget` flag (cost control is structural: caps + bounds; the
   Workflow token ceiling activates when the session sets a token target).
 
-[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.5.0
 [2.4.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.4.0
 [2.3.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.3.0
 [2.2.2]: https://github.com/z2297/spec-loop-2/releases/tag/v2.2.2
