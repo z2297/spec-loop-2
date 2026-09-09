@@ -693,6 +693,104 @@ def plan_comments(comments, existing_bodies):
             for item in comments]
 
 
+def post_comment(base_url, creds, key, body):
+    """POST ONE comment to a Jira issue. THE SOLE WRITER in this plugin.
+
+    Bounded on purpose: this adds a comment and nothing else -- no status
+    transition, no field edit, no assignee change, no issue or sub-task
+    creation, no comment edit and no comment delete.
+
+    The dedupe marker lives INSIDE `body`, so the network call that
+    writes the comment is the same call that writes the marker. That is
+    the premark-must-be-written-inside-the-claim-that-does-the-write
+    rule: no local file can make a later run skip a comment that was
+    never actually posted, and a fresh clone cannot double-post.
+
+    Verified against Atlassian's REST v3 addComment operation (fetched
+    2026-09-09): the request body is {"body": <ADF document object>} and
+    success returns 201 with the created comment's `id`. A response
+    without an id is refused rather than reported as a confirmed write."""
+    email, token = creds
+    url = "%s/comment" % _issue_url(base_url, validate_issue_key(key))
+    raw = _http_post(url, email, token, {"body": text_to_adf(body)})
+    created = _parse_json(raw.decode("utf-8"), "created comment")
+    if not isinstance(created, dict):
+        created = {}
+    comment_id = str(created.get("id") or "")
+    if not comment_id:
+        raise JiraError(
+            "Jira accepted the comment POST for %s but returned no comment "
+            "id; refusing to report a write that cannot be confirmed" % key)
+    return comment_id
+
+
+def execute_comment_plan(base_url, creds, key, pending):
+    """POST each pending comment in order and return one result each.
+
+    Fail closed and atomic per comment: every entry was shape-validated
+    before any request was issued, and the FIRST failure propagates
+    immediately, so no later comment is posted. One comment is written
+    whole by one POST or not at all -- there is no partial body."""
+    posted = []
+    for item in pending:
+        comment_id = post_comment(base_url, creds, key, item["body"])
+        posted.append({
+            "kind": item["kind"], "marker": item["marker"],
+            "status": "posted", "comment_id": comment_id})
+    return posted
+
+
+def _comment_results(comments, plan, posted):
+    """Merge the dedupe plan and the POST results into one ordered result
+    per requested comment. (PURE)"""
+    by_marker = {item["marker"]: item for item in posted}
+    statuses = {True: "already-posted", False: "would-post"}
+    results = []
+    for item, planned in zip(comments, plan):
+        marker = planned["marker"]
+        preview = {
+            "kind": item["kind"], "marker": marker,
+            "status": statuses[bool(planned["already_posted"])],
+            "comment_id": None}
+        results.append(by_marker.get(marker) or preview)
+    return results
+
+
+def run_comment_lane(key, comments, arm):
+    """Preview -- or, when armed, post -- the intake comments for ONE
+    issue, dedupe-gated.
+
+    POSTING IS OFF BY DEFAULT: with `arm` false this issues GETs only and
+    reports what it WOULD post, so the default path performs zero
+    writes; only an explicit opt-in arms the HTTP verb. Either way the
+    card's FULL paginated comment list is read back first, and any
+    comment whose visible marker is already there is reported as
+    already-posted rather than posted again or silently dropped.
+
+    Every entry is shape-validated BEFORE the first request, so a
+    refusal leaves nothing partial behind."""
+    resolved = validate_issue_key(key)
+    errors = validate_comment_entries(comments)
+    if errors:
+        raise JiraError(
+            "refusing to post from an invalid comment plan: "
+            + "; ".join(errors))
+    base_url, email, token = credentials()
+    existing = fetch_comments(base_url, email, token, resolved)
+    plan = plan_comments(comments, [c["body"] for c in existing])
+    done = [bool(entry["already_posted"]) for entry in plan]
+    pending = [item for item, seen in zip(comments, done) if not seen]
+    posted = []
+    if arm:
+        posted = execute_comment_plan(
+            base_url, (email, token), resolved, pending)
+    return {
+        "ok": True, "issue_key": resolved, "armed": bool(arm),
+        "posted_count": len(posted),
+        "already_posted_count": done.count(True),
+        "results": _comment_results(comments, plan, posted)}
+
+
 RECORD_FIELDS = ("key", "web_url", "summary", "description",
                  "acceptance_criteria", "acceptance_criteria_source",
                  "status", "issue_type", "comments")
