@@ -263,6 +263,18 @@ def _http_post(url, email, token, payload):
     except urllib.error.URLError as exc:
         raise JiraError(
             f"network error posting to {url}: {exc.reason}") from exc
+    except OSError as exc:
+        # urllib only wraps an OSError raised by h.request() into a
+        # URLError (see CPython's AbstractHTTPHandler.do_open); an
+        # OSError out of h.getresponse() or resp.read() -- e.g. a
+        # timeout while reading the response to a POST that has
+        # already landed on the card -- propagates unwrapped and would
+        # otherwise slip past the JiraError handling above, past
+        # execute_comment_plan's `except JiraError`, and past main()'s
+        # exit-1 JSON contract. Caught here, terminally, so every
+        # transport failure on the write path is a JiraError and can
+        # still be turned into a partial-batch disclosure.
+        raise JiraError(f"network error posting to {url}: {exc}") from exc
 
 
 def _parse_json(raw, what):

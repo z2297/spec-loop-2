@@ -333,6 +333,18 @@ class TestHttpPostIsTheOnlyWriter(unittest.TestCase):
         with self.assertRaises(jc.JiraError):
             self._post(opener)
 
+    def test_a_bare_timeout_reading_the_response_becomes_a_jira_error(self):
+        # urllib only wraps an OSError raised by h.request() into a
+        # URLError; a timeout while reading the response to a POST that
+        # has already landed on the card raises a bare TimeoutError
+        # (a plain OSError subclass) out of h.getresponse()/resp.read(),
+        # which must still surface as a JiraError rather than an
+        # unhandled traceback on this, the write path.
+        opener = mock.MagicMock()
+        opener.open.side_effect = TimeoutError("timed out")
+        with self.assertRaises(jc.JiraError):
+            self._post(opener)
+
     def test_a_redirect_is_never_followed_on_a_write(self):
         # _NoRedirect returns None for every 3xx, so urllib raises
         # instead of replaying the Authorization header (and the POST
@@ -1145,6 +1157,32 @@ class TestRunCommentLane(unittest.TestCase):
         # The batch is not atomic: the first comment already landed
         # before the second failed, so the error names its marker
         # rather than silently dropping the fact that it was posted.
+        self.assertIn(MARKER, str(ctx.exception))
+
+    def test_a_bare_timeout_on_the_second_post_still_names_the_first_marker(
+            self):
+        # A bare socket TimeoutError (not wrapped in a URLError) raised
+        # while reading the response to the second POST must still
+        # surface as a JiraError -- and, since the first comment already
+        # landed, name its marker -- rather than an unhandled traceback
+        # that hides the partial write from the operator. The real
+        # _http_post runs unmocked here (only the opener is faked) so
+        # this exercises _http_post's own OSError handling, not a stub.
+        first_resp = mock.MagicMock()
+        first_resp.read.return_value = b'{"id": "1"}'
+        first_resp.__enter__.return_value = first_resp
+        first_resp.__exit__.return_value = False
+        opener = mock.MagicMock()
+        opener.open.side_effect = [first_resp, TimeoutError("timed out")]
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, ENV, clear=True))
+            stack.enter_context(mock.patch.object(
+                jc, "_http_get", return_value=card_with([])))
+            stack.enter_context(mock.patch.object(jc, "_OPENER", opener))
+            with self.assertRaises(jc.JiraError) as ctx:
+                jc.run_comment_lane("ABC-1", self.entries, True)
+        self.assertEqual(opener.open.call_count, 2)
         self.assertIn(MARKER, str(ctx.exception))
 
     def test_a_truncated_comment_sweep_refuses_before_any_post(self):
