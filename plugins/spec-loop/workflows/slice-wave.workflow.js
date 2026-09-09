@@ -172,6 +172,10 @@ const FIX_RESULT = {
     touched_files: { type: 'array', items: { type: 'string' } },
     addressed: { type: 'array', items: { type: 'string' } },
     refuted: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { finding_id: { type: 'string' }, evidence: { type: 'string' } }, required: ['finding_id', 'evidence'] } },
+    // The covering test the fixer added or extended per addressed finding. A
+    // correctness/errors finding closed ADDRESSED with no entry here stays open
+    // (closeRereviewedFindings): a behavioural fix without a pinning test is a claim.
+    tests_added: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { finding_id: { type: 'string' }, test: { type: 'string' } }, required: ['finding_id', 'test'] } },
     tests: { type: 'object', additionalProperties: false, properties: { command: { type: 'string' }, result: { type: 'string' } }, required: ['command', 'result'] },
     blocker: { type: 'string' },
   },
@@ -903,6 +907,7 @@ function reReviewPrompt(slice, state, findings, fix) {
 Re-review after a fix round for slice ${slice.id}. Build the fix-only package:
   ${packageCmd(slice, fixCommits(fix).base || state.commits.base, fixCommits(fix).head || state.commits.head, `fix${state.review.fix_rounds}`)}
 Prior blocking findings (verdict each): ${JSON.stringify(findings, null, 1)}
+Fixer report (unverified claims): addressed ${JSON.stringify(fix.addressed)}; tests_added ${JSON.stringify(fix.tests_added || [])}; tests ${JSON.stringify(fix.tests || null)}. An ADDRESSED verdict on a correctness/errors finding requires the named covering test to exist in the fix diff and to pin the defect; a behavioural fix with no named test is NOT_ADDRESSED.
 Fixer refutations to adjudicate: ${JSON.stringify(fix.refuted, null, 1)}`
 }
 
@@ -1580,9 +1585,27 @@ async function dispatchFix(slice, state, ctx) {
     { agentType: 'spec-loop:implementer', schema: FIX_RESULT, model: round === 0 ? 'sonnet' : 'inherit', effort: 'medium' })
 }
 
-function closeRereviewedFindings(rr, open, round, bar) {
-  const closed = new Set(rr.verdicts.filter(x => x.verdict === 'ADDRESSED' || x.verdict === 'REFUTATION_ACCEPTED').map(x => x.finding_id))
-  return [...open.filter(f => !closed.has(f.id)), ...blocking(rr.new_breakage, bar).map((f, i) => ({ ...f, id: `nb${round}-${i}` }))]
+const BEHAVIOURAL_CATEGORIES = ['correctness', 'errors']
+const testedFindingIds = (fix) => new Set((Array.isArray(fix.tests_added) ? fix.tests_added : []).map(t => t && t.finding_id))
+
+// A verdict closes a finding when it says ADDRESSED or REFUTATION_ACCEPTED —
+// except an ADDRESSED behavioural finding the fixer named no covering test for,
+// which stays open with a decision saying why. A fix without a pinning test is a
+// claim; run 20260908 shipped ~16 such claims in code every report called green.
+function keepsOpen(slice, state, finding, ctx) {
+  const verdict = ctx.verdicts.get(finding.id)
+  if (verdict !== 'ADDRESSED' && verdict !== 'REFUTATION_ACCEPTED') return true
+  const untested = BEHAVIOURAL_CATEGORIES.includes(finding.category) && !ctx.tested.has(finding.id)
+  if (verdict !== 'ADDRESSED' || !untested) return false
+  state.events.push({ scope: slice.id, type: 'decision', payload: { summary: `finding ${finding.id} closed without test evidence — kept open: the fixer named no covering test (tests_added) for a ${finding.category} finding`, rationale: 'a behavioural fix without a pinning test is a claim, not evidence; the next round must name the test', reversibility: 'n/a' } })
+  return true
+}
+
+function closeRereviewedFindings(slice, state, rr, ctx) {
+  const { open, round, bar, fix } = ctx
+  const verdicts = new Map(rr.verdicts.map(x => [x.finding_id, x.verdict]))
+  const kept = open.filter(f => keepsOpen(slice, state, f, { verdicts, tested: testedFindingIds(fix) }))
+  return [...kept, ...blocking(rr.new_breakage, bar).map((f, i) => ({ ...f, id: `nb${round}-${i}` }))]
 }
 
 async function maybeVerifyFindings(slice, state, open) {
@@ -1605,7 +1628,7 @@ async function runFixRound(slice, state, ctx) {
   if (!rr) return { open } // fail closed: findings stay open into the next round / escalation
   state.review.refuted += rr.verdicts.filter(x => x.verdict === 'REFUTATION_ACCEPTED').length
   recordOutsideDiffFix(slice, state, { plan, review, fix, round })
-  return { open: closeRereviewedFindings(rr, open, round, bar) }
+  return { open: closeRereviewedFindings(slice, state, rr, { open, round, bar, fix }) }
 }
 
 // Stage V/F — verify findings + fix loop (≤2 rounds)

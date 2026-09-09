@@ -22,7 +22,19 @@ export const FIX_BLOCKED = { status: "BLOCKED", touched_files: [], addressed: []
 export const FIX_ROUND_TWO = {
   status: "DONE", touched_files: ["a.py"], addressed: ["r0-f1"], refuted: [],
   commits: { base: "f1x0000", head: "f2x0000" },
+  tests_added: [{ finding_id: "r0-f1", test: "test_the_claim_holds" }, { finding_id: "order-0", test: "test_the_order_holds" }],
 };
+// A fixer that claims a behavioural fix but names no covering test.
+export const FIX_UNTESTED = {
+  status: "DONE", touched_files: ["a.py"], addressed: ["r0-f1"], refuted: [],
+  commits: { base: "0000000", head: "f1x0000" },
+};
+export const COMMENTS_FINDING = {
+  id: "f1", severity: "P1", category: "comments", file: "a.py", line: 1,
+  claim: "docstring overreaches", evidence: { quote: "q" }, remedy: "reword",
+  confidence: "high", outside_diff: false,
+};
+export const REVIEW_COMMENTS_ONLY = { verdict: "APPROVE_WITH_FINDINGS", findings: [COMMENTS_FINDING], aspects_examined: {}, summary: "one prose finding" };
 export const RR_NOT_ADDRESSED = { verdicts: [{ finding_id: "r0-f1", verdict: "NOT_ADDRESSED" }], new_breakage: [] };
 export const RR_ADDRESSED = { verdicts: [{ finding_id: "r0-f1", verdict: "ADDRESSED" }], new_breakage: [] };
 export const DEBUG_FIX_DONE = {

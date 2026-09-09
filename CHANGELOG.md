@@ -6,6 +6,58 @@ All notable changes to the spec-loop plugin are documented here. The format is
 [v1 repository](https://github.com/z2297/spec-loop).
 
 ## [Unreleased]
+### Added
+- **Re-entry: a re-dispatched slice resumes at a stage against its real head instead of
+  replaying the pipeline from its goal.** `slices[].entry {stage: plan|review|fix|verify, head,
+  fix_rounds, review_tier, residual, orders}` on the wave args — `verify` runs stage Z alone,
+  `fix` runs a gate-only measurement then the fix loop with the controller's orders as
+  `order-<N>` findings, `review` re-reviews `base..head` under the next round tag, `plan` tells
+  the planner what the branch already delivers and accepts zero tasks. An unusable entry is a
+  zero-dispatch `internal-error` titled `unusable slice.entry`. Run 20260908-jira-intake lost a
+  whole dispatch when a resumed wave re-planned a delivered slice and dropped three fix orders.
+- **Accepted quality-gate violations.** `args.accepted_violations["<slice>"]` lists
+  `{metric, file, function|null}` fingerprints a human accepted; cumulative like `answers`, no
+  wildcards, never a threshold change. A gate whose every violation is accepted stops blocking
+  while the sidecar still says FAIL and lists them under `quality.accepted`; the `quality-gate`
+  event carries the accepted count; a fingerprint matching nothing is announced as drift.
+  `quality-gate-block` records carry `violations[]` so an acceptance is made by escalation id.
+- **`scripts/redispatch.py`.** `args` builds a wave re-dispatch from the run's own artifacts —
+  non-terminal slices with `slice.entry` from their sidecars, the cumulative `answers` map, the
+  `accepted_violations` map, a `resume.advised` flag — and `accept-violations` records an
+  acceptance by escalation id as one `decision` event (`kind: accepted-violations`) plus the
+  `escalation-answered` event, so acceptance and answer cannot diverge.
+- **An escalation round bound.** The third round of one trigger on one slice (`MAX_ESC_ROUNDS =
+  2`) is reframed `non-terminating:` with the three actions a controller can take; a record
+  whose id already holds an answer is returned ANSWERED. `run_state.py open-escalations` marks a
+  record that repeats an answered one (same violation set, else same context and question) as
+  `repeat_of`.
+- **Test evidence per addressed finding.** `FIX_RESULT.tests_added: [{finding_id, test}]`; the
+  re-reviewer sees the fixer's `addressed`, `tests_added` and `tests`, and a `correctness`/
+  `errors` finding closed ADDRESSED with no named test stays open with a `decision` saying so.
+
+### Changed
+- **The sidecar's `quality` block is always the LAST measurement taken**, on every exit path,
+  stamped `{head_sha, tree_sha, measured_at, violations}`; the `quality-gate` event carries the
+  same and a `stage`. Verification is recorded before it is judged (`tests.passed`), every
+  fix-loop escalation re-measures the gate at the current head first (`gate:remeasure`, one
+  haiku dispatch) and carries the open findings on `review.open`. Run 20260908 shipped six
+  pre-fix quality blocks the controller re-measured by hand.
+- **Answers reach the agent that acts on them**: `review-block` is read by the fixer and the
+  debug-fixer, a task-blocked `ambiguity` by the task retry (first attempts stay byte-identical
+  so plain re-dispatch cache hits survive), plan-raised triggers by the planner as before.
+  Escalation options name the controller action and the entry it builds.
+- `commands/spec-loop.md` step 7 and Resume drain answers and build entries through
+  `redispatch.py args`; `skills/escalation-gate/SKILL.md` gains a same-run precedent bullet and
+  two violations (accepting in prose alone; hand-writing a DONE sidecar).
+
+### Fixed
+- **The fix prompt named `packages/<slice>-round2.md`, a file nothing writes**: the tag was
+  derived from `fix_rounds` after the round counter had advanced. Package tags now live in state
+  (`reviewPackage`/`fixPackage`), set by the stage that writes each file.
+- **`run_state.py persist-slice` re-opened an answered escalation** when a sidecar still
+  embedded the record with `status: OPEN` (run 20260908, `j1:quality-gate-block:2`, rendered OPEN
+  on a DONE slice). It now reads the log first, never re-emits `escalation-opened` for an
+  answered id, and settles embedded records to ANSWERED.
 
 ## [2.4.0] - 2026-09-08
 ### Added

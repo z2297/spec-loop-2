@@ -5,21 +5,14 @@ Run 20260908-jira-intake hand-assembled every re-dispatch and paid three ways: a
 dropped answer key re-opened an answered round, a re-plan from the slice goal lost
 the controller's fix orders, and one acceptance was ruled in prose three times.
 
-    redispatch.py args --run-dir D --wave N --repo-dir R \\
-        --stage <slice>=<plan|review|fix|verify> [--stage ...] \\
-        [--orders <slice>=<file|->] [--head <slice>=<sha>]
-        -> {"slices": [non-terminal slices, each with slice.entry when its sidecar
-                        has commits.head], "answers": {every answered id: answer},
-            "accepted_violations": {slice: [{metric, file, function}]},
-            "notes": [...], "resume": {"advised": bool, "reason": str}}
-
-    redispatch.py accept-violations --run-dir D --ts TS --slice S \\
-        --from-escalation ESC (--all | --json <file|->) [--answer TEXT]
-        -> ONE `decision` event (kind: accepted-violations) with the fingerprints,
-           plus the `escalation-answered` event under --answer, so the two cannot diverge.
-
-Writes only through run_state.append_event; branch and worktree paths come from
-worktrees.py. Exit 0 ok / 2 usage or contract error (stderr).
+`args --run-dir D --wave N --repo-dir R --stage <slice>=<plan|review|fix|verify>
+[--orders <slice>=<file|->] [--head <slice>=<sha>]` prints {slices (non-terminal,
+each with slice.entry when its sidecar has commits.head), answers (every answered
+id), accepted_violations, notes, resume{advised, reason}}. `accept-violations
+--run-dir D --ts TS --slice S --from-escalation ESC (--all | --json <file|->)
+[--answer TEXT]` appends ONE decision event (kind: accepted-violations) plus the
+escalation-answered event under --answer, so the two cannot diverge. Writes only
+through run_state.append_event; paths come from worktrees.py. Exit 0 / 2 (stderr).
 """
 
 import argparse
@@ -40,10 +33,6 @@ TERMINAL_SIDECAR = ("DONE", "SPLIT")
 ACCEPTANCE_KIND = "accepted-violations"
 SLICE_ARG_KEYS = ("id", "goal", "files", "subsystems", "risk_tier", "depth")
 
-
-# --------------------------------------------------------------------------
-# fingerprints
-# --------------------------------------------------------------------------
 
 def normalize_fingerprint(raw):
     """{metric, file, function|null} with a normalized path (PURE). Raises
@@ -69,24 +58,13 @@ def _nonempty(value):
     return isinstance(value, str) and bool(value.strip())
 
 
-def _fp_key(fp):
-    return (fp["metric"], fp["file"], fp["function"] or "")
-
-
 def dedupe_fingerprints(fingerprints):
     """Order-preserving, keyed on (metric, file, function) (PURE)."""
-    seen, out = set(), []
+    seen = {}
     for fp in fingerprints:
-        key = _fp_key(fp)
-        if key not in seen:
-            seen.add(key)
-            out.append(fp)
-    return out
+        seen.setdefault((fp["metric"], fp["file"], fp["function"] or ""), fp)
+    return list(seen.values())
 
-
-# --------------------------------------------------------------------------
-# reading the run
-# --------------------------------------------------------------------------
 
 def read_sidecar(run_dir, slice_id):
     """The slice's sidecar, or None when it was never persisted."""
@@ -118,8 +96,7 @@ def acceptances_from_events(events):
 
 
 def _lenient_fingerprints(raw):
-    """Recorded fingerprints were validated on the way in; one that no longer
-    parses is skipped rather than aborting the whole re-dispatch."""
+    """Recorded fingerprints were validated on the way in; a stale one is skipped."""
     out = []
     for item in raw:
         try:
@@ -136,19 +113,12 @@ def wave_slice_ids(dag, wave_index):
     raise rs.RunStateError("dag.json has no wave with index %d" % wave_index)
 
 
-# --------------------------------------------------------------------------
-# args
-# --------------------------------------------------------------------------
-
 def parse_assignments(pairs, label):
     """['s1=fix', ...] -> {'s1': 'fix'}; a malformed pair is a usage error."""
-    out = {}
     for pair in pairs or []:
         if "=" not in pair:
             raise rs.RunStateError("--%s expects <slice>=<value>, got %r" % (label, pair))
-        slice_id, value = pair.split("=", 1)
-        out[slice_id] = value
-    return out
+    return dict(pair.split("=", 1) for pair in pairs or [])
 
 
 def build_entry(sidecar, stage, head_override, orders_override):
@@ -186,12 +156,12 @@ def _sidecar_head(sidecar):
 
 def _branch_tip(repo_dir, branch):
     """The branch's current sha, or None when the branch or repo is unavailable."""
+    argv = ["git", "-C", repo_dir, "rev-parse", "--verify", "--quiet", branch]
     try:
-        proc = subprocess.run(["git", "-C", repo_dir, "rev-parse", "--verify", "--quiet", branch],
-            capture_output=True, text=True, shell=False, check=False)
+        proc = subprocess.run(argv, capture_output=True, text=True, shell=False, check=False)
     except OSError:
         return None
-    return proc.stdout.strip() or None if proc.returncode == 0 else None
+    return (proc.stdout.strip() or None) if proc.returncode == 0 else None
 
 
 def _skipped_note(dag_slice, sidecar):
@@ -270,10 +240,6 @@ def _resume_advice(slices):
     return {"advised": False, "reason": "every dispatched slice carries an entry; its first prompt differs, so the journal cannot help it"}
 
 
-# --------------------------------------------------------------------------
-# accept-violations
-# --------------------------------------------------------------------------
-
 def _opened_record(events, esc_id):
     for event in reversed(events):
         payload = event.get("payload")
@@ -322,10 +288,6 @@ def accept_violations(run_dir, ts, request):
 def _describe(fp):
     return "%s %s%s" % (fp["metric"], fp["file"], ":" + fp["function"] if fp["function"] else "")
 
-
-# --------------------------------------------------------------------------
-# CLI
-# --------------------------------------------------------------------------
 
 def _orders_arg(pairs):
     """--orders <slice>=<file|-> -> {slice: list}; each file is a JSON list."""

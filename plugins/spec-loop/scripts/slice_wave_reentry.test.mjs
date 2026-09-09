@@ -14,6 +14,7 @@ import {
   VERIFY_SUITE_RED, GATE_REMEASURE, FIX_BLOCKED, FIX_ROUND_TWO,
   RR_NOT_ADDRESSED, RR_ADDRESSED, DEBUG_FIX_DONE,
   reentrySlice, ENTRY_HEAD, ORDER_TEXT, RR_ORDER_ADDRESSED, PLAN_EMPTY, TASK_BLOCKED, TASK_RETRY_DONE,
+  FIX_UNTESTED, REVIEW_COMMENTS_ONLY,
 } from "./slice_wave_reentry_fixtures.mjs";
 
 const T2 = () => [sliceFixture("s1", 2)];
@@ -231,4 +232,34 @@ test("a task-blocked ambiguity answer reaches the retry prompt and not the first
   assert.equal(r.status, "DONE");
   assert.match(promptOf(sandbox, "s1:task:t1:retry"), /USE-THE-SECOND-STORE/);
   assert.doesNotMatch(promptOf(sandbox, "s1:task:t1"), /USE-THE-SECOND-STORE/);
+});
+
+// ── Test evidence: a behavioural fix without a covering test is a claim ───
+// Run 20260908 shipped ~16 defects in code every report called green. The
+// re-reviewer now sees what the fixer claims (addressed, tests_added, tests),
+// and a correctness/errors finding closed ADDRESSED with no named test stays open.
+
+test("the re-review prompt carries the fixer's addressed list and named tests", async () => {
+  const sandbox = fullPipeline();
+  await run(sandbox);
+  const rr = promptOf(sandbox, "s1:re-review:1");
+  assert.match(rr, /test_the_claim_holds/);
+  assert.match(rr, /addressed/);
+});
+
+test("a correctness finding closed without a named test stays open into the next round", async () => {
+  const sandbox = pipelineWith({ "fix:1": FIX_UNTESTED, "fix:2": FIX_ROUND_TWO, "re-review:2": RR_ADDRESSED });
+  const r = await run(sandbox);
+  assert.equal(r.status, "DONE");
+  assert.ok(sandbox.seen.some((d) => d.label === "s1:fix:2"), "a second fix round ran");
+  const kept = r.events.filter((e) => e.type === "decision" && /closed without test evidence/.test(e.payload.summary));
+  assert.equal(kept.length, 1);
+  assert.match(kept[0].payload.summary, /r0-f1/);
+});
+
+test("a prose finding closes on the re-reviewer's word alone", async () => {
+  const sandbox = pipelineWith({ "review:full": REVIEW_COMMENTS_ONLY, "fix:1": FIX_UNTESTED });
+  const r = await run(sandbox);
+  assert.equal(r.status, "DONE");
+  assert.ok(!sandbox.seen.some((d) => d.label === "s1:fix:2"));
 });

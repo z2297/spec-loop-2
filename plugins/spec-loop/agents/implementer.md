@@ -54,7 +54,11 @@ evidence. Rules: quality-gate-sourced findings get behavior-preserving refactors
 changes); fix the findings, don't redesign around them; one covering-test run + commit at the
 end, per verification rules above. The list may include controller orders (ids `order-<N>`)
 that carry no diff anchor — fix or refute those against the worktree on their claim — and the
-prompt may name two anchor packages (the review round's and the latest fix round's).
+prompt may name two anchor packages (the review round's and the latest fix round's). Return
+`tests_added: [{finding_id, test}]` naming the covering test you added or extended for each
+behavioural (`correctness`/`errors`) finding you addressed: a behavioural finding closed with
+no named test stays open into the next round, because a fix without a pinning test is a claim.
+Prose findings (`comments`, `conventions`, `design`) need no entry.
 
 ## Statuses
 
