@@ -467,5 +467,56 @@ class TestRenderCli(unittest.TestCase):
         self.assertIn("error: ", err)
 
 
+class TestBodyDelimiterNeutralization(unittest.TestCase):
+    """A bare '---' line is ordinary markdown in a Jira card, and this
+    artifact IS the file handed to /spec-loop:spec-loop --from-plan: a card
+    that forges a front-matter delimiter breaks the handoff. Every
+    card-derived surface must still render exactly two '---' lines."""
+
+    BAR = "before\n---\nafter"
+
+    def _delimiter_count(self, record, refinement):
+        """Rendered lines exactly equal to '---'."""
+        text = intake.render_artifact(record, refinement, TS)
+        return len([ln for ln in text.splitlines() if ln == "---"])
+
+    def test_a_rule_in_the_description_keeps_two_delimiters(self):
+        refinement = make_refinement(description=self.BAR)
+        self.assertEqual(
+            self._delimiter_count(make_record(), refinement), 2)
+
+    def test_a_rule_in_the_summary_keeps_two_delimiters(self):
+        record = make_record(summary=self.BAR)
+        self.assertEqual(
+            self._delimiter_count(record, make_refinement()), 2)
+
+    def test_a_rule_in_an_acceptance_criterion_keeps_two_delimiters(self):
+        refinement = make_refinement(acceptance_criteria=[self.BAR])
+        self.assertEqual(
+            self._delimiter_count(make_record(), refinement), 2)
+
+    def test_a_rule_in_a_risk_keeps_two_delimiters(self):
+        refinement = make_refinement(
+            risks=[{"id": "R1", "risk": self.BAR, "severity": "high"}])
+        self.assertEqual(
+            self._delimiter_count(make_record(), refinement), 2)
+
+    def test_a_rule_in_a_gap_question_keeps_two_delimiters(self):
+        refinement = make_refinement(
+            gaps=[{"id": "G1", "question": self.BAR,
+                   "impact": "high", "blocking": True}])
+        self.assertEqual(
+            self._delimiter_count(make_record(), refinement), 2)
+
+    def test_the_posted_comment_bodies_are_not_rewritten(self):
+        """j3 posts these to Jira, where '---' is harmless, and
+        comment_marker hashes the payload: only the EMBEDDED copy is
+        neutralized."""
+        refinement = make_refinement(description=self.BAR)
+        built = intake.build_comment_bodies(
+            make_record(), refinement, TS)
+        self.assertIn("\n---\n", built[0]["body"])
+
+
 if __name__ == "__main__":
     unittest.main()
