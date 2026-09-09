@@ -149,7 +149,7 @@ the tool set and this section exact.
    ## 2. Acceptance criteria
    ## 3. Risks
    ## 4. Gaps and answers
-   ## 5. Comment bodies (rendered, not posted)
+   ## 5. Comment bodies (rendered here; posted only on confirmation)
    ## 6. Untrusted-input findings
    ```
    Every string-valued field is emitted as a double-quoted, JSON-escaped scalar so that

@@ -420,7 +420,7 @@ ARTIFACT_SECTIONS = ("## 1. Refined description",
                      "## 2. Acceptance criteria",
                      "## 3. Risks",
                      "## 4. Gaps and answers",
-                     "## 5. Comment bodies (rendered, not posted)",
+                     "## 5. Comment bodies (rendered here; posted only on confirmation)",
                      "## 6. Untrusted-input findings")
 
 
@@ -530,8 +530,9 @@ def render_artifact(record, refinement, ts):
               for r in refinement["risks"]]
     lines += ["", ARTIFACT_SECTIONS[3], ""] + _gap_rows(refinement)
     lines += ["", ARTIFACT_SECTIONS[4], "",
-              "This slice posts nothing. Each body below is what "
-              "/spec-loop:jira-intake would post, marker included.", ""]
+              "This module renders and posts nothing. Each body below is "
+              "exactly what /spec-loop:jira-intake posts to the card, "
+              "marker included, once the human confirms.", ""]
     lines += _comment_blocks(comments)
     lines += ["", ARTIFACT_SECTIONS[5], ""]
     lines += (["- %s" % _neutralize_delimiters(f)
