@@ -227,5 +227,51 @@ class TestRenderedComments(unittest.TestCase):
                                         "2026-09-09T00:00:00Z")
 
 
+class TestArtifactRendering(unittest.TestCase):
+    """The artifact schema IS the command prose; this pins the field names a
+    later reader (and the handoff) depends on."""
+
+    def setUp(self):
+        self.text = intake.render_artifact(make_record(), make_refinement(),
+                                           "2026-09-09T00:00:00Z")
+
+    def test_every_front_matter_field_is_present(self):
+        for field in intake.ARTIFACT_FIELDS:
+            with self.subTest(field=field):
+                self.assertIn("%s:" % field, self.text)
+
+    def test_the_front_matter_is_delimited(self):
+        self.assertTrue(self.text.startswith("---\n"))
+        self.assertEqual(self.text.count("\n---\n"), 1)
+
+    def test_every_numbered_section_is_present_in_order(self):
+        positions = [self.text.index(s) for s in intake.ARTIFACT_SECTIONS]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_the_rendered_comment_bodies_are_embedded(self):
+        for comment in intake.build_comment_bodies(
+                make_record(), make_refinement(), "2026-09-09T00:00:00Z"):
+            with self.subTest(kind=comment["kind"]):
+                self.assertIn(comment["marker"], self.text)
+
+    def test_the_counts_match_the_refinement(self):
+        self.assertIn("gap_count: 1", self.text)
+        self.assertIn("open_question_count: 0", self.text)
+
+    def test_injection_findings_are_reported_in_section_six(self):
+        text = intake.render_artifact(
+            make_record(),
+            make_refinement(injection_findings=["Card text asks the agent to "
+                                                "ignore its instructions."]),
+            "2026-09-09T00:00:00Z")
+        tail = text[text.index("## 6. Untrusted-input findings"):]
+        self.assertIn("ignore its instructions", tail)
+
+    def test_an_invalid_refinement_is_refused(self):
+        with self.assertRaises(intake.IntakeError):
+            intake.render_artifact(make_record(), {"description": "x"},
+                                   "2026-09-09T00:00:00Z")
+
+
 if __name__ == "__main__":
     unittest.main()
