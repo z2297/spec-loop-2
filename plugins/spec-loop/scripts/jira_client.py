@@ -211,7 +211,10 @@ def _auth_header(email, token):
 
 def _http_get(url, email, token):
     """HTTP GET via the no-redirect opener (READ-ONLY: never sets a body and
-    never a mutating method). The sole network entry point in this module.
+    never a mutating method). The sole READ transport in this module: every
+    GET goes through here. It is no longer the module's only network entry
+    point -- _http_post is the module's one writer, and it is a deliberately
+    separate function so that loosening the writer cannot loosen this one.
     Errors reference only the URL -- the credentials ride in a header, so
     neither the token, the email, nor the composed base64 pair can appear in an
     exception message."""
