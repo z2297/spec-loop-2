@@ -108,7 +108,7 @@ def validate_issue_key(key):
     if not ISSUE_KEY_RE.fullmatch(key or ""):
         raise JiraUsageError(
             f"invalid Jira issue key {key!r}: must match {ISSUE_KEY_RE.pattern} "
-            "(an uppercase project key, a hyphen, then digits -- e.g. A-1 or PROJ-42)"
+            "(an uppercase project key, a hyphen, then digits -- e.g. AB-1 or PROJ-42)"
         )
     return key
 

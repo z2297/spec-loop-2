@@ -71,9 +71,20 @@ class TestIssueKeyValidation(unittest.TestCase):
             jc.validate_issue_key("ABC-123\nrm -rf /")
 
     def test_the_rejection_message_names_the_expected_pattern(self):
+        # The message's own worked examples must be keys this function
+        # ACCEPTS. Asserting a bare substring is what let 'A-1' -- which
+        # ISSUE_KEY_RE rejects, since it requires two to ten characters
+        # before the hyphen -- sit in the message unchallenged.
         with self.assertRaises(jc.JiraUsageError) as ctx:
             jc.validate_issue_key("nope")
-        self.assertIn("A-1", str(ctx.exception))
+        message = str(ctx.exception)
+        self.assertIn("e.g. ", message)
+        tail = message.split("e.g. ", 1)[1].strip().rstrip(")")
+        examples = [part.strip() for part in tail.split(" or ")]
+        self.assertTrue(examples)
+        for example in examples:
+            with self.subTest(example=example):
+                self.assertEqual(jc.validate_issue_key(example), example)
 
 
 class TestBaseUrlValidation(unittest.TestCase):
