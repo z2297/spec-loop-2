@@ -37,7 +37,11 @@ Other commands: `/spec-loop:review-pr` (one consolidated review of any diff),
 `/spec-loop:peer-review` (read-only review of a real PR against business
 requirements), `/spec-loop:quality-gate` and `/spec-loop:knowledge-graph`
 (config), `/spec-loop:dashboard` (terminal) and `/spec-loop:dashboard-serve`
-(web, Docker-preferred singleton on port 8787).
+(web, Docker-preferred singleton on port 8787), `/spec-loop:jira-intake` (read
+one Jira card, refine it with you, preview the comments it would post and —
+only after an explicit confirmation — post those comments to that card and
+nothing else: comments only, never a transition, a field edit or a new issue,
+then print the loop handoff).
 
 ## The pipeline
 
@@ -153,17 +157,17 @@ sidecar closed rather than reading as clean.
 
 ## Components
 
-- **Commands (7)**: spec-loop, review-pr, peer-review, quality-gate,
-  knowledge-graph, dashboard, dashboard-serve.
+- **Commands (8)**: spec-loop, review-pr, peer-review, quality-gate,
+  knowledge-graph, dashboard, dashboard-serve, jira-intake.
 - **Workflow (1)**: slice-wave.
 - **Agents (13)**: slice-planner, plan-critic, guardian, skeptic,
   implementer, pr-reviewer, finding-verifier, re-reviewer, simplifier,
   verifier, runbook-writer, peer-reviewer, slice-worker-fallback.
 - **Skills (5)**: escalation-gate, using-spec-loop, test-driven-development,
   systematic-debugging, verification-before-completion.
-- **Scripts (11 runtime + tests)**: dag, worktrees, run_state, review_package,
-  quality_gate, knowledge_graph, run_metrics, pr_resolver, spec_loop_guard,
-  dashboard_server, dashboard_launcher (+ dashboard_assets, and the
+- **Scripts (13 runtime + tests)**: dag, worktrees, run_state, review_package,
+  quality_gate, knowledge_graph, run_metrics, pr_resolver, jira_client, jira_intake,
+  spec_loop_guard, dashboard_server, dashboard_launcher (+ dashboard_assets, and the
   `slice_wave_contract_base` and `slice_wave_contract_radius_driver`
   test-support modules, which back four Node harness modules:
   `slice_wave_behaviour`, `slice_wave_radius`, `slice_wave_radius_partial`

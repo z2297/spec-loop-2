@@ -1,0 +1,200 @@
+{
+  "schema_version": 2,
+  "id": "j3",
+  "status": "DONE",
+  "branch": "spec-loop/20260908-jira-intake/j3",
+  "commits": {
+    "base": "4060156ff5b1c1bef8178381914b44d3a873b8b2",
+    "head": "43ebdf84dc393b06efa33e74d08ed5360bcc42e6"
+  },
+  "risk_tier": 3,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 5,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 3,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 0,
+    "residual": [
+      "P3: Step 8's arming sentence still says \"re-run the same command\" six lines above the new prose whose whole point is that \"the same command\" is ambiguous between the slash command and the jira_client.py CLI. The diff makes this pre-existing line newly jarring: the same paragraph now explicitly forbids re-running \"this whole slash command\" while an earlier sentence uses the bare phrase \"the same command\" for the CLI.",
+      "P3: The new recovery path is conditioned entirely on `<tmp>/comments.json` still existing, but the same paragraph closes off both alternatives (`Do NOT re-run the refinement`, `Do not post the remaining comments by hand`). If the mktemp directory is gone (per :99-100 `<tmp>` comes from `mktemp -d`), the operator is left with no stated recovery at all — the previous prose, false as it was, at least always offered one.",
+      "CONTROLLER-VERIFIED KNOWN LIMITATION (accepted): the corrected recovery path is conditioned on the rendered <tmp>/comments.json still existing. If that mktemp directory is gone after a partial batch failure, the docs now give no stated recovery, because re-running the refinement is correctly forbidden (regenerated wording yields new markers that will not dedupe). This is an inherent consequence of hashing the payload text, not a doc bug: the safe options really are to re-post the same rendered file or to reconcile by hand against the card. Worth a follow-on that persists the rendered comments beside the artifact rather than in mktemp.",
+      "ACCEPTED (P3): Step 8's arming sentence still uses the bare phrase 're-run the same command' a few lines above the new prose that distinguishes the slash command from the jira_client.py CLI. Not unsafe - the corrected paragraph is unambiguous - but the bare phrase reads as jarring beside it."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p 'test_*.py' ; python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_*.py' ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs plugins/spec-loop/scripts/slice_wave_radius.test.mjs plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs plugins/spec-loop/scripts/slice_wave_replan.test.mjs ; node --test --experimental-test-coverage plugins/spec-loop/scripts/dashboard_assets/index.test.mjs",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at 43ebdf8, all six segments run as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 126 tests OK; plugins/spec-loop/scripts/ Ran 1739 tests OK; coverage 'PASS: all per-file and total floors met' with TOTAL 97.1% (7108/7319) vs a 90% floor, jira_client.py 99.6% (465/467) vs 94 and jira_intake.py 96.2% (352/366) vs 91; node slice_wave suites 98/98; node dashboard_assets 48/48. The wave's own verifier reported the same six segments green; this records the controller's independent re-run. CI segment 7 (claude plugin validate) is not run locally.",
+    "scope": "full",
+    "tree_sha": "a5168ba0ac6ef01cf4a23eb95769fdf626aa7ffd"
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "Gate PASSED on the final fix diff (0 violations of 11 checks). Measured across the WHOLE slice at the wave base 4060156, five whole-file class_lines breaches remain - jira_client.py 859, jira_intake.py 508, test_jira_client.py 1278, test_jira_intake.py 475, measure_coverage.py 539 against 300 - with ZERO function-level violations of 606 checks. Accepted as pre-existing debt per run 20260825-scope-ceiling s1; no threshold weakened, no file split, nothing added to coverage_omit.txt."
+  },
+  "escalations": [],
+  "agents_used": 8,
+  "wave": 3,
+  "events": [
+    {
+      "scope": "j3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "refactor-radius",
+      "payload": {
+        "summary": "refactor radius WITHIN: every declared number is at or under its ceiling (compared: rewrite_ratio, touched_existing_files)",
+        "state": "WITHIN",
+        "exceeded": [],
+        "measured": {
+          "rewrite_ratio": 0.15,
+          "touched_existing_files": 2,
+          "rewritten_lines": 4
+        },
+        "thresholds": {
+          "enabled": true,
+          "max_rewrite_ratio": 0.5,
+          "max_touched_existing_files": 8,
+          "min_rewritten_lines": 150
+        },
+        "compared": [
+          "rewrite_ratio",
+          "touched_existing_files"
+        ],
+        "skipped": [],
+        "basis": "Counted from the final task list: 4 existing markdown lines rewritten (the 'genuine no-op' clause line plus the 3-line recovery sentence) against roughly 26 total changed lines (4 rewritten + ~8 new security bullet lines + ~14 new test lines)."
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council"
+        ],
+        "safety": false,
+        "concerns_folded": 4,
+        "deferred": [
+          "Three commits for a two-sentence prose fix plus two assertions is heavier than the change. Tasks 1 and 2 touch the same file and are both pinned by Task 3; folding to one or two commits is cheaper to review and to revert. Not a correctness issue — leave as-is if the run's commit-per-task convention is binding."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "deferred",
+      "payload": {
+        "summary": "Three commits for a two-sentence prose fix plus two assertions is heavier than the change. Tasks 1 and 2 touch the same file and are both pinned by Task 3; folding to one or two commits is cheaper to review and to revert. Not a correctness issue — leave as-is if the run's commit-per-task convention is binding.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j3-t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j3-t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j3-t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:full",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "quality-gate",
+      "payload": {
+        "status": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "review-summary",
+      "payload": {
+        "findings": 2,
+        "confirmed": 0,
+        "refuted": 0,
+        "fix_rounds": 0,
+        "reviewers": 1
+      }
+    },
+    {
+      "scope": "j3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

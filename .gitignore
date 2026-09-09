@@ -16,3 +16,6 @@ __pycache__/
 .done
 .paused
 .publish-choice
+
+# spec-loop Jira intake artifacts (card text; never commit)
+.spec-loop-jira/
