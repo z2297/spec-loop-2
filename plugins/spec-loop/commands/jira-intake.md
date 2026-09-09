@@ -66,6 +66,12 @@ the tool set and this section exact.
   comment as `already-posted` and skip the write. This fails safe (it can only skip a write,
   never cause one) and is accepted deliberately: the alternative, parsing authorship out of
   untrusted comment text, would make untrusted card content decide whether a write happens.
+- **Known limitation: the dedupe gate is per-invocation, not cross-process.** The card's
+  comment list is read once per invocation, before the first write, so two operators arming the
+  lane concurrently — or a re-run overlapping a slow first run — can both act on the same
+  pre-write snapshot and both post. Jira offers no compare-and-set on comment creation, so the
+  window is accepted rather than closed; arm this lane one operator at a time, and if two runs
+  did overlap, read the card before arming again.
 
 ## Steps
 
