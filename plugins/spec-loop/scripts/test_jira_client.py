@@ -528,5 +528,99 @@ class TestAcceptanceCriteria(unittest.TestCase):
         self.assertEqual((text, source), ("", ""))
 
 
+def raw_comment(cid, text, author="Mia Krystof"):
+    """A minimal Jira comment fixture in REST v3 shape (ADF body)."""
+    return {"id": str(cid),
+            "author": {"displayName": author, "accountId": "5b10a284"},
+            "body": adf(para(text)),
+            "created": "2021-01-17T12:34:00.000+0000",
+            "updated": "2021-01-18T23:45:00.000+0000"}
+
+
+def comment_page(start, total, comments, max_results=100):
+    """A PageOfComments payload -- note the key is `comments`, not `values`."""
+    return json.dumps({"startAt": start, "maxResults": max_results,
+                       "total": total, "comments": comments}).encode("utf-8")
+
+
+class TestFetchComments(unittest.TestCase):
+    def test_a_single_page_is_normalized(self):
+        page = comment_page(0, 1, [raw_comment(10000, "hello")])
+        with mock.patch.object(jc, "_http_get", return_value=page):
+            got = jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
+        self.assertEqual(got, [{
+            "id": "10000", "author": "Mia Krystof",
+            "created": "2021-01-17T12:34:00.000+0000",
+            "updated": "2021-01-18T23:45:00.000+0000",
+            "body": "hello"}])
+
+    def test_every_page_is_followed_until_total_is_reached(self):
+        pages = [
+            comment_page(0, 3, [raw_comment(1, "a"), raw_comment(2, "b")]),
+            comment_page(2, 3, [raw_comment(3, "c")]),
+        ]
+        with mock.patch.object(jc, "_http_get", side_effect=pages) as get:
+            got = jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
+        self.assertEqual([c["id"] for c in got], ["1", "2", "3"])
+        self.assertEqual(get.call_count, 2)
+
+    def test_the_first_request_asks_for_the_configured_page_size(self):
+        page = comment_page(0, 0, [])
+        with mock.patch.object(jc, "_http_get", return_value=page) as get:
+            jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
+        url = get.call_args.args[0]
+        self.assertIn("/rest/api/3/issue/ABC-1/comment?", url)
+        self.assertIn("startAt=0", url)
+        self.assertIn("maxResults=%d" % jc.COMMENT_PAGE_SIZE, url)
+
+    def test_the_second_request_advances_start_at(self):
+        pages = [comment_page(0, 3, [raw_comment(1, "a"), raw_comment(2, "b")]),
+                 comment_page(2, 3, [raw_comment(3, "c")])]
+        with mock.patch.object(jc, "_http_get", side_effect=pages) as get:
+            jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
+        self.assertIn("startAt=2", get.call_args_list[1].args[0])
+
+    def test_no_comments_yields_an_empty_list(self):
+        with mock.patch.object(jc, "_http_get", return_value=comment_page(0, 0, [])):
+            self.assertEqual(
+                jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1"), [])
+
+    def test_an_empty_page_short_circuits_a_lying_total(self):
+        pages = [comment_page(0, 999, [raw_comment(1, "a")]),
+                 comment_page(1, 999, [])]
+        with mock.patch.object(jc, "_http_get", side_effect=pages) as get:
+            got = jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
+        self.assertEqual(len(got), 1)
+        self.assertEqual(get.call_count, 2)
+
+    def test_a_runaway_server_is_capped_by_max_pages(self):
+        endless = comment_page(0, 10 ** 9, [raw_comment(1, "a")])
+        with mock.patch.object(jc, "_http_get", return_value=endless) as get:
+            with self.assertRaises(jc.JiraError) as ctx:
+                jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
+        self.assertEqual(get.call_count, jc.MAX_COMMENT_PAGES)
+        self.assertIn("pages", str(ctx.exception))
+
+    def test_a_missing_author_object_renders_as_empty(self):
+        c = raw_comment(1, "a")
+        del c["author"]
+        with mock.patch.object(jc, "_http_get", return_value=comment_page(0, 1, [c])):
+            got = jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
+        self.assertEqual(got[0]["author"], "")
+
+    def test_a_page_missing_the_comments_key_raises(self):
+        payload = json.dumps({"startAt": 0, "maxResults": 100, "total": 1,
+                              "values": []}).encode("utf-8")
+        with mock.patch.object(jc, "_http_get", return_value=payload):
+            with self.assertRaises(jc.JiraError):
+                jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
+
+    def test_an_invalid_key_is_rejected_before_any_request(self):
+        with mock.patch.object(jc, "_http_get") as get:
+            with self.assertRaises(jc.JiraUsageError):
+                jc.fetch_comments("https://acme.atlassian.net", "e", "t", "x/y")
+        get.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

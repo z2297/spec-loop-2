@@ -369,3 +369,56 @@ def resolve_acceptance_criteria(issue, ac_field_id, description_text):
     if from_description:
         return (from_description, "description")
     return ("", "")
+
+
+COMMENT_PAGE_SIZE = 100
+MAX_COMMENT_PAGES = 100
+
+
+def fetch_comments(base_url, email, token, key):
+    """GET the FULL, paginated comment list for one issue key via a
+    startAt-paginated sweep of /rest/api/3/issue/{key}/comment, normalized to
+    [{"id", "author", "created", "updated", "body"}, ...] in server order.
+
+    Verified against Atlassian's REST v3 docs (2026-09-08): the server default
+    maxResults is 50, so a single unpaginated GET silently truncates a chatty
+    card and would defeat comment-based dedupe downstream. This sweep asks for
+    COMMENT_PAGE_SIZE per page and keeps requesting until the accumulated
+    count reaches the page's reported `total`, or a page comes back empty
+    (guarding against a `total` that lies). MAX_COMMENT_PAGES bounds a
+    runaway/misbehaving server so this cannot loop forever.
+
+    The key is validated BEFORE any request is issued. A page missing the
+    `comments` list (the REST v3 shape; NOT `values`, which belongs to the
+    unrelated POST /rest/api/3/comment/list endpoint) raises rather than
+    silently degrading to "no comments" -- swallowing a shape change here
+    would silently defeat dedupe on a chatty card."""
+    validate_issue_key(key)
+    comments = []
+    start = 0
+    base = f"{_issue_url(base_url, key)}/comment"
+    for _ in range(MAX_COMMENT_PAGES):
+        query = urllib.parse.urlencode(
+            {"startAt": start, "maxResults": COMMENT_PAGE_SIZE})
+        url = f"{base}?{query}"
+        page = _parse_json(
+            _http_get(url, email, token).decode("utf-8"), "comment page")
+        page_comments = page.get("comments") if isinstance(page, dict) else None
+        if not isinstance(page_comments, list):
+            raise JiraError(
+                "Jira comment page is missing the 'comments' list; cannot "
+                "read the full comment history")
+        for c in page_comments:
+            comments.append({
+                "id": str(c.get("id") or ""),
+                "author": ((c.get("author") or {}).get("displayName") or ""),
+                "created": c.get("created") or "",
+                "updated": c.get("updated") or "",
+                "body": adf_to_text(c.get("body")),
+            })
+        if not page_comments or len(comments) >= int(page.get("total") or 0):
+            return comments
+        start += len(page_comments)
+    raise JiraError(
+        f"comment pagination did not terminate after {MAX_COMMENT_PAGES} "
+        f"pages for {key}; refusing a possibly-truncated comment history")
