@@ -37,7 +37,9 @@ Other commands: `/spec-loop:review-pr` (one consolidated review of any diff),
 `/spec-loop:peer-review` (read-only review of a real PR against business
 requirements), `/spec-loop:quality-gate` and `/spec-loop:knowledge-graph`
 (config), `/spec-loop:dashboard` (terminal) and `/spec-loop:dashboard-serve`
-(web, Docker-preferred singleton on port 8787).
+(web, Docker-preferred singleton on port 8787), `/spec-loop:jira-intake` (read
+one Jira card, refine it with you, render the comments it would post, and print
+the loop handoff).
 
 ## The pipeline
 
@@ -153,16 +155,16 @@ sidecar closed rather than reading as clean.
 
 ## Components
 
-- **Commands (7)**: spec-loop, review-pr, peer-review, quality-gate,
-  knowledge-graph, dashboard, dashboard-serve.
+- **Commands (8)**: spec-loop, review-pr, peer-review, quality-gate,
+  knowledge-graph, dashboard, dashboard-serve, jira-intake.
 - **Workflow (1)**: slice-wave.
 - **Agents (13)**: slice-planner, plan-critic, guardian, skeptic,
   implementer, pr-reviewer, finding-verifier, re-reviewer, simplifier,
   verifier, runbook-writer, peer-reviewer, slice-worker-fallback.
 - **Skills (5)**: escalation-gate, using-spec-loop, test-driven-development,
   systematic-debugging, verification-before-completion.
-- **Scripts (12 runtime + tests)**: dag, worktrees, run_state, review_package,
-  quality_gate, knowledge_graph, run_metrics, pr_resolver, jira_client,
+- **Scripts (13 runtime + tests)**: dag, worktrees, run_state, review_package,
+  quality_gate, knowledge_graph, run_metrics, pr_resolver, jira_client, jira_intake,
   spec_loop_guard, dashboard_server, dashboard_launcher (+ dashboard_assets, and the
   `slice_wave_contract_base` and `slice_wave_contract_radius_driver`
   test-support modules, which back four Node harness modules:
