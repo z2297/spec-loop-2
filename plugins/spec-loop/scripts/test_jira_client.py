@@ -288,8 +288,7 @@ class TestHttpGetIsReadOnly(unittest.TestCase):
         opener.open.side_effect = TimeoutError("timed out")
         with mock.patch.object(jc, "_OPENER", opener):
             with self.assertRaises(jc.JiraError):
-                jc._http_get(
-                    "https://acme.atlassian.net/x", "fred@example.com", "tok")
+                jc._http_get("https://acme.atlassian.net/x", "fred@example.com", "tok")
 
     def test_the_bare_oserror_message_leaks_no_credential(self):
         email = "fred@example.com"
