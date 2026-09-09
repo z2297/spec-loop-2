@@ -266,6 +266,33 @@ class TestHttpGetIsReadOnly(unittest.TestCase):
             with self.assertRaises(jc.JiraError):
                 jc._http_get("https://acme.atlassian.net/x", "fred@example.com", "tok")
 
+    def test_a_bare_timeout_reading_the_response_becomes_a_jira_error(self):
+        # urllib only wraps an OSError raised by h.request() into a
+        # URLError; a timeout or reset while READING the response to a
+        # GET raises a bare TimeoutError (a plain OSError subclass) out
+        # of h.getresponse()/resp.read() and propagates unwrapped. GET is
+        # the path every invocation takes, so an unmapped OSError here
+        # escapes main()'s exit-1 JSON contract as a raw traceback.
+        opener = mock.MagicMock()
+        opener.open.side_effect = TimeoutError("timed out")
+        with mock.patch.object(jc, "_OPENER", opener):
+            with self.assertRaises(jc.JiraError):
+                jc._http_get(
+                    "https://acme.atlassian.net/x", "fred@example.com", "tok")
+
+    def test_the_bare_oserror_message_leaks_no_credential(self):
+        email = "fred@example.com"
+        token = "s3cr3t-token"
+        pair = base64.b64encode(f"{email}:{token}".encode("utf-8")).decode("ascii")
+        opener = mock.MagicMock()
+        opener.open.side_effect = ConnectionResetError("reset by peer")
+        with mock.patch.object(jc, "_OPENER", opener):
+            with self.assertRaises(jc.JiraError) as ctx:
+                jc._http_get("https://acme.atlassian.net/x", email, token)
+        message = str(ctx.exception)
+        for secret in (token, email, pair):
+            self.assertNotIn(secret, message)
+
 
 class TestHttpPostIsTheOnlyWriter(unittest.TestCase):
     """The plugin's FIRST mutating external call. It is a separate

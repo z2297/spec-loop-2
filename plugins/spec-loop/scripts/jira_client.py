@@ -230,6 +230,18 @@ def _http_get(url, email, token):
         raise JiraError(f"HTTP {exc.code} fetching {url}: {exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise JiraError(f"network error fetching {url}: {exc.reason}") from exc
+    except OSError as exc:
+        # urllib only wraps an OSError raised by h.request() into a
+        # URLError (see CPython's AbstractHTTPHandler.do_open); an
+        # OSError out of h.getresponse() or resp.read() -- e.g. a
+        # timeout or a reset while reading a GET response --
+        # propagates unwrapped and would otherwise slip past the
+        # JiraError handling above and past main()'s exit-1 JSON
+        # contract as a raw traceback. Caught here, terminally, so
+        # every transport failure on the READ path is a JiraError too.
+        # Mirrors the identical guard on _http_post; the message names
+        # only the URL, so no credential can ride out in it.
+        raise JiraError(f"network error fetching {url}: {exc}") from exc
 
 
 def _http_post(url, email, token, payload):
