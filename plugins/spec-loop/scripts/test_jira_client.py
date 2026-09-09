@@ -102,6 +102,25 @@ class TestBaseUrlValidation(unittest.TestCase):
         with self.assertRaises(jc.JiraUsageError):
             jc.validate_base_url("")
 
+    def test_a_malformed_port_raises_jira_usage_error_not_value_error(self):
+        # parts.port is computed lazily by urllib.parse and raises a bare
+        # ValueError for a non-numeric port; that must land on the
+        # fail-closed JiraUsageError, never an uncaught traceback.
+        with self.assertRaises(jc.JiraUsageError):
+            jc.validate_base_url("https://acme.atlassian.net:8080x")
+
+    def test_an_unclosed_ipv6_bracket_raises_jira_usage_error_not_value_error(self):
+        # urlsplit itself raises ValueError("Invalid IPv6 URL") for this input.
+        with self.assertRaises(jc.JiraUsageError):
+            jc.validate_base_url("https://[::1")
+
+    def test_a_password_embedded_in_the_base_url_is_absent_from_the_message(self):
+        with self.assertRaises(jc.JiraUsageError) as ctx:
+            jc.validate_base_url(
+                "https://fred@example.com:SUPERSECRETTOKEN@acme.atlassian.net")
+        self.assertNotIn("SUPERSECRETTOKEN", str(ctx.exception))
+        self.assertNotIn("fred@example.com", str(ctx.exception))
+
 
 class TestCredentials(unittest.TestCase):
     ENV = {
@@ -124,11 +143,11 @@ class TestCredentials(unittest.TestCase):
     def test_each_missing_variable_is_named_in_the_message(self):
         for missing in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN"):
             env = {k: v for k, v in self.ENV.items() if k != missing}
-            with self.subTest(missing=missing):
-                with mock.patch.dict(jc.os.environ, env, clear=True):
-                    with self.assertRaises(jc.JiraUsageError) as ctx:
-                        jc.credentials()
-                self.assertIn(missing, str(ctx.exception))
+            with self.subTest(missing=missing), \
+                 mock.patch.dict(jc.os.environ, env, clear=True), \
+                 self.assertRaises(jc.JiraUsageError) as ctx:
+                jc.credentials()
+            self.assertIn(missing, str(ctx.exception))
 
     def test_all_three_missing_names_all_three(self):
         with mock.patch.dict(jc.os.environ, {}, clear=True):
@@ -295,6 +314,12 @@ class TestSecretsNeverLeak(unittest.TestCase):
                 jc._http_get("https://acme.atlassian.net/x", self.EMAIL, self.TOKEN)
         self._assert_clean(str(ctx.exception))
 
+    def test_a_password_embedded_in_the_base_url_never_leaks(self):
+        raw = f"https://{self.EMAIL}:{self.TOKEN}@acme.atlassian.net"
+        with self.assertRaises(jc.JiraUsageError) as ctx:
+            jc.validate_base_url(raw)
+        self._assert_clean(str(ctx.exception))
+
 
 def adf(*content):
     """Wrap block nodes in a minimal ADF document (hand-built fixture helper)."""
@@ -454,27 +479,27 @@ class TestFetchIssue(unittest.TestCase):
     def test_it_requests_the_default_field_set(self):
         payload = json.dumps(issue_bean()).encode("utf-8")
         with mock.patch.object(jc, "_http_get", return_value=payload) as get:
-            jc.fetch_issue("https://acme.atlassian.net", "e", "t", "ABC-123", None)
+            jc.fetch_issue("https://acme.atlassian.net", ("e", "t"), "ABC-123", None)
         url = get.call_args.args[0]
         self.assertIn("fields=summary%2Cdescription%2Cstatus%2Cissuetype", url)
 
     def test_the_ac_field_id_is_appended_to_the_field_set(self):
         payload = json.dumps(issue_bean()).encode("utf-8")
         with mock.patch.object(jc, "_http_get", return_value=payload) as get:
-            jc.fetch_issue("https://acme.atlassian.net", "e", "t", "ABC-123",
+            jc.fetch_issue("https://acme.atlassian.net", ("e", "t"), "ABC-123",
                            "customfield_10039")
         self.assertIn("customfield_10039", get.call_args.args[0])
 
     def test_an_invalid_key_is_rejected_before_any_request(self):
         with mock.patch.object(jc, "_http_get") as get:
             with self.assertRaises(jc.JiraUsageError):
-                jc.fetch_issue("https://acme.atlassian.net", "e", "t", "../x", None)
+                jc.fetch_issue("https://acme.atlassian.net", ("e", "t"), "../x", None)
         get.assert_not_called()
 
     def test_a_malformed_payload_raises(self):
         with mock.patch.object(jc, "_http_get", return_value=b"nope"):
             with self.assertRaises(jc.JiraError):
-                jc.fetch_issue("https://acme.atlassian.net", "e", "t", "ABC-1", None)
+                jc.fetch_issue("https://acme.atlassian.net", ("e", "t"), "ABC-1", None)
 
 
 class TestAcceptanceCriteria(unittest.TestCase):
@@ -642,10 +667,10 @@ class TestNormalizedRecord(unittest.TestCase):
 
     def test_each_required_field_being_empty_is_a_half_resolve(self):
         for field in jc.REQUIRED_FIELDS:
-            with self.subTest(field=field):
-                with self.assertRaises(jc.JiraError) as ctx:
-                    jc._normalized(dict(self.VALUES, **{field: ""}))
-                self.assertIn(field, str(ctx.exception))
+            with self.subTest(field=field), \
+                 self.assertRaises(jc.JiraError) as ctx:
+                jc._normalized(dict(self.VALUES, **{field: ""}))
+            self.assertIn(field, str(ctx.exception))
 
 
 class TestResolveIssue(unittest.TestCase):

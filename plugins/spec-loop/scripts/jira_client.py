@@ -95,6 +95,33 @@ def validate_issue_key(key):
     return key
 
 
+def _split_base_url(raw):
+    """Split an UNTRUSTED JIRA_BASE_URL into urlsplit's parts, or None when the
+    value cannot be split at all (a malformed IPv6 host) or carries a port
+    that cannot be parsed as an integer (both raise a bare ValueError from
+    urllib.parse, since parts.port is computed lazily on attribute access).
+    Isolating that ValueError here is what keeps every malformed base URL on
+    the fail-closed JiraUsageError path instead of an uncaught traceback."""
+    try:
+        parts = urllib.parse.urlsplit(raw or "")
+        parts.port  # noqa: B018 -- force the lazy, possibly-raising parse now
+    except ValueError:
+        return None
+    return parts
+
+
+def _redacted_base_url(raw, parts):
+    """Render raw for the rejection message with any userinfo stripped, so a
+    credential smuggled into JIRA_BASE_URL's userinfo is never echoed back
+    into the machine-readable error object. Falls back to '<unparsable>' when
+    the value could not even be split (parts is None)."""
+    if parts is None:
+        return "<unparsable>"
+    if parts.username or parts.password:
+        return f"{parts.scheme}://<redacted>@{parts.hostname or ''}"
+    return f"{parts.scheme}://{parts.hostname or ''}"
+
+
 def validate_base_url(raw):
     """Validate an UNTRUSTED JIRA_BASE_URL and return its normalized bare
     origin (scheme + host only -- no trailing slash, no path/query/fragment).
@@ -102,9 +129,10 @@ def validate_base_url(raw):
     composed from this origin plus a literal /rest/api/3/... prefix. Requires
     https, rejects embedded userinfo (userinfo smuggling) or an explicit
     port, and requires the hostname to match ALLOWED_HOST_RE."""
-    parts = urllib.parse.urlsplit(raw or "")
-    ok = (
-        parts.scheme == "https"
+    parts = _split_base_url(raw)
+    ok = bool(
+        parts is not None
+        and parts.scheme == "https"
         and not parts.username
         and not parts.password
         and not parts.port
@@ -112,8 +140,9 @@ def validate_base_url(raw):
     )
     if not ok:
         raise JiraUsageError(
-            f"invalid JIRA_BASE_URL {raw!r}: must be an https URL on a "
-            "*.atlassian.net or *.jira.com host (e.g. https://your-site.atlassian.net)"
+            f"invalid JIRA_BASE_URL {_redacted_base_url(raw, parts)!r}: must be "
+            "an https URL on a *.atlassian.net or *.jira.com host (e.g. "
+            "https://your-site.atlassian.net)"
         )
     return f"https://{parts.hostname.lower()}"
 
@@ -198,67 +227,120 @@ _ADF_MAX_DEPTH = 50
 _ADF_INLINE_TYPES = ("text", "hardBreak", "mention", "inlineCard")
 
 
+def _adf_inline_text(child):
+    """Render a 'text' inline node: its literal text."""
+    return child.get("text", "")
+
+
+def _adf_inline_mention(child):
+    """Render a 'mention' inline node as '@<attrs.text>'. attrs.text already
+    carries the '@' from Jira, so it is used as-is when present."""
+    text = (child.get("attrs") or {}).get("text", "")
+    return text if text.startswith("@") else f"@{text}"
+
+
+def _adf_inline_card(child):
+    """Render an 'inlineCard' inline node as its bare attrs.url."""
+    return (child.get("attrs") or {}).get("url", "")
+
+
+# Maps an inline node's ADF type to a (child) -> str renderer. Looked up once
+# per child in _adf_inline; a type absent here falls back to _adf_block, so an
+# inline node with an unexpected nested block still contributes its rendered
+# text instead of vanishing.
+_INLINE_RENDERERS = {
+    "text": _adf_inline_text,
+    "hardBreak": lambda child: "\n",
+    "mention": _adf_inline_mention,
+    "inlineCard": _adf_inline_card,
+}
+
+
 def _adf_inline(node, depth):
-    """Render a node's inline children into one string: 'text' nodes render
-    their text, 'hardBreak' becomes a newline, 'mention' renders
-    '@<attrs.text>' (attrs.text already carries the '@' from Jira, so it is
-    used as-is when present), and 'inlineCard' renders attrs.url. Any other
-    child falls back to _adf_block, so an inline node with an unexpected
-    nested block still contributes its rendered text instead of vanishing."""
+    """Render a node's inline children into one string via _INLINE_RENDERERS;
+    any child of an unrecognized type falls back to _adf_block."""
     if depth > _ADF_MAX_DEPTH:
         return ""
     parts = []
     for child in node.get("content") or []:
-        ctype = child.get("type")
-        if ctype == "text":
-            parts.append(child.get("text", ""))
-        elif ctype == "hardBreak":
-            parts.append("\n")
-        elif ctype == "mention":
-            text = (child.get("attrs") or {}).get("text", "")
-            parts.append(text if text.startswith("@") else f"@{text}")
-        elif ctype == "inlineCard":
-            parts.append((child.get("attrs") or {}).get("url", ""))
-        else:
-            parts.append(_adf_block(child, depth + 1))
+        renderer = _INLINE_RENDERERS.get(child.get("type"))
+        parts.append(renderer(child) if renderer else _adf_block(child, depth + 1))
     return "".join(parts)
 
 
-def _adf_block(node, depth):
-    """Render one ADF block node to plain text, guarded against pathological
-    nesting: at depth > 50 this returns '' and stops recursing rather than
-    blowing the stack. 'heading' renders '#' * level + ' ' + text;
-    'bulletList' / 'orderedList' items render '- ' / '1. '-prefixed lines
-    joined by a single newline; 'listItem' joins its own blocks with a single
-    newline; 'codeBlock' renders fenced with triple backticks; anything else
-    (including an unrecognized future node type) either renders as inline
-    text, when every child is an inline node type, or as a blank-line-joined
-    sequence of child blocks otherwise -- so an unknown node type still
-    renders its children instead of disappearing."""
-    if depth > _ADF_MAX_DEPTH:
-        return ""
-    ntype = node.get("type")
-    if ntype == "heading":
-        level = (node.get("attrs") or {}).get("level", 1)
-        return "#" * level + " " + _adf_inline(node, depth)
-    if ntype == "codeBlock":
-        return "```\n" + _adf_inline(node, depth) + "\n```"
-    if ntype == "listItem":
-        blocks = [_adf_block(child, depth + 1) for child in node.get("content") or []]
-        return "\n".join(blocks)
-    if ntype == "bulletList":
-        items = [_adf_block(child, depth + 1) for child in node.get("content") or []]
-        return "\n".join(f"- {item}" for item in items)
-    if ntype == "orderedList":
-        items = [_adf_block(child, depth + 1) for child in node.get("content") or []]
-        return "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))
-    if ntype == "paragraph":
-        return _adf_inline(node, depth)
+def _adf_block_children(node, depth):
+    """Render node's direct children as blocks at depth + 1 (a small shared
+    helper for the several block types that recurse over `content`)."""
+    return [_adf_block(child, depth + 1) for child in node.get("content") or []]
+
+
+def _adf_heading(node, depth):
+    """Render a 'heading' block as '#' * level + ' ' + its inline text."""
+    level = (node.get("attrs") or {}).get("level", 1)
+    return "#" * level + " " + _adf_inline(node, depth)
+
+
+def _adf_code_block(node, depth):
+    """Render a 'codeBlock' block fenced with triple backticks."""
+    return "```\n" + _adf_inline(node, depth) + "\n```"
+
+
+def _adf_list_item(node, depth):
+    """Render a 'listItem' block by joining its own blocks with one newline."""
+    return "\n".join(_adf_block_children(node, depth))
+
+
+def _adf_bullet_list(node, depth):
+    """Render a 'bulletList' block as '- '-prefixed lines."""
+    items = _adf_block_children(node, depth)
+    return "\n".join(f"- {item}" for item in items)
+
+
+def _adf_ordered_list(node, depth):
+    """Render an 'orderedList' block as '1. '-prefixed, numbered lines."""
+    items = _adf_block_children(node, depth)
+    return "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))
+
+
+def _adf_paragraph(node, depth):
+    """Render a 'paragraph' block as its inline text."""
+    return _adf_inline(node, depth)
+
+
+# Maps a block node's ADF type to a (node, depth) -> str renderer. A type
+# absent here falls through to _adf_block_fallback, so an unrecognized future
+# node type still renders its children instead of disappearing.
+_BLOCK_RENDERERS = {
+    "heading": _adf_heading,
+    "codeBlock": _adf_code_block,
+    "listItem": _adf_list_item,
+    "bulletList": _adf_bullet_list,
+    "orderedList": _adf_ordered_list,
+    "paragraph": _adf_paragraph,
+}
+
+
+def _adf_block_fallback(node, depth):
+    """Render a block node of an unrecognized (or plain 'doc'-child) type:
+    as inline text when every child is an inline node type, else as a
+    blank-line-joined sequence of child blocks -- so it still renders its
+    children instead of disappearing."""
     children = node.get("content") or []
     if children and all(c.get("type") in _ADF_INLINE_TYPES for c in children):
         return _adf_inline(node, depth)
     rendered = [_adf_block(child, depth + 1) for child in children]
     return "\n\n".join(rendered)
+
+
+def _adf_block(node, depth):
+    """Render one ADF block node to plain text, guarded against pathological
+    nesting: at depth > 50 this returns '' and stops recursing rather than
+    blowing the stack. Dispatches by node type via _BLOCK_RENDERERS, falling
+    back to _adf_block_fallback for any type not listed there."""
+    if depth > _ADF_MAX_DEPTH:
+        return ""
+    renderer = _BLOCK_RENDERERS.get(node.get("type"), _adf_block_fallback)
+    return renderer(node, depth)
 
 
 def adf_to_text(node):
@@ -319,11 +401,14 @@ def find_ac_field_id(base_url, email, token):
     return None
 
 
-def fetch_issue(base_url, email, token, key, ac_field_id):
+def fetch_issue(base_url, creds, key, ac_field_id):
     """GET the raw IssueBean for one issue key, requesting ISSUE_FIELDS plus
-    the acceptance-criteria custom field when one was located. The key is
-    validated BEFORE any request is issued, so a malformed key never reaches
-    the network. Fail-closed: an HTTP error or a malformed body raises."""
+    the acceptance-criteria custom field when one was located. `creds` is the
+    (email, token) pair, bundled as a parameter object to keep this
+    function's own parameter count down. The key is validated BEFORE any
+    request is issued, so a malformed key never reaches the network.
+    Fail-closed: an HTTP error or a malformed body raises."""
+    email, token = creds
     validate_issue_key(key)
     fields = list(ISSUE_FIELDS) + ([ac_field_id] if ac_field_id else [])
     query = urllib.parse.urlencode({"fields": ",".join(fields)})
@@ -341,12 +426,12 @@ def acceptance_criteria_from_description(text):
     collected = []
     inside = False
     for line in lines:
-        if inside:
-            if ANY_HEADING_RE.match(line):
-                break
-            collected.append(line)
-        elif AC_HEADING_RE.match(line):
-            inside = True
+        if not inside:
+            inside = bool(AC_HEADING_RE.match(line))
+            continue
+        if ANY_HEADING_RE.match(line):
+            break
+        collected.append(line)
     return "\n".join(collected).strip()
 
 
@@ -374,6 +459,24 @@ def resolve_acceptance_criteria(issue, ac_field_id, description_text):
 
 COMMENT_PAGE_SIZE = 100
 MAX_COMMENT_PAGES = 100
+
+_MISSING_COMMENTS_MSG = (
+    "Jira comment page is missing the 'comments' list; cannot read the "
+    "full comment history")
+
+
+def _normalize_comment(raw):
+    """Normalize one raw REST v3 comment object to
+    {"id", "author", "created", "updated", "body"}. Extracted out of
+    fetch_comments so its per-field literal stays out of that function's own
+    (indentation-measured) nesting depth."""
+    return {
+        "id": str(raw.get("id") or ""),
+        "author": ((raw.get("author") or {}).get("displayName") or ""),
+        "created": raw.get("created") or "",
+        "updated": raw.get("updated") or "",
+        "body": adf_to_text(raw.get("body")),
+    }
 
 
 def fetch_comments(base_url, email, token, key):
@@ -406,17 +509,8 @@ def fetch_comments(base_url, email, token, key):
             _http_get(url, email, token).decode("utf-8"), "comment page")
         page_comments = page.get("comments") if isinstance(page, dict) else None
         if not isinstance(page_comments, list):
-            raise JiraError(
-                "Jira comment page is missing the 'comments' list; cannot "
-                "read the full comment history")
-        for c in page_comments:
-            comments.append({
-                "id": str(c.get("id") or ""),
-                "author": ((c.get("author") or {}).get("displayName") or ""),
-                "created": c.get("created") or "",
-                "updated": c.get("updated") or "",
-                "body": adf_to_text(c.get("body")),
-            })
+            raise JiraError(_MISSING_COMMENTS_MSG)
+        comments.extend(_normalize_comment(c) for c in page_comments)
         if not page_comments or len(comments) >= int(page.get("total") or 0):
             return comments
         start += len(page_comments)
@@ -456,7 +550,7 @@ def resolve_issue(key):
     base_url, email, token = credentials()
     key = validate_issue_key(key)
     ac_field_id = find_ac_field_id(base_url, email, token)
-    issue = fetch_issue(base_url, email, token, key, ac_field_id)
+    issue = fetch_issue(base_url, (email, token), key, ac_field_id)
     fields = issue.get("fields") or {}
     resolved_key = issue.get("key") or key
     description = adf_to_text(fields.get("description"))
