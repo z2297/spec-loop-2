@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import measure_coverage as mc  # noqa: E402
 
 # Every shipped target's entry shim is a guard header plus a single-line body, so the
-# resolved omission is exactly this many lines. One pin covers all thirteen targets:
+# resolved omission is exactly this many lines. One pin covers all fourteen targets:
 # raising it relaxes every target at once, not just the one that grew.
 SHIPPED_SHIM_LINES = 2
 

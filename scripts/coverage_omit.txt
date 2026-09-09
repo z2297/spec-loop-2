@@ -34,6 +34,7 @@
 scripts/dag.py:__main__                  # process-entry shim; the module is imported, not run as __main__, under unittest
 scripts/dashboard_launcher.py:__main__   # process-entry shim; the module is imported, not run as __main__, under unittest
 scripts/dashboard_server.py:__main__     # process-entry shim; the module is imported, not run as __main__, under unittest
+scripts/jira_client.py:__main__          # process-entry shim; the module is imported, not run as __main__, under unittest
 scripts/knowledge_graph.py:__main__      # process-entry shim; the module is imported, not run as __main__, under unittest
 scripts/pr_resolver.py:__main__          # process-entry shim; the module is imported, not run as __main__, under unittest
 scripts/quality_gate.py:__main__         # process-entry shim; the module is imported, not run as __main__, under unittest
