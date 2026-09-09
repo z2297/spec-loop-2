@@ -243,11 +243,21 @@ def validate_record(record):
 
     The record file is authored by the calling model rather than piped
     straight from jira_client.py, so its shape is a contract to check, not
-    an assumption. Field ORDER follows RECORD_KEYS so the message is stable."""
+    an assumption. Presence alone is not enough: a None scalar renders as
+    the literal text 'None' in the artifact, silently misreporting the
+    card. Field ORDER follows RECORD_KEYS so the message is stable."""
     if not isinstance(record, dict):
         return ["record must be a JSON object"]
-    return ["record is missing required key: %s" % key
-            for key in RECORD_KEYS if key not in record]
+    missing = ["record is missing required key: %s" % key
+               for key in RECORD_KEYS if key not in record]
+    if missing:
+        return missing
+    errors = ["record key %s must be a string" % key
+              for key in RECORD_KEYS
+              if key != "comments" and not isinstance(record[key], str)]
+    if not isinstance(record["comments"], list):
+        errors.append("record key comments must be a list")
+    return errors
 
 
 def _require_valid_record(record):

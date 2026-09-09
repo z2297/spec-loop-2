@@ -226,6 +226,14 @@ class TestRecordValidation(unittest.TestCase):
         with self.assertRaises(intake.IntakeError):
             intake.build_comment_bodies([1, 2], make_refinement(), TS)
 
+    def test_a_none_scalar_is_refused(self):
+        errors = intake.validate_record(make_record(status=None))
+        self.assertEqual(errors, ["record key status must be a string"])
+
+    def test_a_non_list_comments_field_is_refused(self):
+        errors = intake.validate_record(make_record(comments="x"))
+        self.assertEqual(errors, ["record key comments must be a list"])
+
 
 class TestCommentMarker(unittest.TestCase):
     """j3 dedupes by reading this marker back off the card, so it must be
