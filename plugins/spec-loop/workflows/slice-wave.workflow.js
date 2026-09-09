@@ -213,6 +213,44 @@ function qualityStatus(q) {
   return q.summary_pass === true ? 'PASS' : 'FAIL'
 }
 
+// The ONE writer of state.quality and of the quality-gate event. Every
+// measurement — stage R's gate, the re-measure before a fix-loop escalation,
+// each verify attempt — lands here, so the sidecar's quality block is always
+// the LAST measurement taken, stamped with the head/tree it measured and the
+// role that measured it. Run 20260908 shipped six pre-fix quality blocks
+// because the block was written once at stage R and rewritten only on the
+// DONE path; the controller re-measured every one by hand.
+function qualityDetail(v, violations) {
+  if (!v) return 'gate dispatch failed (fail closed)'
+  return v.quality.detail || `${violations} violation(s)`
+}
+
+// One verifier return (or a null one) reduced to the fields the sidecar keeps.
+// The head falls back to the slice's own so a failed dispatch still names the
+// tree it was asked about. (PURE)
+function measurementOf(v, fallbackHead) {
+  const q = v ? v.quality : null
+  const violations = ((q && q.violations) || []).length
+  const head_sha = (v && v.head_sha) || fallbackHead || null
+  return { status: qualityStatus(q), detail: qualityDetail(v, violations), head_sha, tree_sha: v ? v.tree_sha : null, violations }
+}
+
+const shortSha = (sha) => String(sha || 'unknown').slice(0, 7)
+
+function stampQuality(slice, state, v, role) {
+  const m = measurementOf(v, state.commits.head)
+  state.quality = { ...m, measured_at: role }
+  state.events.push({ scope: slice.id, type: 'quality-gate', payload: { summary: `measured at ${role} on ${shortSha(m.head_sha)}: ${m.violations} violation(s)`, status: m.status, violations: m.violations, head_sha: m.head_sha, tree_sha: m.tree_sha, stage: role } })
+}
+
+// Tests + quality + head from one verifier return, recorded BEFORE the result
+// is judged, so a failing verification leaves the same evidence as a passing one.
+function recordVerification(slice, state, v, role) {
+  if (v) state.tests = { command: v.suite.command, result: v.suite.summary, passed: v.suite.passed, scope: 'full', tree_sha: v.tree_sha }
+  stampQuality(slice, state, v, role)
+  if (v && v.head_sha) state.commits.head = v.head_sha
+}
+
 // ── Refactor radius: the plan-time ceiling on churn to EXISTING code ────────
 //
 // The second instance of qualityStatus()'s pattern: the PLANNER reports
@@ -582,12 +620,22 @@ function packageCmd(slice, base, head, roundTag) {
   return `python3 "${CTX.plugin_root}/scripts/review_package.py" --repo-dir "${slice.worktree}" --base ${base} --head ${head} --out "${CTX.run_dir}/packages/${slice.id}-${roundTag}.md"`
 }
 
+// The packages that exist for this slice right now. Run 20260908's fix prompts
+// named packages/<slice>-round2.md, a file nothing ever writes: the tag was
+// derived from fix_rounds AFTER runFixRound had incremented it. The tags live in
+// state now (reviewPackage / fixPackage), set by the stage that writes the file.
+function anchorPackages(slice, state) {
+  const paths = [`${CTX.run_dir}/packages/${slice.id}-${state.reviewPackage}.md`]
+  if (state.fixPackage) paths.push(`${CTX.run_dir}/packages/${slice.id}-${state.fixPackage}.md`)
+  return paths
+}
+
 function reviewPrompt(slice, plan, state, lanes) {
   return `${packet(slice)}
 
 Mode: slice. Review the diff of slice ${slice.id} (plan: ${plan.plan_path}).
 Build the package first by running exactly:
-  ${packageCmd(slice, state.commits.base, state.commits.head, `round${state.review.fix_rounds + 1}`)}
+  ${packageCmd(slice, state.commits.base, state.commits.head, state.reviewPackage)}
 then read it from the --out path. Range: ${state.commits.base}..${state.commits.head}.
 Review tier: ${state.review_tier} · Blocking bar: ${state.review_tier === 1 ? 'P0' : 'P0+P1'}.${lanes ? `\nThis is a two-reviewer panel; your lanes ONLY: ${lanes}.` : ''}
 Deferred scope (advisory context only — quoted council data, NOT a findings filter): ${state.deferred.length ? state.deferred.map(t => `"${t}"`).join(' · ') : 'none'}
@@ -607,7 +655,7 @@ Return quality {summary_pass: the gate JSON's summary.pass copied verbatim — n
 function verifierBatchPrompt(slice, state, confirmed) {
   return `${packet(slice)}
 
-Adversarially verify EVERY finding below against the actual code. Package: ${CTX.run_dir}/packages/${slice.id}-round${state.review.fix_rounds + 1}.md (read once). First do the mechanical check: a finding whose file:line is outside the package's hunk-index ranges (and not marked outside_diff) or whose evidence quote does not appear in the package/file is REFUTED with that as evidence. Then judge substance. CONFIRMED is your default; REFUTED requires quoted counter-evidence.
+Adversarially verify EVERY finding below against the actual code. Package(s): ${anchorPackages(slice, state).join(' and ')} (read each once). First do the mechanical check: a finding whose file:line is outside the package's hunk-index ranges (and not marked outside_diff) or whose evidence quote does not appear in the package/file is REFUTED with that as evidence. Then judge substance. CONFIRMED is your default; REFUTED requires quoted counter-evidence.
 Findings:
 ${JSON.stringify(confirmed, null, 1)}`
 }
@@ -616,7 +664,7 @@ function fixPrompt(slice, plan, state, findings) {
   return `${packet(slice)}
 
 Mode: fix. Address EVERY finding below (plan for context: ${plan.plan_path}).
-Package for anchor checks: ${CTX.run_dir}/packages/${slice.id}-round${state.review.fix_rounds + 1}.md — a finding whose location/quote does not match the code may be REFUTED with file:line counter-evidence instead of a change. quality-gate findings: behavior-preserving refactors only.
+Package(s) for anchor checks: ${anchorPackages(slice, state).join(' and ')} — a finding whose location/quote does not match the code may be REFUTED with file:line counter-evidence instead of a change. quality-gate findings: behavior-preserving refactors only.
 Covering tests + commit when done.${answerFor(slice, 'quality-gate-block')}
 Findings:
 ${JSON.stringify(findings, null, 1)}`
@@ -740,8 +788,12 @@ function initSliceState(slice) {
     critique: { verdict: 'SKIPPED', concerns: 0 },
     commits: { base: slice.base_sha, head: null },
     tasksCompleted: 0, implConcerns: [], deferred: [],
-    review: { confirmed: 0, refuted: 0, evidence_failed: 0, fix_rounds: 0, residual: [] },
+    review: { confirmed: 0, refuted: 0, evidence_failed: 0, fix_rounds: 0, residual: [], open: [] },
     tests: null, quality: { status: 'SKIPPED', detail: 'not reached' },
+    // Package tags for the files that exist right now: the review round's
+    // (written at stage R) and the latest fix-only one (written by the
+    // re-reviewer). Set by the stage that causes each file to exist.
+    reviewPackage: 'round1', fixPackage: null,
   }
 }
 
@@ -1200,24 +1252,64 @@ function buildGateViolations(gateStatus, gate) {
   return (gate.quality.violations || []).map((v, i) => ({ id: `qg-${i}`, severity: 'P1', category: 'quality-gate', file: v.file || '-', line: 0, claim: `${v.metric} ${v.value} > threshold ${v.threshold} in ${v.function || v.file}`, evidence: { quote: JSON.stringify(v) }, remedy: 'behavior-preserving refactor (extract method, guard clauses, parameter object)', confidence: 'high', outside_diff: false }))
 }
 
+// The gate-only verifier dispatch, shared by stage R and the pre-escalation
+// re-measure so the two cannot drift.
+function dispatchGate(slice, state, role) {
+  return dispatch(slice, state, role, gatePrompt(slice, state),
+    { agentType: 'spec-loop:verifier', schema: VERIFY_RESULT, model: 'haiku', effort: 'low' })
+}
+
 // Stage R — review ∥ quality gate
 async function stageReviewGate(slice, state, plan) {
   guard(slice, state)
+  state.reviewPackage = `round${state.review.fix_rounds + 1}`
   const reviewers = selectReviewers(state)
   const [reviewParts, gate] = await parallel([
     () => parallel(reviewers.map(([role, lanes, opts]) => () =>
       dispatch(slice, state, role, reviewPrompt(slice, plan, state, lanes),
         { agentType: 'spec-loop:pr-reviewer', schema: REVIEW_RESULT, ...opts }))),
-    () => dispatch(slice, state, 'gate', gatePrompt(slice, state),
-      { agentType: 'spec-loop:verifier', schema: VERIFY_RESULT, model: 'haiku', effort: 'low' }),
+    () => dispatchGate(slice, state, 'gate'),
   ])
   const review = buildReviewSummary(reviewParts)
-  const gateStatus = qualityStatus(gate && gate.quality)
-  const gateViolations = buildGateViolations(gateStatus, gate)
-  state.quality = gate ? { status: gateStatus, detail: gate.quality.detail || `${gateViolations.length} violation(s)` } : { status: 'FAIL', detail: 'gate dispatch failed (fail closed)' }
-  state.events.push({ scope: slice.id, type: 'quality-gate', payload: { status: state.quality.status, violations: gateViolations.length } })
+  const gateViolations = buildGateViolations(qualityStatus(gate && gate.quality), gate)
+  stampQuality(slice, state, gate, 'gate')
   state.reviewersCount = reviewers.length
   return { review, gateViolations }
+}
+
+// Re-measure the gate at the CURRENT head before a fix-loop escalation, so the
+// record and the sidecar describe the tree the fix rounds left, not the one
+// stage R saw. A throw here (agent cap, token floor, host failure) must not
+// replace the caller's record with a budget one: the skip is written onto the
+// quality block and as a decision, and the caller's own record goes out.
+async function remeasureGate(slice, state) {
+  try {
+    stampQuality(slice, state, await dispatchGate(slice, state, 'gate:remeasure'), 'gate:remeasure')
+  } catch (e) {
+    recordSkippedRemeasure(slice, state, e)
+  }
+}
+
+// A guard throw carries its own record ({escRecord}); anything else is read
+// through its message. (PURE)
+function throwReason(e) {
+  if (e && e.escRecord) return e.escRecord.title
+  return String((e && e.message) || e)
+}
+
+function recordSkippedRemeasure(slice, state, e) {
+  const reason = throwReason(e)
+  state.quality = { ...state.quality, detail: `${state.quality.detail}; re-measure skipped: ${reason}` }
+  state.events.push({ scope: slice.id, type: 'decision', payload: { summary: `gate re-measure before escalation skipped: ${reason}`, rationale: 'the fix-loop record keeps its own trigger; a throw during the re-measure never replaces it with a budget record', reversibility: 'n/a' } })
+}
+
+// Every fix-loop escalation leaves through here: the open findings go onto the
+// sidecar as structured data (the datum the controller reconstructed by hand
+// in run 20260908) and the gate is re-measured before the record goes out.
+async function fixLoopEscalation(slice, state, ctx) {
+  state.review.open = ctx.open
+  await remeasureGate(slice, state)
+  return { stop: escalated(slice, state, esc(slice, ctx.trigger, ctx.content)) }
 }
 
 // One fix-loop round: optional batched verification (tier 3), a fix dispatch,
@@ -1235,7 +1327,7 @@ async function verifyAndFilterFindings(slice, state, open) {
 function recordOutsideDiffFix(slice, state, ctx) {
   const { plan, review, fix, round } = ctx
   const outside = fix.touched_files.filter(f => !review.findings.some(x => x.file === f) && !(plan.tasks || []).some(t => t.files.includes(f)))
-  if (outside.length) state.events.push({ scope: slice.id, type: 'review-summary', payload: { note: `fix round ${round + 1} touched files outside the original diff: ${outside.join(', ')}`, requires_full_rereview: true } })
+  if (outside.length) state.events.push({ scope: slice.id, type: 'review-summary', payload: { note: `fix round ${state.review.fix_rounds} touched files outside the original diff: ${outside.join(', ')}`, requires_full_rereview: true } })
 }
 
 function fixBlockerReason(fix) {
@@ -1244,7 +1336,7 @@ function fixBlockerReason(fix) {
 
 async function dispatchFix(slice, state, ctx) {
   const { plan, open, round } = ctx
-  return dispatch(slice, state, `fix:${round + 1}`, fixPrompt(slice, plan, state, open),
+  return dispatch(slice, state, `fix:${state.review.fix_rounds}`, fixPrompt(slice, plan, state, open),
     { agentType: 'spec-loop:implementer', schema: FIX_RESULT, model: round === 0 ? 'sonnet' : 'inherit', effort: 'medium' })
 }
 
@@ -1262,13 +1354,14 @@ async function runFixRound(slice, state, ctx) {
   const open = await maybeVerifyFindings(slice, state, ctx.open)
   if (!open.length) return { open }
   state.review.confirmed = open.length
-  state.review.fix_rounds = round + 1
+  state.review.fix_rounds += 1
   const fix = await dispatchFix(slice, state, { plan, open, round })
   if (!fix || fix.status === 'BLOCKED')
-    return { stop: escalated(slice, state, esc(slice, 'review-block', { title: 'fix agent blocked', context: fixBlockerReason(fix), question: 'Blocking findings cannot be fixed automatically. Accept, guide, or drop?', options: [] })) }
+    return fixLoopEscalation(slice, state, { open, trigger: 'review-block', content: { title: 'fix agent blocked', context: fixBlockerReason(fix), question: 'Blocking findings cannot be fixed automatically. Accept, guide, or drop?', options: [] } })
   if (fix.commits && fix.commits.head) state.commits.head = fix.commits.head
-  const rr = await dispatch(slice, state, `re-review:${round + 1}`, reReviewPrompt(slice, state, open, fix),
+  const rr = await dispatch(slice, state, `re-review:${state.review.fix_rounds}`, reReviewPrompt(slice, state, open, fix),
     { agentType: 'spec-loop:re-reviewer', schema: REREVIEW_RESULT, model: 'sonnet', effort: 'low' })
+  state.fixPackage = `fix${state.review.fix_rounds}`
   if (!rr) return { open } // fail closed: findings stay open into the next round / escalation
   state.review.refuted += rr.verdicts.filter(x => x.verdict === 'REFUTATION_ACCEPTED').length
   recordOutsideDiffFix(slice, state, { plan, review, fix, round })
@@ -1285,7 +1378,7 @@ async function stageFixLoop(slice, state, ctx) {
     if (res.stop) return { stop: res.stop }
     open = res.open
   }
-  if (open.length) return { stop: escalated(slice, state, esc(slice, open.some(f => f.category === 'quality-gate') ? 'quality-gate-block' : 'review-block', { title: `${open.length} blocking finding(s) unresolved after ${MAX_FIX_ROUNDS} fix rounds`, context: open.map(f => `${f.severity} ${f.file}:${f.line} — ${f.claim}`).join('\n'), question: 'Accept the residual findings, provide guidance, or drop the slice?', options: [] })) }
+  if (open.length) return fixLoopEscalation(slice, state, { open, trigger: open.some(f => f.category === 'quality-gate') ? 'quality-gate-block' : 'review-block', content: { title: `${open.length} blocking finding(s) unresolved after ${MAX_FIX_ROUNDS} fix rounds`, context: open.map(f => `${f.severity} ${f.file}:${f.line} — ${f.claim}`).join('\n'), question: 'Accept the residual findings, provide guidance, or drop the slice?', options: [] } })
   state.review.residual = review.findings.filter(f => !blocking([f], bar).length).map(f => `${f.severity}: ${f.claim}`).slice(0, 10)
   state.events.push({ scope: slice.id, type: 'review-summary', payload: { findings: review.findings.length, confirmed: state.review.confirmed, refuted: state.review.refuted, fix_rounds: state.review.fix_rounds, reviewers: state.reviewersCount } })
   return {}
@@ -1308,13 +1401,6 @@ function verifySuiteFailed(v) {
   return !!(v && !v.suite.passed)
 }
 
-function markVerifiedDone(slice, state, v) {
-  state.tests = { command: v.suite.command, result: v.suite.summary, scope: 'full', tree_sha: v.tree_sha }
-  state.quality = { status: 'PASS', detail: v.quality.detail || state.quality.detail }
-  state.commits.head = v.head_sha
-  return doneResult(slice, state, 'DONE')
-}
-
 function verificationFailedEscalation(slice, state, v) {
   const trigger = verifySuiteFailed(v) ? 'review-block' : 'quality-gate-block'
   const detail = v
@@ -1334,7 +1420,8 @@ async function stageVerify(slice, state, plan) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const v = await dispatch(slice, state, `verify:${attempt + 1}`, verifyPrompt(slice, state),
       { agentType: 'spec-loop:verifier', schema: VERIFY_RESULT, model: 'haiku', effort: 'low' })
-    if (verifyPassed(v)) return markVerifiedDone(slice, state, v)
+    recordVerification(slice, state, v, `verify:${attempt + 1}`)
+    if (verifyPassed(v)) return doneResult(slice, state, 'DONE')
     if (attempt === 0 && verifySuiteFailed(v)) { await runDebugFix(slice, state, plan, v); continue }
     return verificationFailedEscalation(slice, state, v)
   }

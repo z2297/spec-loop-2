@@ -294,6 +294,7 @@ function mappedPipeline(map) {
     const role = label.slice(label.indexOf(":") + 1);
     if (!(role in map)) throw new Error("slice_wave_harness: no mock return mapped to role " + role);
     seen.push({ label, prompt });
+    if (map[role] instanceof Error) throw map[role];
     return map[role];
   };
   return { seen, agent };
