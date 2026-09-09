@@ -528,6 +528,11 @@ class TestBodyDelimiterNeutralization(unittest.TestCase):
         self.assertEqual(
             self._delimiter_count(make_record(), refinement), 2)
 
+    def test_a_rule_in_an_injection_finding_keeps_two_delimiters(self):
+        refinement = make_refinement(injection_findings=[self.BAR])
+        self.assertEqual(
+            self._delimiter_count(make_record(), refinement), 2)
+
     def test_the_posted_comment_bodies_are_not_rewritten(self):
         """j3 posts these to Jira, where '---' is harmless, and
         comment_marker hashes the payload: only the EMBEDDED copy is

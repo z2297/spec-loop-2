@@ -242,6 +242,29 @@ def validate_refinement(refinement):
     return errors
 
 
+def _missing_key_errors(record):
+    """One error per RECORD_KEYS entry absent from record, in key order. (PURE)"""
+    errors = []
+    for key in RECORD_KEYS:
+        if key not in record:
+            errors.append("record is missing required key: %s" % key)
+    return errors
+
+
+def _wrong_type_errors(record):
+    """One error per non-string RECORD_KEYS scalar, skipping comments. (PURE)
+
+    comments is validated separately by the caller since it is a list, not
+    a scalar."""
+    errors = []
+    for key in RECORD_KEYS:
+        if key == "comments":
+            continue
+        if not isinstance(record[key], str):
+            errors.append("record key %s must be a string" % key)
+    return errors
+
+
 def validate_record(record):
     """Return a list of human-readable error strings; [] means valid. (PURE)
 
@@ -252,13 +275,10 @@ def validate_record(record):
     card. Field ORDER follows RECORD_KEYS so the message is stable."""
     if not isinstance(record, dict):
         return ["record must be a JSON object"]
-    missing = ["record is missing required key: %s" % key
-               for key in RECORD_KEYS if key not in record]
+    missing = _missing_key_errors(record)
     if missing:
         return missing
-    errors = ["record key %s must be a string" % key
-              for key in RECORD_KEYS
-              if key != "comments" and not isinstance(record[key], str)]
+    errors = _wrong_type_errors(record)
     if not isinstance(record["comments"], list):
         errors.append("record key comments must be a list")
     return errors
@@ -494,7 +514,8 @@ def render_artifact(record, refinement, ts):
               "/spec-loop:jira-intake would post, marker included.", ""]
     lines += _comment_blocks(comments)
     lines += ["", ARTIFACT_SECTIONS[5], ""]
-    lines += (["- %s" % f for f in refinement["injection_findings"]]
+    lines += (["- %s" % _neutralize_delimiters(f)
+               for f in refinement["injection_findings"]]
               or ["- none observed"])
     return "\n".join(lines) + "\n"
 
