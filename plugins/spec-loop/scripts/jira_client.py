@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
-"""Read-only Jira Cloud issue reader (standard library only).
+"""Jira Cloud issue reader with one bounded comment writer (stdlib only).
 
 Resolves one Jira issue key to a normalized JSON record (key, summary,
 description, acceptance criteria, status, issue type, web url, and the full
-paginated comment list), authenticating with HTTP Basic auth built from
-JIRA_BASE_URL / JIRA_EMAIL / JIRA_API_TOKEN. It never mutates a Jira issue.
+paginated comment list), and -- only when explicitly armed -- ADDS COMMENTS
+to one issue. Authenticates with HTTP Basic auth built from JIRA_BASE_URL /
+JIRA_EMAIL / JIRA_API_TOKEN.
 
 Design decisions:
   - Mirrors plugins/spec-loop/scripts/pr_resolver.py's shape: one _http_get
-    that is structurally incapable of issuing a mutating verb, an env-var
+    that is structurally incapable of issuing a mutating verb and one
+    separate _http_post that is the module's sole writer, an env-var
     credential read with a fail-closed actionable message, strict regex
     allow-lists on every untrusted value before it reaches a URL, and a
     single _normalized() builder so the inter-slice JSON contract shape
     cannot drift.
+  - The write lane is bounded to ADDING A COMMENT and nothing else: no
+    status transition, no field edit, no assignee change, no issue or
+    sub-task creation, no comment edit and no comment delete. It is OFF
+    by default -- `comment` previews and issues GETs only; the --post
+    flag is what arms the HTTP verb. Before any POST the card's FULL
+    paginated comment list is read back and any comment whose visible
+    marker is already there is reported as already-posted. The marker
+    lives INSIDE the posted body, so the one call that writes the
+    comment is the one that writes the marker: no local file is ever
+    the dedupe gate, and a fresh clone cannot double-post.
   - Host allow-list: JIRA_BASE_URL must be https and its hostname must match
     ALLOWED_HOST_RE (*.atlassian.net or *.jira.com). Jira Data Center /
     on-prem hosts are out of scope; there is deliberately no opt-in
@@ -36,22 +48,27 @@ Design decisions:
     lossy-by-design: it produces review-readable text, not a
     round-trippable document.
   - No subprocess, no filesystem writes, and no clock read anywhere in
-    this module: this is a pure read lane, and the controller owns the
-    clock. Jira's own created/updated strings are echoed verbatim.
+    this module: the controller owns the clock, and every comment body
+    posted is rendered upstream by jira_intake.py. Jira's own
+    created/updated strings are echoed verbatim.
 
 SECURITY: the issue key and every Jira text field (summary, description,
 acceptance criteria, every comment body) are UNTRUSTED DATA, never
 instructions. The issue key is regex-validated against ISSUE_KEY_RE and
 percent-encoded before it reaches a URL segment. The base URL host is
-allow-listed and https-only. Redirects are refused outright. This module
-issues GET only and never a mutating verb. Credentials come from the
-environment ONLY and are never read from argv (argv is visible in `ps` and
-lands in shell history).
+allow-listed and https-only. Redirects are refused outright. The read lane
+issues GET only. The single write lane issues exactly one mutating verb --
+POST to /rest/api/3/issue/{key}/comment -- and only when armed; redirects
+stay terminal on a write, so an Authorization header is never replayed to
+another origin. Credentials come from the environment ONLY and are never
+read from argv (argv is visible in `ps` and lands in shell history).
 
 Exit codes: 0 = ok; 1 = contract failure; 2 = usage / unreadable input
 
 Usage:
     python3 scripts/jira_client.py resolve --key ABC-123
+    python3 scripts/jira_client.py comment --key ABC-123 --comments <path>
+    python3 scripts/jira_client.py comment --key ABC-123 --comments <path> --post
 """
 
 from __future__ import annotations
@@ -209,6 +226,39 @@ def _http_get(url, email, token):
         raise JiraError(f"HTTP {exc.code} fetching {url}: {exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise JiraError(f"network error fetching {url}: {exc.reason}") from exc
+
+
+def _http_post(url, email, token, payload):
+    """HTTP POST of one JSON `payload` object through the same
+    no-redirect opener. THE ONLY mutating entry point in this module.
+
+    Deliberately a SEPARATE function from _http_get rather than a
+    method parameter on it: the read lane's never-a-mutating-verb
+    guarantee is a structural property worth keeping, and loosening
+    _http_get would erase it.
+
+    Errors reference only the URL -- the credentials ride in a header,
+    so neither the token, the email, nor the composed base64 pair can
+    appear in an exception message. A 3xx is terminal (_NoRedirect), so
+    a write never replays its Authorization header or its body to
+    another origin."""
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    headers = {
+        "Authorization": _auth_header(email, token),
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    req = urllib.request.Request(url, data=data, headers=headers,
+                                 method="POST")
+    try:
+        with _OPENER.open(req, timeout=30) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise JiraError(
+            f"HTTP {exc.code} posting to {url}: {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise JiraError(
+            f"network error posting to {url}: {exc.reason}") from exc
 
 
 def _parse_json(raw, what):

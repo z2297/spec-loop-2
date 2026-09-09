@@ -17,6 +17,7 @@ Usage:
 """
 
 import base64
+import inspect
 import json
 import sys
 import unittest
@@ -264,6 +265,83 @@ class TestHttpGetIsReadOnly(unittest.TestCase):
                 jc._http_get("https://acme.atlassian.net/x", "fred@example.com", "tok")
 
 
+class TestHttpPostIsTheOnlyWriter(unittest.TestCase):
+    """The plugin's FIRST mutating external call. It is a separate
+    function from _http_get on purpose: the read lane's
+    never-a-mutating-verb guarantee must survive unchanged."""
+
+    URL = "https://acme.atlassian.net/rest/api/3/issue/ABC-1/comment"
+
+    def _fake_opener(self, payload=b'{"id": "10001"}'):
+        resp = mock.MagicMock()
+        resp.read.return_value = payload
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = False
+        opener = mock.MagicMock()
+        opener.open.return_value = resp
+        return opener
+
+    def _post(self, opener, payload=None):
+        with mock.patch.object(jc, "_OPENER", opener):
+            return jc._http_post(
+                self.URL, "fred@example.com", "tok",
+                payload if payload is not None else {"body": {"type": "doc"}})
+
+    def test_the_request_method_is_post(self):
+        opener = self._fake_opener()
+        self._post(opener)
+        self.assertEqual(opener.open.call_args.args[0].get_method(), "POST")
+
+    def test_the_body_is_the_json_encoded_payload(self):
+        opener = self._fake_opener()
+        self._post(opener, {"body": {"type": "doc", "version": 1}})
+        data = opener.open.call_args.args[0].data
+        self.assertEqual(
+            json.loads(data.decode("utf-8")),
+            {"body": {"type": "doc", "version": 1}})
+
+    def test_the_content_type_is_json(self):
+        opener = self._fake_opener()
+        self._post(opener)
+        req = opener.open.call_args.args[0]
+        self.assertEqual(req.get_header("Content-type"), "application/json")
+
+    def test_the_authorization_header_is_basic(self):
+        opener = self._fake_opener()
+        self._post(opener)
+        req = opener.open.call_args.args[0]
+        self.assertTrue(req.get_header("Authorization").startswith("Basic "))
+
+    def test_the_response_body_is_returned_raw(self):
+        self.assertEqual(
+            self._post(self._fake_opener(b'{"id": "7"}')), b'{"id": "7"}')
+
+    def test_an_http_error_becomes_an_actionable_jira_error(self):
+        err = urllib.error.HTTPError(self.URL, 403, "Forbidden", {}, None)
+        self.addCleanup(err.close)
+        opener = mock.MagicMock()
+        opener.open.side_effect = err
+        with self.assertRaises(jc.JiraError) as ctx:
+            self._post(opener)
+        self.assertIn("403", str(ctx.exception))
+
+    def test_a_network_error_becomes_a_jira_error(self):
+        opener = mock.MagicMock()
+        opener.open.side_effect = urllib.error.URLError("connection refused")
+        with self.assertRaises(jc.JiraError):
+            self._post(opener)
+
+    def test_a_redirect_is_never_followed_on_a_write(self):
+        # _NoRedirect returns None for every 3xx, so urllib raises
+        # instead of replaying the Authorization header (and the POST
+        # body) to another origin.
+        self.assertIsNone(jc._NoRedirect().redirect_request(
+            mock.MagicMock(), mock.MagicMock(), 302, "Found", {},
+            "https://evil.example.com/"))
+        self.assertTrue(
+            any(isinstance(h, jc._NoRedirect) for h in jc._OPENER.handlers))
+
+
 class TestRedirectsAreRefused(unittest.TestCase):
     def test_the_redirect_handler_returns_none(self):
         handler = jc._NoRedirect()
@@ -343,6 +421,31 @@ class TestSecretsNeverLeak(unittest.TestCase):
         raw = f"https://{self.EMAIL}:{self.TOKEN}@acme.atlassian.net"
         with self.assertRaises(jc.JiraUsageError) as ctx:
             jc.validate_base_url(raw)
+        self._assert_clean(str(ctx.exception))
+
+    def test_secrets_absent_from_a_post_http_error_message(self):
+        err = self._http_error(
+            "https://acme.atlassian.net/rest/api/3/issue/ABC-1/comment",
+            401, "Unauthorized")
+        opener = mock.MagicMock()
+        opener.open.side_effect = err
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(jc, "_OPENER", opener))
+            ctx = stack.enter_context(self.assertRaises(jc.JiraError))
+            jc._http_post(
+                "https://acme.atlassian.net/rest/api/3/issue/ABC-1/comment",
+                self.EMAIL, self.TOKEN, {"body": {"type": "doc"}})
+        self._assert_clean(str(ctx.exception))
+
+    def test_secrets_absent_from_a_post_network_error_message(self):
+        opener = mock.MagicMock()
+        opener.open.side_effect = urllib.error.URLError("connection refused")
+        url = "https://acme.atlassian.net/x"
+        payload = {"body": {"type": "doc"}}
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(jc, "_OPENER", opener))
+            ctx = stack.enter_context(self.assertRaises(jc.JiraError))
+            jc._http_post(url, self.EMAIL, self.TOKEN, payload)
         self._assert_clean(str(ctx.exception))
 
 
@@ -888,10 +991,30 @@ class TestMain(unittest.TestCase):
             self.assertNotIn(secret, err)
 
 
-class TestReadOnlyContract(unittest.TestCase):
-    """The module must be structurally incapable of mutating Jira."""
+class TestTheReadLaneStaysReadOnly(unittest.TestCase):
+    """j3 adds ONE bounded writer. The read lane's guarantee is unchanged
+    and is asserted against _http_get's OWN source rather than the whole
+    file, so the new writer cannot silently loosen it."""
 
     SOURCE = (Path(__file__).resolve().parent / "jira_client.py").read_text()
+    MUTATING_VERBS = ('"POST"', '"PUT"', '"PATCH"', '"DELETE"',
+                      "'POST'", "'PUT'", "'PATCH'", "'DELETE'")
+
+    def test_the_get_helper_names_no_mutating_verb(self):
+        source = inspect.getsource(jc._http_get)
+        for verb in self.MUTATING_VERBS:
+            self.assertNotIn(verb, source, verb)
+
+    def test_the_get_helper_sets_no_body_and_pins_get(self):
+        source = inspect.getsource(jc._http_get)
+        self.assertNotIn("data=", source)
+        self.assertIn('method="GET"', source)
+
+    def test_no_read_function_can_reach_the_writer(self):
+        for fn in (jc.find_ac_field_id, jc.fetch_issue, jc.fetch_comments,
+                   jc.resolve_issue):
+            with self.subTest(fn=fn.__name__):
+                self.assertNotIn("_http_post", inspect.getsource(fn))
 
     def test_the_module_never_imports_subprocess(self):
         self.assertNotIn("import subprocess", self.SOURCE)
@@ -899,19 +1022,15 @@ class TestReadOnlyContract(unittest.TestCase):
     def test_the_module_never_calls_datetime_now(self):
         self.assertNotIn("datetime", self.SOURCE.replace("# ", ""))
 
-    MUTATING_VERBS = ('"POST"', '"PUT"', '"PATCH"', '"DELETE"',
-                      "'POST'", "'PUT'", "'PATCH'", "'DELETE'")
-
-    def test_no_mutating_http_method_appears_in_the_source(self):
-        for verb in self.MUTATING_VERBS:
+    def test_the_only_mutating_verb_in_the_module_is_the_comment_post(self):
+        for verb in ('"PUT"', '"PATCH"', '"DELETE"',
+                     "'PUT'", "'PATCH'", "'DELETE'"):
             self.assertNotIn(verb, self.SOURCE, verb)
+        self.assertEqual(self.SOURCE.count('method="POST"'), 1)
 
-    def test_the_only_request_construction_sets_method_get(self):
-        self.assertEqual(self.SOURCE.count("urllib.request.Request("), 1)
-        self.assertIn('method="GET"', self.SOURCE)
-
-    def test_the_only_network_call_goes_through_the_module_opener(self):
-        self.assertEqual(self.SOURCE.count("_OPENER.open("), 1)
+    def test_there_are_exactly_two_transports(self):
+        self.assertEqual(self.SOURCE.count("urllib.request.Request("), 2)
+        self.assertEqual(self.SOURCE.count("_OPENER.open("), 2)
 
     def test_the_entry_shim_is_exactly_two_lines(self):
         all_lines = self.SOURCE.splitlines()
@@ -919,6 +1038,7 @@ class TestReadOnlyContract(unittest.TestCase):
         self.assertEqual(len(shim_lines), 1)
         idx = all_lines.index(shim_lines[0])
         self.assertEqual(all_lines[idx + 1].strip(), "sys.exit(main())")
+
 
 if __name__ == "__main__":
     unittest.main()
