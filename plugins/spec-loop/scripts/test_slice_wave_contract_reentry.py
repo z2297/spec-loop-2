@@ -61,6 +61,21 @@ STAMP_ROLE_FIELD = "measured_at: role"
 GATE_EVENT_STAGE = "stage: role }"
 QUALITY_ENUM = 'QUALITY_STATUSES = ("PASS", "FAIL", "SKIPPED")'
 LOST_SLICE_QUALITY = "quality: { status: 'SKIPPED', detail: 'slice never ran' }"
+REVIEW_BLOCK_ANSWER = "answerFor(slice, 'review-block')"
+AMBIGUITY_ANSWER = "answerFor(slice, 'ambiguity')"
+TASK_PROMPT_START = "function taskPrompt("
+TASK_PROMPT_END = "function packageCmd("
+RETRY_MARKER = "RETRY:"
+DEBUG_FIX_START = "function debugFixPrompt("
+DEBUG_FIX_END = "function simplifyPrompt("
+ENTRY_STAGES_LINE = "const ENTRY_STAGES = ['plan', 'review', 'fix', 'verify']"
+ENTRY_ERROR_TITLE = "title: 'unusable slice.entry'"
+REENTRY_EVENT = "type: 're-entry'"
+PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+COMMAND_MD = PLUGIN_ROOT / "commands" / "spec-loop.md"
+SKILL_MD = PLUGIN_ROOT / "skills" / "escalation-gate" / "SKILL.md"
+RUN_STATE_MD = PLUGIN_ROOT / "references" / "run-state-v2.md"
+OLD_JOURNAL_CLAIM = "completed stages replay from the workflow journal"
 
 
 class TestTheRoundTagLivesInOnePlace(WorkflowSourceTestCase):
@@ -113,6 +128,39 @@ class TestTheQualityEnumIsNotWidened(WorkflowSourceTestCase):
 
     def test_the_lost_slice_fallback_block_is_untouched(self):
         self.assertIn(LOST_SLICE_QUALITY, self.src)
+
+
+class TestAnswersReachTheAgentThatActs(WorkflowSourceTestCase):
+    """Run 20260908: a review-block answer carrying fix orders reached the
+    REVIEWER, a task-blocked ambiguity answer reached the PLANNER, and the
+    fixer and the task retry — the two actors — read nothing."""
+
+    def test_the_fix_prompt_carries_the_review_block_answer(self):
+        self.assertIn(REVIEW_BLOCK_ANSWER, self.between(FIX_PROMPT_START, FIX_PROMPT_END))
+
+    def test_the_debug_fix_prompt_carries_the_review_block_answer(self):
+        self.assertIn(REVIEW_BLOCK_ANSWER, self.between(DEBUG_FIX_START, DEBUG_FIX_END))
+
+    def test_the_task_retry_carries_the_ambiguity_answer_and_the_first_attempt_does_not(self):
+        span = self.between(TASK_PROMPT_START, TASK_PROMPT_END)
+        self.assertIn(AMBIGUITY_ANSWER, span)
+        self.assertLess(span.index(RETRY_MARKER), span.index(AMBIGUITY_ANSWER))
+
+
+class TestReentryIsDeclaredInEveryHome(WorkflowSourceTestCase):
+    def test_the_workflow_names_the_four_stages_and_fails_loud(self):
+        self.assertIn(ENTRY_STAGES_LINE, self.src)
+        self.assertIn(ENTRY_ERROR_TITLE, self.src)
+        self.assertIn(REENTRY_EVENT, self.src)
+
+    def test_the_controller_and_the_contract_name_the_entry(self):
+        self.assertIn("slice.entry", COMMAND_MD.read_text(encoding="utf-8"))
+        self.assertIn("redispatch.py", COMMAND_MD.read_text(encoding="utf-8"))
+        self.assertIn("`re-entry`", RUN_STATE_MD.read_text(encoding="utf-8"))
+
+    def test_the_journal_replay_promise_is_gone_from_the_doctrine(self):
+        self.assertNotIn(OLD_JOURNAL_CLAIM, SKILL_MD.read_text(encoding="utf-8"))
+        self.assertIn("slice.entry", SKILL_MD.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -25,7 +25,7 @@ Use exactly these; do not go hunting for more.
 
 | Input | What it is |
 |---|---|
-| prior findings | Every blocking finding from the previous round, verbatim with ids. Verdict all of them, in order, and verdict nothing else. |
+| prior findings | Every blocking finding from the previous round, verbatim with ids. Verdict all of them, in order, and verdict nothing else. Controller orders (ids `order-<N>`) arrive in the same list with no diff anchor; verdict them like any other finding, against the fix diff. |
 | fix-diff package | File path to a package covering `FIX_BASE..HEAD` only — the head the previous review saw, to now. Commit list, stat, `-U5` diff, `hunk-index`. Read it once and work from it. |
 | refutations | The fixer's `refuted[]` entries: finding id plus its `file:line` counter-evidence, returned instead of a change. You adjudicate these. |
 | fixer report | The implementer's return, including its test evidence — unverified claims, see below. |

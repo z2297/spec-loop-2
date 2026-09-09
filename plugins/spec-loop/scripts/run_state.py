@@ -88,7 +88,7 @@ ESCALATIONS_MD = "escalations.md"
 # declines to fire is invisible narrowing.
 ESCALATION_EVENTS = ("escalation-opened", "escalation-answered")
 DECISION_EVENTS = ("decision", "deferred", "council-verdict", "quality-gate",
-                   "integration-check", "phase5-gate", "refactor-radius")
+                   "integration-check", "phase5-gate", "refactor-radius", "re-entry")
 
 DECISIONS_HEADER = ("# Decisions log\n\n"
                     "Rendered from the run's events; append-only, and nothing "

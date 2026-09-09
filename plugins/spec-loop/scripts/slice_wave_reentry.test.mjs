@@ -13,6 +13,7 @@ import {
 import {
   VERIFY_SUITE_RED, GATE_REMEASURE, FIX_BLOCKED, FIX_ROUND_TWO,
   RR_NOT_ADDRESSED, RR_ADDRESSED, DEBUG_FIX_DONE,
+  reentrySlice, ENTRY_HEAD, ORDER_TEXT, RR_ORDER_ADDRESSED, PLAN_EMPTY, TASK_BLOCKED, TASK_RETRY_DONE,
 } from "./slice_wave_reentry_fixtures.mjs";
 
 const T2 = () => [sliceFixture("s1", 2)];
@@ -113,4 +114,121 @@ test("the eight-dispatch pipeline labels are unchanged", async () => {
   const sandbox = fullPipeline();
   await run(sandbox);
   assert.deepEqual(sandbox.seen.map((d) => d.label), PIPELINE_LABELS);
+});
+
+// ── slice.entry: re-dispatch resumes at a stage, against the real head ────
+// Run 20260908: a resumed j2 dispatch re-planned from the slice GOAL, found it
+// delivered, escalated "already implemented", and dropped the controller's
+// three fix orders (1 agent, 0 tasks). The entry names the stage to resume at.
+
+const labels = (sandbox) => sandbox.seen.map((d) => d.label);
+const runEntry = async (entry, sandbox, answers) =>
+  (await runWave(waveArgs([reentrySlice("s1", 2, entry)], answers), sandbox)).results[0];
+
+test("a fix-mode entry skips plan, critique and tasks and starts at the gate", async () => {
+  const sandbox = pipelineWith({ "re-review:1": RR_ORDER_ADDRESSED });
+  const r = await runEntry({ stage: "fix", head: ENTRY_HEAD, orders: [ORDER_TEXT] }, sandbox);
+  assert.equal(r.status, "DONE");
+  assert.deepEqual(labels(sandbox).slice(0, 2), ["s1:gate", "s1:fix:1"]);
+  assert.ok(!labels(sandbox).some((l) => /:plan$|:critic:|:task:/.test(l)));
+});
+
+test("fix-mode orders reach the fixer as findings", async () => {
+  const sandbox = pipelineWith({ "re-review:1": RR_ORDER_ADDRESSED });
+  await runEntry({ stage: "fix", head: ENTRY_HEAD, orders: [ORDER_TEXT] }, sandbox);
+  const fix = promptOf(sandbox, "s1:fix:1");
+  assert.match(fix, /order-0/);
+  assert.ok(fix.includes(ORDER_TEXT));
+});
+
+test("seeded fix rounds keep labels, package tags and the sidecar counter cumulative", async () => {
+  const sandbox = pipelineWith({ "fix:3": FIX_ROUND_TWO, "re-review:3": RR_ORDER_ADDRESSED });
+  const r = await runEntry({ stage: "fix", head: ENTRY_HEAD, fix_rounds: 2, orders: [ORDER_TEXT] }, sandbox);
+  assert.equal(r.status, "DONE");
+  assert.ok(labels(sandbox).includes("s1:fix:3"));
+  assert.match(promptOf(sandbox, "s1:re-review:3"), /-fix3\.md/);
+  assert.match(promptOf(sandbox, "s1:fix:3"), /-fix2\.md/);
+  assert.equal(r.review.fix_rounds, 3);
+});
+
+test("a verify-mode entry goes straight to verification", async () => {
+  const sandbox = fullPipeline();
+  const r = await runEntry({ stage: "verify", head: ENTRY_HEAD }, sandbox);
+  assert.deepEqual(labels(sandbox), ["s1:verify:1"]);
+  assert.equal(r.status, "DONE");
+  assert.equal(r.quality.measured_at, "verify:1");
+  assert.equal(r.tests.passed, true);
+});
+
+test("a review-mode entry reviews base..entry.head under the next round tag", async () => {
+  const sandbox = pipelineWith({ "fix:3": FIX_ROUND_TWO, "re-review:3": RR_ADDRESSED });
+  const r = await runEntry({ stage: "review", head: ENTRY_HEAD, fix_rounds: 2 }, sandbox);
+  assert.equal(r.status, "DONE");
+  const review = promptOf(sandbox, "s1:review:full");
+  assert.ok(review.includes("--head " + ENTRY_HEAD));
+  assert.match(review, /-round3\.md/);
+  assert.ok(labels(sandbox)[0] === "s1:review:full" || labels(sandbox)[0] === "s1:gate");
+});
+
+test("an entry with an unknown stage escalates internal-error before any dispatch", async () => {
+  const sandbox = fullPipeline();
+  const r = await runEntry({ stage: "polish", head: ENTRY_HEAD }, sandbox);
+  assert.equal(r.status, "ESCALATED");
+  assert.equal(r.escalations[0].trigger, "internal-error");
+  assert.equal(r.escalations[0].title, "unusable slice.entry");
+  assert.equal(sandbox.seen.length, 0);
+});
+
+test("an entry without a head escalates the same way", async () => {
+  const sandbox = fullPipeline();
+  const r = await runEntry({ stage: "fix" }, sandbox);
+  assert.equal(r.escalations[0].title, "unusable slice.entry");
+  assert.equal(sandbox.seen.length, 0);
+});
+
+test("a plan-mode entry tells the planner what is delivered and accepts zero tasks", async () => {
+  const sandbox = pipelineWith({ "plan": PLAN_EMPTY });
+  const r = await runEntry({ stage: "plan", head: ENTRY_HEAD }, sandbox);
+  assert.equal(r.status, "DONE");
+  const plan = promptOf(sandbox, "s1:plan");
+  assert.match(plan, /RE-ENTRY/);
+  assert.ok(plan.includes(ENTRY_HEAD));
+  assert.ok(!labels(sandbox).some((l) => /:critic:/.test(l)), "critique is skipped on an empty re-entry plan");
+  assert.ok(labels(sandbox).includes("s1:review:full"));
+});
+
+test("re-entry is recorded once with its stage and head", async () => {
+  const r = await runEntry({ stage: "verify", head: ENTRY_HEAD }, fullPipeline());
+  const events = r.events.filter((e) => e.type === "re-entry");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].payload.stage, "verify");
+  assert.equal(events[0].payload.head, ENTRY_HEAD);
+});
+
+test("the residual after a fix-mode re-entry is the carried one, never a replayed review", async () => {
+  const sandbox = pipelineWith({ "re-review:1": RR_ORDER_ADDRESSED });
+  const r = await runEntry({ stage: "fix", head: ENTRY_HEAD, orders: [ORDER_TEXT], residual: ["P2: old"] }, sandbox);
+  assert.deepEqual(r.review.residual, ["P2: old"]);
+});
+
+// ── Answer routing: the answer reaches the agent that acts on it ──────────
+
+test("a review-block answer reaches the fixer", async () => {
+  const sandbox = fullPipeline();
+  await runWave(waveArgs(T2(), { "s1:review-block": "ORDER-X" }), sandbox);
+  assert.match(promptOf(sandbox, "s1:fix:1"), /ORDER-X/);
+});
+
+test("a review-block answer reaches the debug-fixer on a red suite", async () => {
+  const sb = pipelineWith({ "verify:1": VERIFY_SUITE_RED, "debug-fix": DEBUG_FIX_DONE, "verify:2": VERIFY_SUITE_RED });
+  await runWave(waveArgs(T2(), { "s1:review-block": "GUIDE-Y" }), sb);
+  assert.match(promptOf(sb, "s1:debug-fix"), /GUIDE-Y/);
+});
+
+test("a task-blocked ambiguity answer reaches the retry prompt and not the first attempt", async () => {
+  const sandbox = pipelineWith({ "task:t1": TASK_BLOCKED, "task:t1:retry": TASK_RETRY_DONE });
+  const r = await (await runWave(waveArgs(T2(), { "s1:ambiguity": "USE-THE-SECOND-STORE" }), sandbox)).results[0];
+  assert.equal(r.status, "DONE");
+  assert.match(promptOf(sandbox, "s1:task:t1:retry"), /USE-THE-SECOND-STORE/);
+  assert.doesNotMatch(promptOf(sandbox, "s1:task:t1"), /USE-THE-SECOND-STORE/);
 });

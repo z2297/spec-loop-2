@@ -29,3 +29,20 @@ export const DEBUG_FIX_DONE = {
   status: "DONE", touched_files: ["a.py"], addressed: [], refuted: [],
   commits: { base: "0000000", head: "d3b0000" },
 };
+
+// ── slice.entry fixtures ──────────────────────────────────────────────────
+import { sliceFixture } from "./slice_wave_harness.mjs";
+
+// A slice the controller re-dispatches with an entry, built over the same
+// fixture every other test uses so the two shapes cannot drift.
+export const reentrySlice = (id, tier, entry) => ({ ...sliceFixture(id, tier), entry });
+
+export const ENTRY_HEAD = "c0bdca3";
+export const ORDER_TEXT = "defuse card-derived front-matter delimiters on every body surface";
+export const RR_ORDER_ADDRESSED = { verdicts: [{ finding_id: "order-0", verdict: "ADDRESSED" }], new_breakage: [] };
+export const PLAN_EMPTY = { status: "PLANNED", plan_path: "/tmp/plan.md", tasks: [] };
+export const TASK_BLOCKED = { status: "BLOCKED", touched_files: [], concerns: [], deviations: [], blocker: "which store?" };
+export const TASK_RETRY_DONE = {
+  status: "DONE", touched_files: [], concerns: [], deviations: [],
+  commits: { base: "0000000", head: "c0ffee0" },
+};

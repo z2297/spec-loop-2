@@ -100,7 +100,8 @@ deadlock is itself an escalation):
    ("python3 <plugin_root>/scripts/quality_gate.py --config <global> --overlay <repo
    overlay>" — the same two paths, so agents measure against the merged bar), models,
    thorough, polish}, slices: [{id, goal, files, subsystems, risk_tier, depth, worktree,
-   branch, base_sha, kg_snippet}] (per-slice only —
+   branch, base_sha, kg_snippet, entry (optional — a re-dispatch of an ESCALATED slice; see
+   step 7)}] (per-slice only —
    the scope ceiling is run-level and travels in ctx, never duplicated here),
    answers: {}, agent_cap_overrides: {} (optional; see step 7 — omit it on a normal
    dispatch)}` — then invoke
@@ -178,15 +179,24 @@ deadlock is itself an escalation):
    lever. Narrowing the slice instead is your call to make explicit: the wave does not split a
    refactor out on its own.
 
-   Then **re-dispatch the wave with ONLY its non-terminal slices** — filter `slices` to the ones
-   whose sidecars are not DONE/SPLIT (merged work never re-enters a wave; its worktree is
-   already gone) — same `ctx`, `answers` filled in, and `resumeFromRunId: <wf_id>` so the
-   escalated slices' completed stages replay from the journal where the cache holds. Never
-   rely on replay to make a terminal slice free: a cache miss re-runs it live against a
-   deleted worktree and the result must be discarded (observed cost: 140 minutes). If a
-   result arrives for a slice you did not include, discard it without persisting. (A journal
-   lost to a session restart just means the remaining slices re-run live — sidecars bound
-   the loss to one wave.)
+   Then **re-dispatch the wave with ONLY its non-terminal slices**, built by
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/redispatch.py" args --run-dir <dir> --wave N
+   --repo-dir <repo> --stage <slice>=<stage> ...` — it filters `slices` to the ones whose
+   sidecars are not DONE/SPLIT (merged work never re-enters a wave; its worktree is already
+   gone), drains every answered escalation into `answers`, and gives each slice whose sidecar
+   carries `commits.head` a `slice.entry` `{stage, head, fix_rounds, review_tier, residual,
+   orders}` so the wave resumes AT that stage against the real branch head instead of
+   replaying plan → critique → tasks from the slice goal (run 20260908 lost a whole dispatch
+   that way: the planner found the goal already delivered and the fix orders reached nobody).
+   Choose the stage from the answer: an acceptance → `verify` (with the acceptance recorded —
+   see the quality-gate-block paragraph); concrete fix orders → `fix` with `orders`; "review it
+   again" → `review`; a task-blocked `ambiguity` → `plan` (the planner is told what the branch
+   already delivers and may return zero tasks). Pass `resumeFromRunId: <wf_id>` only when the
+   tool reports `resume.advised` — a slice with an entry never benefits from the journal, and a
+   cache miss on a terminal slice re-runs it live against a deleted worktree (observed cost:
+   140 minutes). If a result arrives for a slice you did not include, discard it without
+   persisting. (A journal lost to a session restart just means the remaining slices re-run
+   live — sidecars bound the loss to one wave.)
 8. Knowledge graph (if enabled): one `batch` call upserting the wave's `decision` nodes and
    touched `component` hubs, extracted from the wave's events.
 9. **Close**: re-run `dag.py next-wave` and act on it in THIS turn —
@@ -229,9 +239,10 @@ Executive Readout, verbatim.
 session's id is stale the moment this one starts), checkout the integration branch
 (clean-tree guard), `worktrees.py prepare --resume` for the incomplete wave's slices, drain
 EVERY answered escalation of the run into the `answers` map (every round,
-already-dispatched ones included, per step 7's cumulative-map invariant), and re-enter the
-wave loop at the first incomplete wave — same-session with `resumeFromRunId`, fresh
-invocation otherwise. All slices terminal → straight to Phase 5 (regenerating `runbook.md`
+already-dispatched ones included, per step 7's cumulative-map invariant — `redispatch.py
+args` performs this drain and builds each escalated slice's `entry` from its sidecar), and
+re-enter the wave loop at the first incomplete wave — same-session with `resumeFromRunId`
+only when the tool advises it, fresh invocation otherwise. All slices terminal → straight to Phase 5 (regenerating `runbook.md`
 is safe).
 
 ## Escalation discipline

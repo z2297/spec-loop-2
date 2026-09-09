@@ -161,8 +161,12 @@ human, so:
 3. Answers are written back (`escalation-answered` events) and the wave is re-dispatched with
    the answer keyed by the escalation's `id` verbatim (`answers["<slice-id>:<trigger>"]`, or
    `answers["<slice-id>:<trigger>:<round>"]` from the second round of that trigger onward)
-   filled in; completed stages replay from the workflow journal, so only the answered stage
-   runs live.
+   filled in, and with a `slice.entry` naming the stage to resume at against the branch head
+   the sidecar recorded. The wave reads the answer back in the prompt of the agent that ACTS
+   on it — the fixer for `review-block` and `quality-gate-block`, the task retry for a
+   task-blocked `ambiguity`, the planner for plan-raised triggers — and never re-runs the
+   stages before the entry, so a re-dispatch cannot re-plan from the goal, find it delivered,
+   and drop the answer (run 20260908 lost a dispatch exactly that way).
 
 The wave boundary is the only seam where a human is asked anything — unchanged from v1; only the
 transport moved from prose files to structured returns.

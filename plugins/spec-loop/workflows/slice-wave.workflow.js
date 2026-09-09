@@ -19,9 +19,15 @@ export const meta = {
 //     lowers a cap and never changes a default
 //   - fail-closed synthesis: an unusable agent return is never an approval
 //   - answers injection: args.answers["<sliceId>:<trigger>"], or
-//     ["<sliceId>:<trigger>:<round>"] from the second round on, resumes an
-//     escalated stage (escId writes the id, latestAnswer reads it back);
-//     unchanged stages replay from the journal cache
+//     ["<sliceId>:<trigger>:<round>"] from the second round on, is read back
+//     by the prompt of the agent that ACTS on it (escId writes the id,
+//     latestAnswer reads it back): plan-raised triggers by the planner,
+//     review-block and quality-gate-block by the fixer, a task-blocked
+//     ambiguity by the task retry
+//   - re-entry: slices[].entry {stage: plan|review|fix|verify, head, ...}
+//     resumes an ESCALATED slice at that stage against the branch head the
+//     sidecar recorded, instead of replaying the whole pipeline from the
+//     slice goal (entryOf / seedEntryState / runBuildStages)
 //
 // The controller stamps timestamps and persists results (run_state.py) —
 // this script has no clock and no filesystem, by design.
@@ -496,6 +502,94 @@ function answerKeysFor(sliceId, trigger) {
   return Object.keys(A.answers || {}).filter(k => k === base || k.startsWith(`${base}:`))
 }
 
+// ── Re-entry: resume an ESCALATED slice at a stage, against its real head ──
+//
+// Run 20260908-jira-intake: a re-dispatched slice replayed plan/critique/tasks
+// from the slice GOAL, found the goal already delivered on the branch,
+// escalated "already implemented", and the controller's fix orders never
+// reached any agent (1 planner, 0 tasks). The controller's workaround was a
+// fresh workflow with the goal rewritten to be the defect list; slice.entry
+// is that workaround made mechanical. `stage` names the FIRST stage this
+// dispatch runs; `head` is the sidecar's commits.head. An unusable entry is a
+// zero-dispatch internal-error, never a silent full run.
+
+const ENTRY_STAGES = ['plan', 'review', 'fix', 'verify']
+
+// Type-tolerant like scopeCeilingList: an object passes, anything else is "no
+// entry" and the slice runs the plain pipeline. Validity is entryError's job.
+const entryOf = (slice) => (slice.entry && typeof slice.entry === 'object' && !Array.isArray(slice.entry)) ? slice.entry : null
+
+const controllerActs = 'The CONTROLLER must act on this at the next dispatch: '
+const ENTRY_OPTIONS = [
+  { label: 'Fix slice.entry and re-dispatch', detail: `Recommended default. ${controllerActs}re-dispatch with entry.stage one of ${ENTRY_STAGES.join('/')} and entry.head set to the sidecar's commits.head.`, recommended: true },
+  { label: 'Re-dispatch without an entry', detail: `${controllerActs}drop slice.entry so the slice runs the full pipeline from its goal — only right when nothing on the branch delivers the goal yet.` },
+  { label: 'Drop the slice', detail: `${controllerActs}exclude the slice from the re-dispatched wave and record the drop. The loop drops nothing by itself.` },
+]
+
+function entryError(slice, state, entry) {
+  const stageOk = ENTRY_STAGES.includes(entry.stage)
+  const headOk = typeof entry.head === 'string' && entry.head.length > 0
+  if (stageOk && headOk) return null
+  const context = `slice.entry must carry stage ∈ {${ENTRY_STAGES.join(', ')}} and a non-empty head sha; received stage=${JSON.stringify(entry.stage)} head=${JSON.stringify(entry.head)}. No agent was dispatched: a mistyped entry running the full pipeline against a delivered goal is the trap this record exists to avoid.`
+  return escalated(slice, state, esc(slice, 'internal-error', { title: 'unusable slice.entry', context, question: 'Fix the entry and re-dispatch, re-dispatch without an entry, or drop the slice?', options: ENTRY_OPTIONS }))
+}
+
+// A controller order becomes a FINDING the fix loop can carry: a string is a
+// claim with no diff anchor (outside_diff, anchored on its text against the
+// worktree); an object is merged over the same defaults. Orders bypass the
+// blocking bar — the controller ordered them.
+const ORDER_DEFAULTS = { severity: 'P1', category: 'correctness', file: '-', line: 0, evidence: { quote: 'controller order' }, confidence: 'high', outside_diff: true }
+const isOrder = (o) => typeof o === 'string' || (!!o && typeof o === 'object')
+function normalizeOrders(orders) {
+  if (!Array.isArray(orders)) return []
+  return orders.filter(isOrder).map((o, i) => typeof o === 'string'
+    ? { ...ORDER_DEFAULTS, id: `order-${i}`, claim: o, remedy: o }
+    : { ...ORDER_DEFAULTS, ...o, id: o.id || `order-${i}` })
+}
+
+// Carry-overs from the sidecar the controller built the entry from, so the
+// re-entered slice's own sidecar stays cumulative (fix rounds, tasks, critique)
+// rather than reading "0 tasks / SKIPPED" for work an earlier dispatch did.
+function seedEntryCounters(state, entry) {
+  const rounds = Number.isInteger(entry.fix_rounds) && entry.fix_rounds > 0 ? entry.fix_rounds : 0
+  state.review.fix_rounds = rounds
+  state.fixPackage = rounds ? `fix${rounds}` : null
+  if ([1, 2, 3].includes(entry.review_tier)) state.review_tier = Math.max(state.review_tier, entry.review_tier)
+  if (Number.isInteger(entry.tasks_completed)) state.tasksCompleted = entry.tasks_completed
+  if (entry.critique && typeof entry.critique === 'object') state.critique = entry.critique
+}
+
+function seedEntryState(slice, state, entry) {
+  state.commits.head = entry.head
+  seedEntryCounters(state, entry)
+  state.orders = normalizeOrders(entry.orders)
+  state.entryResidual = Array.isArray(entry.residual) ? entry.residual.filter(r => typeof r === 'string') : []
+  state.events.push({ scope: slice.id, type: 're-entry', payload: { summary: `re-entered at ${entry.stage} from head ${shortSha(entry.head)} (${state.orders.length} order(s), ${state.review.fix_rounds} fix round(s) already spent)`, stage: entry.stage, head: entry.head, fix_rounds: state.review.fix_rounds, orders: state.orders.map(o => o.claim) } })
+}
+
+// The plan a non-plan re-entry runs under: the plan file the first dispatch
+// wrote, with no tasks to implement.
+const entryPlan = (slice, entry) => ({ status: 'PLANNED', plan_path: entry.plan_path || `${CTX.run_dir}/plans/${slice.id}.md`, tasks: [] })
+
+// The paragraph a plan-mode re-entry adds to the planner's prompt: the branch
+// already carries work, and PLANNED with zero tasks is a legal return.
+function reentryNote(slice) {
+  const e = entryOf(slice)
+  if (!e || e.stage !== 'plan') return ''
+  return `\nRE-ENTRY: commits ${slice.base_sha}..${e.head} on the branch already deliver part or all of this goal — read that diff first. Plan ONLY the remaining work; PLANNED with an empty tasks list is a valid return when the goal is fully delivered. Append a "Re-entry" section to the existing plan file rather than rewriting it.`
+}
+
+// Options for the escalations a re-dispatch can act on. Each detail names the
+// CONTROLLER and the entry it builds, because the loop applies none of them.
+function reentryOptions(trigger) {
+  const gate = trigger === 'quality-gate-block'
+  return [
+    { label: gate ? 'Accept the listed violations as pre-existing debt' : 'Accept the residual as-is', detail: `${controllerActs}${gate ? 'record the acceptance (redispatch.py accept-violations, then redispatch.py args) and re-dispatch with slice.entry {stage: "verify", head}' : 'leave the slice ESCALATED and take no further work from it — never hand-write a DONE sidecar'}.`, recommended: gate },
+    { label: 'Provide fix orders', detail: `${controllerActs}re-dispatch with slice.entry {stage: "fix", head, orders: [...]} so the FIXER receives them, or — for a red suite — answer this id and re-dispatch with {stage: "verify", head} so the debug-fixer reads it.`, recommended: !gate },
+    { label: 'Drop the slice', detail: `${controllerActs}exclude the slice from the re-dispatched wave and record the drop. The loop drops nothing by itself.` },
+  ]
+}
+
 // Which round this dispatch is raising. A round is one DISPATCH of the slice:
 // escalated() is terminal, so a slice raises at most one record per dispatch and
 // an in-memory counter would reset to 1 on every re-dispatch and collide again.
@@ -587,7 +681,7 @@ Named files: ${slice.files.join(', ') || '(none named)'} · Subsystems: ${slice.
 Risk tier: ${slice.risk_tier} · Split depth: ${slice.depth} (split allowed only below depth 2)
 Write the plan to exactly: ${CTX.run_dir}/plans/${slice.id}.md
 Test/build command for verification steps: ${CTX.test_command}
-Also return refactor_radius: your DECLARED estimate of how much EXISTING code this plan rewrites — {rewrite_ratio: existing lines your tasks rewrite or delete ÷ total lines the plan changes, touched_existing_files: how many pre-existing files your tasks modify, rewritten_lines: the absolute count of existing lines rewritten or deleted, basis: one sentence on how you counted}. Report the numbers only, never a verdict: the workflow judges them against the run's ceiling. If you genuinely cannot estimate one, omit it rather than guessing a zero.${answerFor(slice, 'ambiguity')}${answerFor(slice, 'material-assumption')}${answerFor(slice, 'refactor-scope')}`
+Also return refactor_radius: your DECLARED estimate of how much EXISTING code this plan rewrites — {rewrite_ratio: existing lines your tasks rewrite or delete ÷ total lines the plan changes, touched_existing_files: how many pre-existing files your tasks modify, rewritten_lines: the absolute count of existing lines rewritten or deleted, basis: one sentence on how you counted}. Report the numbers only, never a verdict: the workflow judges them against the run's ceiling. If you genuinely cannot estimate one, omit it rather than guessing a zero.${answerFor(slice, 'ambiguity')}${answerFor(slice, 'material-assumption')}${answerFor(slice, 'refactor-scope')}${reentryNote(slice)}`
 }
 
 function criticPrompt(slice, plan, role) {
@@ -613,7 +707,19 @@ function taskPrompt(slice, plan, task, retry) {
 Mode: task. Implement task ${task.id} ("${task.title}") of the plan at ${plan.plan_path}.
 Your scope is this one task; the plan is context. Expected files: ${task.files.join(', ')}.
 Covering tests: derive from your touched files; full command if unsure: ${CTX.test_command}
-Commit in the worktree when green.${retry ? `\nRETRY: the previous attempt returned ${retry.status}${retry.blocker ? ` — ${retry.blocker}` : ''}${(retry.questions || []).length ? `; answers: ${retry.questions.map(q => `${q} → resolve from the plan/conventions; if genuinely impossible, BLOCKED`).join(' · ')}` : ''}. Something must change this attempt.` : ''}`
+Commit in the worktree when green.${retryNote(slice, retry)}`
+}
+
+// The retry paragraph of a task prompt. The ambiguity answer rides ONLY here:
+// first attempts stay byte-identical, so a plain re-dispatch still replays the
+// completed tasks from the journal, and the retry — the attempt after the
+// blocked one — is where the human's answer has to change something.
+function retryNote(slice, retry) {
+  if (!retry) return ''
+  const blocker = retry.blocker ? ` — ${retry.blocker}` : ''
+  const questions = (retry.questions || []).map(q => `${q} → resolve from the plan/conventions; if genuinely impossible, BLOCKED`).join(' · ')
+  const answers = questions ? `; answers: ${questions}` : ''
+  return `\nRETRY: the previous attempt returned ${retry.status}${blocker}${answers}. Something must change this attempt.${answerFor(slice, 'ambiguity')}`
 }
 
 function packageCmd(slice, base, head, roundTag) {
@@ -665,7 +771,7 @@ function fixPrompt(slice, plan, state, findings) {
 
 Mode: fix. Address EVERY finding below (plan for context: ${plan.plan_path}).
 Package(s) for anchor checks: ${anchorPackages(slice, state).join(' and ')} — a finding whose location/quote does not match the code may be REFUTED with file:line counter-evidence instead of a change. quality-gate findings: behavior-preserving refactors only.
-Covering tests + commit when done.${answerFor(slice, 'quality-gate-block')}
+Covering tests + commit when done.${answerFor(slice, 'quality-gate-block')}${answerFor(slice, 'review-block')}
 Findings:
 ${JSON.stringify(findings, null, 1)}`
 }
@@ -707,7 +813,7 @@ function debugFixPrompt(slice, plan, state, verify) {
   return `${packet(slice)}
 
 Mode: fix. The full suite is RED after all scoped runs were green — find the root cause before changing anything (attribute via the per-task commits: git -C "${slice.worktree}" log --oneline ${state.commits.base}..HEAD). Suite output summary: ${verify.suite.summary}
-Plan: ${plan.plan_path}. Fix the root cause, run the full suite (${CTX.test_command}), commit. Return DONE only with fresh green output you read; otherwise BLOCKED with what you found.`
+Plan: ${plan.plan_path}. Fix the root cause, run the full suite (${CTX.test_command}), commit. Return DONE only with fresh green output you read; otherwise BLOCKED with what you found.${answerFor(slice, 'review-block')}`
 }
 
 function simplifyPrompt(slice, state) {
@@ -788,6 +894,9 @@ function initSliceState(slice) {
     critique: { verdict: 'SKIPPED', concerns: 0 },
     commits: { base: slice.base_sha, head: null },
     tasksCompleted: 0, implConcerns: [], deferred: [],
+    // Controller orders and the residual carried in by a re-entry (empty on a
+    // plain dispatch); see seedEntryState.
+    orders: [], entryResidual: [],
     review: { confirmed: 0, refuted: 0, evidence_failed: 0, fix_rounds: 0, residual: [], open: [] },
     tests: null, quality: { status: 'SKIPPED', detail: 'not reached' },
     // Package tags for the files that exist right now: the review round's
@@ -1138,8 +1247,15 @@ async function resolveObjectionAndRecord(slice, state, ctx) {
 }
 
 // Stage C — critique (tier ≥ 2)
+// A re-entered slice whose plan has no tasks has nothing new to critique.
+function emptyReentryPlan(slice, plan) {
+  if (!entryOf(slice)) return false
+  return (plan.tasks || []).length === 0
+}
+
 async function stageCritique(slice, state, plan) {
   if (state.review_tier < 2) return { plan }
+  if (emptyReentryPlan(slice, plan)) return { plan }
   const panel = selectCouncilPanel(state)
   guard(slice, state)
   const raw = await parallel(panel.map(([role, agentType, model, effort, lane]) => () =>
@@ -1277,6 +1393,17 @@ async function stageReviewGate(slice, state, plan) {
   return { review, gateViolations }
 }
 
+// Stage R for a fix-mode re-entry: gate only, no fresh review. The open set
+// is the controller's orders plus whatever the gate measures at entry.head.
+async function stageGateOnly(slice, state) {
+  guard(slice, state)
+  const gate = await dispatchGate(slice, state, 'gate')
+  const gateViolations = buildGateViolations(qualityStatus(gate && gate.quality), gate)
+  stampQuality(slice, state, gate, 'gate')
+  state.reviewersCount = 0
+  return { review: { findings: [], summary: 're-entry at fix: no fresh review; the open set is the controller\'s orders plus the measured gate violations' }, gateViolations }
+}
+
 // Re-measure the gate at the CURRENT head before a fix-loop escalation, so the
 // record and the sidecar describe the tree the fix rounds left, not the one
 // stage R saw. A throw here (agent cap, token floor, host failure) must not
@@ -1357,7 +1484,7 @@ async function runFixRound(slice, state, ctx) {
   state.review.fix_rounds += 1
   const fix = await dispatchFix(slice, state, { plan, open, round })
   if (!fix || fix.status === 'BLOCKED')
-    return fixLoopEscalation(slice, state, { open, trigger: 'review-block', content: { title: 'fix agent blocked', context: fixBlockerReason(fix), question: 'Blocking findings cannot be fixed automatically. Accept, guide, or drop?', options: [] } })
+    return fixLoopEscalation(slice, state, { open, trigger: 'review-block', content: { title: 'fix agent blocked', context: fixBlockerReason(fix), question: 'Blocking findings cannot be fixed automatically. Accept, guide, or drop?', options: reentryOptions('review-block') } })
   if (fix.commits && fix.commits.head) state.commits.head = fix.commits.head
   const rr = await dispatch(slice, state, `re-review:${state.review.fix_rounds}`, reReviewPrompt(slice, state, open, fix),
     { agentType: 'spec-loop:re-reviewer', schema: REREVIEW_RESULT, model: 'sonnet', effort: 'low' })
@@ -1373,13 +1500,20 @@ async function stageFixLoop(slice, state, ctx) {
   const { plan, review, gateViolations } = ctx
   const bar = state.review_tier === 1 ? 'P0' : 'P0+P1'
   let open = [...blocking(review.findings, bar), ...gateViolations]
+  open.push(...state.orders)
   for (let round = 0; open.length && round < MAX_FIX_ROUNDS; round++) {
     const res = await runFixRound(slice, state, { plan, review, open, round, bar })
     if (res.stop) return { stop: res.stop }
     open = res.open
   }
-  if (open.length) return fixLoopEscalation(slice, state, { open, trigger: open.some(f => f.category === 'quality-gate') ? 'quality-gate-block' : 'review-block', content: { title: `${open.length} blocking finding(s) unresolved after ${MAX_FIX_ROUNDS} fix rounds`, context: open.map(f => `${f.severity} ${f.file}:${f.line} — ${f.claim}`).join('\n'), question: 'Accept the residual findings, provide guidance, or drop the slice?', options: [] } })
-  state.review.residual = review.findings.filter(f => !blocking([f], bar).length).map(f => `${f.severity}: ${f.claim}`).slice(0, 10)
+  if (!open.length) return fixLoopClean(slice, state, review, bar)
+  const trigger = open.some(f => f.category === 'quality-gate') ? 'quality-gate-block' : 'review-block'
+  return fixLoopEscalation(slice, state, { open, trigger, content: { title: `${open.length} blocking finding(s) unresolved after ${MAX_FIX_ROUNDS} fix rounds`, context: open.map(f => `${f.severity} ${f.file}:${f.line} — ${f.claim}`).join('\n'), question: 'Accept the residual findings, provide guidance, or drop the slice?', options: reentryOptions(trigger) } })
+}
+
+function fixLoopClean(slice, state, review, bar) {
+  state.review.open = []
+  state.review.residual = [...state.entryResidual, ...review.findings.filter(f => !blocking([f], bar).length).map(f => `${f.severity}: ${f.claim}`)].slice(0, 10)
   state.events.push({ scope: slice.id, type: 'review-summary', payload: { findings: review.findings.length, confirmed: state.review.confirmed, refuted: state.review.refuted, fix_rounds: state.review.fix_rounds, reviewers: state.reviewersCount } })
   return {}
 }
@@ -1406,7 +1540,7 @@ function verificationFailedEscalation(slice, state, v) {
   const detail = v
     ? `suite: ${v.suite.summary}; quality: ${qualityStatus(v.quality)} (summary_pass=${String(v.quality.summary_pass)}${v.quality.detail ? ` — ${v.quality.detail}` : ''})`
     : 'verifier dispatch failed terminally'
-  return escalated(slice, state, esc(slice, trigger, { title: 'verification failed', context: detail, question: 'Verification cannot pass automatically. Guide, accept, or drop?', options: [] }))
+  return escalated(slice, state, esc(slice, trigger, { title: 'verification failed', context: detail, question: 'Verification cannot pass automatically. Guide, accept, or drop?', options: reentryOptions(trigger) }))
 }
 
 async function runDebugFix(slice, state, plan, v) {
@@ -1431,22 +1565,39 @@ async function stageVerify(slice, state, plan) {
 // The seven-stage sequence, unwrapped from the try/catch below so its own
 // early-return checks aren't weighted by an extra level of nesting.
 async function runStages(slice, state) {
+  const entry = entryOf(slice)
+  if (entry) {
+    const bad = entryError(slice, state, entry)
+    if (bad) return bad
+    seedEntryState(slice, state, entry)
+  }
+  const built = await runBuildStages(slice, state, entry)
+  if (built.stop) return built.stop
+  return runQualityStages(slice, state, built.plan, entry)
+}
+
+// P/C/T — skipped entirely by a review/fix/verify re-entry, which runs under
+// the plan file the first dispatch wrote.
+async function runBuildStages(slice, state, entry) {
+  if (entry && entry.stage !== 'plan') return { plan: entryPlan(slice, entry) }
   const p = await stagePlan(slice, state)
-  if (p.stop) return p.stop
-  let plan = p.plan
-
-  const c = await stageCritique(slice, state, plan)
-  if (c.stop) return c.stop
-  plan = c.plan
-
-  const t = await stageTasks(slice, state, plan)
-  if (t.stop) return t.stop
+  if (p.stop) return p
+  const c = await stageCritique(slice, state, p.plan)
+  if (c.stop) return c
+  const t = await stageTasks(slice, state, c.plan)
+  if (t.stop) return t
   maybePromoteTier(slice, state, t.touched)
+  return { plan: c.plan }
+}
 
-  const rg = await stageReviewGate(slice, state, plan)
+// R / V-F / S / Z — a verify re-entry runs Z alone; a fix re-entry replaces
+// the review with a gate-only measurement; everything else runs the full tail.
+async function runQualityStages(slice, state, plan, entry) {
+  const stage = entry ? entry.stage : null
+  if (stage === 'verify') return stageVerify(slice, state, plan)
+  const rg = stage === 'fix' ? await stageGateOnly(slice, state) : await stageReviewGate(slice, state, plan)
   const f = await stageFixLoop(slice, state, { plan, review: rg.review, gateViolations: rg.gateViolations })
   if (f.stop) return f.stop
-
   await maybePolish(slice, state)
   return stageVerify(slice, state, plan)
 }

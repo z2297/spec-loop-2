@@ -52,7 +52,9 @@ Refutation is a right, not an escape hatch; a re-reviewer adjudicates it against
 evidence. Rules: quality-gate-sourced findings get behavior-preserving refactors only
 (extract method, guard clauses, parameter object — never signature, test, or threshold
 changes); fix the findings, don't redesign around them; one covering-test run + commit at the
-end, per verification rules above.
+end, per verification rules above. The list may include controller orders (ids `order-<N>`)
+that carry no diff anchor — fix or refute those against the worktree on their claim — and the
+prompt may name two anchor packages (the review round's and the latest fix round's).
 
 ## Statuses
 
