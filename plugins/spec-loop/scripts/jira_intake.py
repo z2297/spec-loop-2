@@ -135,25 +135,30 @@ def _errors_for_risk(risk, index):
     return errors
 
 
+def _errors_for_one_answer(gap_id, entry, gap_ids):
+    """Error strings for ONE answers-map entry, keyed by gap id. (PURE)"""
+    if gap_id not in gap_ids:
+        return ["answers has no matching gap for id %s" % gap_id]
+    if not isinstance(entry, dict):
+        return ["answers[%s] must be an object" % gap_id]
+    errors = []
+    if entry.get("logged_as") not in LOGGED_AS_VALUES:
+        errors.append(
+            "answers[%s].logged_as must be one of decision|open-question"
+            % gap_id)
+    answer = entry.get("answer")
+    if answer is not None and not isinstance(answer, str):
+        errors.append("answers[%s].answer must be a string or null" % gap_id)
+    return errors
+
+
 def _errors_for_answers(answers, gap_ids):
     """Error strings for the answers map, keyed by gap id. (PURE)"""
     if not isinstance(answers, dict):
         return ["answers must be an object keyed by gap id"]
     errors = []
     for gap_id, entry in sorted(answers.items()):
-        if gap_id not in gap_ids:
-            errors.append("answers has no matching gap for id %s" % gap_id)
-            continue
-        if not isinstance(entry, dict):
-            errors.append("answers[%s] must be an object" % gap_id)
-            continue
-        if entry.get("logged_as") not in LOGGED_AS_VALUES:
-            errors.append("answers[%s].logged_as must be one of decision|"
-                          "open-question" % gap_id)
-        if entry.get("answer") is not None and not isinstance(
-                entry.get("answer"), str):
-            errors.append("answers[%s].answer must be a string or null"
-                          % gap_id)
+        errors += _errors_for_one_answer(gap_id, entry, gap_ids)
     return errors
 
 
@@ -166,30 +171,49 @@ def _errors_for_str_list(value, name):
             if not isinstance(item, str) or not item]
 
 
+def _typed_list(value, name, errors):
+    """Return `value` as a list, else [] plus a type error on `errors`. (PURE
+    in its return; appends to the caller's error list as a side effect, the
+    same shape validate_refinement's own accumulator already uses.)"""
+    if isinstance(value, list):
+        return value
+    errors.append("%s must be a list" % name)
+    return []
+
+
+def _errors_for_entries(entries, error_fn):
+    """Flatten one error-list-per-entry field down to a single list. (PURE)"""
+    errors = []
+    for index, entry in enumerate(entries):
+        errors += error_fn(entry, index)
+    return errors
+
+
+def _missing_keys(refinement):
+    """Required refinement keys absent from `refinement`, in REFINEMENT_KEYS
+    order. (PURE)"""
+    return [key for key in REFINEMENT_KEYS if key not in refinement]
+
+
 def validate_refinement(refinement):
     """Return a list of human-readable error strings; [] means valid. (PURE)"""
     if not isinstance(refinement, dict):
         return ["refinement must be a JSON object"]
-    errors = ["missing required key: %s" % key
-              for key in REFINEMENT_KEYS if key not in refinement]
-    if errors:
-        return errors
-    if not isinstance(refinement["description"], str) or not refinement["description"]:
+    missing_keys = _missing_keys(refinement)
+    if missing_keys:
+        return ["missing required key: %s" % key for key in missing_keys]
+    errors = []
+    description = refinement["description"]
+    if not isinstance(description, str) or not description:
         errors.append("description must be a non-empty string")
-    errors += _errors_for_str_list(refinement["acceptance_criteria"],
-                                   "acceptance_criteria")
-    errors += _errors_for_str_list(refinement["injection_findings"],
-                                   "injection_findings")
-    gaps = refinement["gaps"] if isinstance(refinement["gaps"], list) else []
-    if not isinstance(refinement["gaps"], list):
-        errors.append("gaps must be a list")
-    risks = refinement["risks"] if isinstance(refinement["risks"], list) else []
-    if not isinstance(refinement["risks"], list):
-        errors.append("risks must be a list")
-    for index, gap in enumerate(gaps):
-        errors += _errors_for_gap(gap, index)
-    for index, risk in enumerate(risks):
-        errors += _errors_for_risk(risk, index)
+    errors += _errors_for_str_list(
+        refinement["acceptance_criteria"], "acceptance_criteria")
+    errors += _errors_for_str_list(
+        refinement["injection_findings"], "injection_findings")
+    gaps = _typed_list(refinement["gaps"], "gaps", errors)
+    risks = _typed_list(refinement["risks"], "risks", errors)
+    errors += _errors_for_entries(gaps, _errors_for_gap)
+    errors += _errors_for_entries(risks, _errors_for_risk)
     gap_ids = {g.get("id") for g in gaps if isinstance(g, dict)}
     errors += _errors_for_answers(refinement["answers"], gap_ids)
     return errors
@@ -277,8 +301,9 @@ def build_comment_bodies(record, refinement, ts):
     emitting some comments, mirroring jira_client.py's no-half-resolve rule."""
     errors = validate_refinement(refinement)
     if errors:
-        raise IntakeError("refusing to render comments from an invalid "
-                          "refinement: " + "; ".join(errors))
+        raise IntakeError(
+            "refusing to render comments from an invalid refinement: "
+            + "; ".join(errors))
     key = validate_issue_key(record.get("key"))
     payload = _understanding_payload(refinement)
     built = [{"kind": "understanding", "gap_id": None,
@@ -326,9 +351,9 @@ def _gap_rows(refinement):
     for gap in rank_gaps(refinement["gaps"]):
         entry = answers.get(gap["id"]) or {}
         answer = entry.get("answer") or "(no answer - logged as an open question)"
-        rows.append("- **%s** (impact %s, blocking %s) %s\n  - answer: %s"
-                    % (gap["id"], gap["impact"], gap["blocking"],
-                       gap["question"], answer))
+        row = "- **%s** (impact %s, blocking %s) %s\n  - answer: %s" % (
+            gap["id"], gap["impact"], gap["blocking"], gap["question"], answer)
+        rows.append(row)
     return rows
 
 
@@ -336,8 +361,9 @@ def _comment_blocks(comments):
     """Section 5's fenced, unposted comment bodies. (PURE)"""
     blocks = []
     for comment in comments:
-        blocks.append("### %s (%s) - NOT POSTED"
-                      % (comment["kind"], comment["gap_id"] or "card"))
+        heading = "### %s (%s) - NOT POSTED" % (
+            comment["kind"], comment["gap_id"] or "card")
+        blocks.append(heading)
         blocks.append("```text\n%s\n```" % comment["body"])
     return blocks
 
@@ -374,31 +400,35 @@ def _load_json(path, what):
     try:
         raw = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
-        raise IntakeUsageError("error: cannot read the %s file %s: %s"
-                               % (what, path, exc)) from exc
+        message = "error: cannot read the %s file %s: %s" % (what, path, exc)
+        raise IntakeUsageError(message) from exc
     try:
         return json.loads(raw)
     except ValueError as exc:
-        raise IntakeUsageError("error: the %s file %s is not valid JSON: %s"
-                               % (what, path, exc)) from exc
+        message = "error: the %s file %s is not valid JSON: %s" % (
+            what, path, exc)
+        raise IntakeUsageError(message) from exc
 
 
 def build_parser():
     """The argparse parser: one `render` subcommand."""
-    parser = argparse.ArgumentParser(
-        description="Render the Jira intake artifact and the comment bodies "
-                    "it would post. Posts nothing.")
+    description = (
+        "Render the Jira intake artifact and the comment bodies it would "
+        "post. Posts nothing.")
+    parser = argparse.ArgumentParser(description=description)
     subparsers = parser.add_subparsers(dest="command", required=True)
     render = subparsers.add_parser(
         "render", help="render the intake artifact and comment bodies")
-    render.add_argument("--record", required=True,
-                        help="path to jira_client.py resolve output (JSON)")
-    render.add_argument("--refinement", required=True,
-                        help="path to the refinement JSON")
-    render.add_argument("--ts", required=True,
-                        help="ISO-8601 timestamp supplied by the caller")
-    render.add_argument("--artifact-root", default=ARTIFACT_ROOT,
-                        help="relative artifact root (default: %s)" % ARTIFACT_ROOT)
+    render.add_argument(
+        "--record", required=True,
+        help="path to jira_client.py resolve output (JSON)")
+    render.add_argument(
+        "--refinement", required=True, help="path to the refinement JSON")
+    render.add_argument(
+        "--ts", required=True, help="ISO-8601 timestamp supplied by the caller")
+    render.add_argument(
+        "--artifact-root", default=ARTIFACT_ROOT,
+        help="relative artifact root (default: %s)" % ARTIFACT_ROOT)
     return parser
 
 
@@ -425,8 +455,8 @@ def main(argv=None):
         print(str(exc), file=sys.stderr)
         return 2
     except IntakeError as exc:
-        print(json.dumps({"ok": False, "errors": [str(exc)]},
-                         ensure_ascii=False, indent=2))
+        contract_failure = {"ok": False, "errors": [str(exc)]}
+        print(json.dumps(contract_failure, ensure_ascii=False, indent=2))
         return 1
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0

@@ -51,8 +51,8 @@ class TestTheCommandCannotStartTheLoopOrEdit(unittest.TestCase):
         self.assertNotIn("Edit", allowed_tools())
 
     def test_the_tool_list_is_exactly_the_authored_four(self):
-        self.assertEqual(sorted(allowed_tools()),
-                         ["AskUserQuestion", "Bash", "Read", "Write"])
+        expected = ["AskUserQuestion", "Bash", "Read", "Write"]
+        self.assertEqual(sorted(allowed_tools()), expected)
 
     def test_the_handoff_is_a_printed_line_for_the_human(self):
         text = COMMAND_MD.read_text(encoding="utf-8")
@@ -65,12 +65,12 @@ class TestTheCommandPostsNothingInThisLane(unittest.TestCase):
     read as read-only prose, so pin the claim."""
 
     def setUp(self):
-        self.text = re.sub(r"\s+", " ",
-                           COMMAND_MD.read_text(encoding="utf-8"))
+        raw = COMMAND_MD.read_text(encoding="utf-8")
+        self.text = re.sub(r"\s+", " ", raw)
 
     def test_it_states_that_it_posts_nothing(self):
-        self.assertIn("renders the comment bodies it would post and posts "
-                      "nothing", self.text)
+        expected = "renders the comment bodies it would post and posts nothing"
+        self.assertIn(expected, self.text)
 
     def test_it_states_the_write_back_supersession(self):
         self.assertIn("peer-review.md", self.text)
