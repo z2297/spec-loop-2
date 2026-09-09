@@ -1,0 +1,248 @@
+{
+  "schema_version": 2,
+  "id": "r1",
+  "status": "DONE",
+  "branch": "spec-loop/20260908-jira-intake/r1",
+  "commits": {
+    "base": "b87574015f80d7de9d2bee6e63f6adec2d521c6d",
+    "head": "f441f7e"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 6,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 3,
+  "review": {
+    "confirmed": 4,
+    "refuted": 2,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "CONTROLLER-VERIFIED KNOWN LIMITATION (accepted, recorded not fixed): the new comment at jira_client.py:241 says 'every transport failure on the READ path is a JiraError too', which overreaches. Verified directly: http.client.IncompleteRead, BadStatusLine and LineTooLong are NOT OSError subclasses and can still escape resp.read() unmapped, while RemoteDisconnected (via ConnectionResetError) and ssl.SSLError ARE covered. The residual gap is identical on _http_post, which carries the same three handlers, so the CODE is consistent with its own precedent and only the wording is too absolute. Left as-is because it is a source comment misleading a future maintainer rather than operator-facing guidance, and it causes no unsafe behaviour; correcting one comment did not justify another dispatch at this point in the run.",
+      "ACCEPTED (P3, intended): find_ac_field_id's best-effort 'except JiraError: return None' now also swallows a read-phase timeout on the field-catalogue GET, which previously crashed loudly. Consistent with how URLError already degraded there, and disclosed through the record's acceptance_criteria_source.",
+      "DEFERRED (logged, not built): scripts/test_measure_coverage_manifest.py's comment re-pins a hand-maintained count that has now gone stale once (fourteen -> fifteen) and will rot again when TARGET_FILES grows. The durable fix is to drop the number entirely ('One pin covers every target in TARGET_FILES'). That is a wording change beyond the 'correct the number' this remediation named."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/slice_wave_*.test.mjs ; node --test --experimental-test-coverage plugins/spec-loop/scripts/dashboard_assets/index.test.mjs",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at f441f7e, all six segments run as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 126 tests OK; plugins/spec-loop/scripts/ Ran 1741 tests OK; coverage 'PASS: all per-file and total floors met' TOTAL 97.1% (7110/7321) vs a 90 floor, jira_client.py 99.6% (467/469) vs 94, jira_intake.py 96.2% vs 91; node slice_wave 98/98; node dashboard_assets 48/48. The wave crashed at verify:1 on a StructuredOutput retry cap AFTER all 3 tasks had committed, so this is the controller's own verification standing in for the stage that never completed.",
+    "scope": "full",
+    "tree_sha": "378dfccb7b91aad9f6b8d17356008c56a3373e3f"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "ACCEPTED by precedent (run 20260825-scope-ceiling s1). CONTROLLER-MEASURED at the slice base b875740: TWO failures of 28 checks, both whole-file class_lines (jira_client.py 871, test_jira_client.py 1313, against 300). ZERO function-level violations. The sidecar's returned quality.detail claimed a function-level nesting_depth 4 breach in the new test_a_bare_timeout_reading_the_response_becomes_a_jira_error; that is STALE - it does not appear in the measured failures. Sixth stale quality block this run."
+  },
+  "escalations": [],
+  "agents_used": 13,
+  "wave": 4,
+  "events": [
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "refactor-radius",
+      "payload": {
+        "summary": "refactor radius WITHIN: every declared number is at or under its ceiling (compared: rewrite_ratio, touched_existing_files)",
+        "state": "WITHIN",
+        "exceeded": [],
+        "measured": {
+          "rewrite_ratio": 0.19,
+          "touched_existing_files": 3,
+          "rewritten_lines": 6
+        },
+        "thresholds": {
+          "enabled": true,
+          "max_rewrite_ratio": 0.5,
+          "max_touched_existing_files": 8,
+          "min_rewritten_lines": 150
+        },
+        "compared": [
+          "rewrite_ratio",
+          "touched_existing_files"
+        ],
+        "skipped": [],
+        "basis": "Counted from the final task list: ~6 existing lines rewritten (1 message line, 1 comment line, ~4 lines of the replaced test body) against ~32 total changed lines including the new 12-line except clause and the ~14 lines of new tests."
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 5,
+        "deferred": [
+          "Task 3 re-pins a hand-maintained count in a comment that has now gone stale once (fourteen -> fifteen) and will rot again the next time TARGET_FILES grows; the plan itself notes no test enforces it. The durable fix is to drop the number entirely (\"One pin covers every target in TARGET_FILES\"), which costs nothing and removes the whole class. That is a wording change rather than the \"correct the number\" the run's item 3 names, so it should NOT be built in this narrow remediation -- log it and write \"fifteen\" as planned."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "deferred",
+      "payload": {
+        "summary": "Task 3 re-pins a hand-maintained count in a comment that has now gone stale once (fourteen -> fifteen) and will rot again the next time TARGET_FILES grows; the plan itself notes no test enforces it. The durable fix is to drop the number entirely (\"One pin covers every target in TARGET_FILES\"), which costs nothing and removes the whole class. That is a wording change rather than the \"correct the number\" the run's item 3 names, so it should NOT be built in this narrow remediation -- log it and write \"fifteen\" as planned.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:r1-t1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:r1-t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:r1-t3",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 3
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260908-jira-intake/r1/plugins/spec-loop/scripts/test_jira_client.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "review-summary",
+      "payload": {
+        "findings": 3,
+        "confirmed": 4,
+        "refuted": 2,
+        "fix_rounds": 1,
+        "reviewers": 2
+      }
+    }
+  ]
+}

@@ -1,0 +1,309 @@
+{
+  "schema_version": 2,
+  "run_id": "20260908-jira-intake",
+  "run_schema_detected": 2,
+  "generated_at": "2026-09-09T08:19:32+00:00",
+  "sources": {
+    "dag": true,
+    "dag_schema_version": 2,
+    "events": 361,
+    "events_skipped": 0,
+    "events_truncated": false,
+    "event_types": {
+      "agent-dispatch": 150,
+      "baseline": 1,
+      "council-verdict": 10,
+      "decision": 95,
+      "deferred": 16,
+      "escalation-answered": 15,
+      "escalation-opened": 13,
+      "integration-check": 5,
+      "quality-gate": 10,
+      "refactor-radius": 10,
+      "review-summary": 20,
+      "run-created": 1,
+      "wave-collected": 9,
+      "wave-dispatched": 6
+    },
+    "sidecars": 4,
+    "runbook": true
+  },
+  "safety": {
+    "basis": "events-jsonl+sidecar-v2",
+    "escalations": {
+      "basis": "events-jsonl+sidecar-v2",
+      "total": 13,
+      "open": 0,
+      "answered": 13,
+      "by_trigger": {
+        "ambiguity": 2,
+        "council-objection": 3,
+        "internal-error": 1,
+        "quality-gate-block": 5
+      },
+      "per_scope": {
+        "j1": 3,
+        "j2": 3,
+        "j3": 2,
+        "r1": 1,
+        "run": 4
+      },
+      "unkeyed_events": 0
+    },
+    "decisions_total": 95,
+    "deferrals_total": 16,
+    "over_scope_deferrals": null,
+    "autonomy_ratio": 0.8796,
+    "escalation_answer_latency_s": {
+      "count": 4,
+      "median_s": 488.0,
+      "max_s": 488.0
+    },
+    "council": {
+      "basis": "events-jsonl+sidecar-v2",
+      "verdicts": {
+        "ENDORSE_WITH_CONCERNS": 10
+      },
+      "object_rate": 0.0,
+      "safety_objections": 0,
+      "concerns_total": 95,
+      "concerns_deferred": 16,
+      "by_member": null,
+      "slice_verdicts": {
+        "ENDORSE_WITH_CONCERNS": 4
+      },
+      "over_scope_flags": 0
+    },
+    "reversibility_mix": {
+      "n/a": 83
+    },
+    "precedent_reuse": {
+      "count": 5,
+      "rate": 0.0526
+    }
+  },
+  "quality": {
+    "basis": "events-jsonl+sidecar-v2",
+    "quality_gate": {
+      "basis": "events-jsonl+sidecar-v2",
+      "measurements": 10,
+      "scopes": 4,
+      "first_pass": 0,
+      "first_pass_rate": 0.0,
+      "refactor_passes_total": null,
+      "failures": 9,
+      "final_status_counts": {
+        "FAIL": 3,
+        "PASS": 1
+      }
+    },
+    "review": {
+      "basis": "events-jsonl+sidecar-v2",
+      "counters": {
+        "confirmed": 9,
+        "refuted": 40,
+        "evidence_failed": 0,
+        "fix_rounds": 4,
+        "residual": 16
+      },
+      "verified_findings": 49,
+      "refuted_rate": 0.8163,
+      "evidence_failed_drop_rate": 0.0,
+      "fix_rounds_total": 4,
+      "residual_total": 16,
+      "findings_total": 57,
+      "reviewer_dispatches": 27,
+      "findings_per_reviewer_dispatch": 2.1,
+      "refuted_by_fixer": null,
+      "refuted_by_fixer_rate": null,
+      "block_escalations": 0
+    },
+    "merges": {
+      "basis": "events-jsonl",
+      "count": 0,
+      "commits": null
+    },
+    "splits": {
+      "basis": "dag-json",
+      "total_slices": 4,
+      "split_parents": 0,
+      "split_rate": 0.0,
+      "max_depth": 0,
+      "remediation_slices": 1,
+      "risk_tiers": {
+        "2": 1,
+        "3": 3
+      }
+    },
+    "integration": {
+      "basis": "events-jsonl",
+      "checks": [
+        {
+          "scope": "run",
+          "result": null
+        },
+        {
+          "scope": "run",
+          "result": null
+        },
+        {
+          "scope": "run",
+          "result": null
+        },
+        {
+          "scope": "run",
+          "result": null
+        },
+        {
+          "scope": "run",
+          "result": null
+        }
+      ],
+      "check_failures": 0,
+      "gate": null,
+      "remediation_slices": 1
+    },
+    "requirement_coverage": {
+      "basis": "runbook-table",
+      "delivered": 9,
+      "partial": 1,
+      "deferred": 1,
+      "rate": 0.8182
+    },
+    "slice_outcomes": {
+      "basis": "sidecar-v2",
+      "counts": {
+        "DONE": 4
+      }
+    },
+    "tests": {
+      "basis": "sidecar-v2",
+      "results": {
+        "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at 43ebdf8, all six segments run as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 126 tests OK; plugins/spec-loop/scripts/ Ran 1739 tests OK; coverage 'PASS: all per-file and total floors met' with TOTAL 97.1% (7108/7319) vs a 90% floor, jira_client.py 99.6% (465/467) vs 94 and jira_intake.py 96.2% (352/366) vs 91; node slice_wave suites 98/98; node dashboard_assets 48/48. The wave's own verifier reported the same six segments green; this records the controller's independent re-run. CI segment 7 (claude plugin validate) is not run locally.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at d3cc117, all six segments run as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 126 tests OK; plugins/spec-loop/scripts/ Ran 1659 tests OK; coverage 'PASS: all per-file and total floors met' with 1785 tests, TOTAL 97.0% (6930/7141) vs a 90% floor, jira_intake.py 96.1% (343/357) vs its newly-registered 89% floor and jira_client.py 99.3% vs 93; node slice_wave suites 98/98; node dashboard_assets 48/48. CI segment 7 (claude plugin validate) is not run locally.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at f441f7e, all six segments run as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 126 tests OK; plugins/spec-loop/scripts/ Ran 1741 tests OK; coverage 'PASS: all per-file and total floors met' TOTAL 97.1% (7110/7321) vs a 90 floor, jira_client.py 99.6% (467/469) vs 94, jira_intake.py 96.2% vs 91; node slice_wave 98/98; node dashboard_assets 48/48. The wave crashed at verify:1 on a StructuredOutput retry cap AFTER all 3 tasks had committed, so this is the controller's own verification standing in for the stage that never completed.": 1,
+        "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at f79156b, all six segments run as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 126 tests OK; plugins/spec-loop/scripts/ Ran 1588 tests OK (baseline 1479, so +109 new tests and none deleted); coverage 'PASS: all per-file and total floors met' with 1714 tests, TOTAL 97.1% (6587/6784) vs a 90% floor and the newly-registered jira_client.py at 99.3% (296/298) vs its 93% floor; node slice_wave suites 98 tests 98 pass 0 fail; node dashboard_assets 48 tests 48 pass 0 fail. The workflow's own verifier reported the same six segments green across all three dispatches; this line records the controller's independent re-run, not the verifier's claim. CI segment 7 (claude plugin validate) is not run locally.": 1
+      }
+    }
+  },
+  "performance": {
+    "basis": "dag-json+events-jsonl",
+    "run_wall_clock_s": 25686.0,
+    "started_at": "2026-09-09T01:11:26+00:00",
+    "finished_at": "2026-09-09T08:19:32+00:00",
+    "slices": null,
+    "waves": [
+      {
+        "wave": 1,
+        "slices": 1,
+        "status": "collected",
+        "dispatched_via_workflow": true,
+        "agent_count": 21,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 1075.5
+      },
+      {
+        "wave": 2,
+        "slices": 1,
+        "status": "collected",
+        "dispatched_via_workflow": true,
+        "agent_count": 10,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 1403.5
+      },
+      {
+        "wave": 3,
+        "slices": 1,
+        "status": "collected",
+        "dispatched_via_workflow": true,
+        "agent_count": 8,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 954.6
+      },
+      {
+        "wave": 4,
+        "slices": 1,
+        "status": "collected",
+        "dispatched_via_workflow": true,
+        "agent_count": 13,
+        "max_parallelism": null,
+        "span_s": null,
+        "workflow_duration_s": 1188.9
+      }
+    ],
+    "agents": {
+      "basis": "events-jsonl",
+      "count": 150,
+      "timed": 0,
+      "total_s": null,
+      "by_agent": null,
+      "by_model": null,
+      "by_role": null,
+      "by_effort": {
+        "high": 42,
+        "low": 61,
+        "medium": 47
+      }
+    },
+    "engine_active_s": null,
+    "human_wait_s": 488.0
+  },
+  "tokens": {
+    "basis": "wave-collected-events",
+    "totals": null,
+    "dispatches": 150,
+    "dispatches_with_tokens": 0,
+    "coverage_rate": 0.0,
+    "by_model": null,
+    "by_role": null,
+    "by_agent": null,
+    "by_scope": null,
+    "wave_totals": {
+      "basis": "wave-collected-events",
+      "total": 6033969,
+      "waves": [
+        {
+          "wave": 1,
+          "subagent_tokens": 1208641
+        },
+        {
+          "wave": 1,
+          "subagent_tokens": 314776
+        },
+        {
+          "wave": 2,
+          "subagent_tokens": 983284
+        },
+        {
+          "wave": 2,
+          "subagent_tokens": 519631
+        },
+        {
+          "wave": 2,
+          "subagent_tokens": 365073
+        },
+        {
+          "wave": 3,
+          "subagent_tokens": 1338784
+        },
+        {
+          "wave": 3,
+          "subagent_tokens": 660372
+        },
+        {
+          "wave": 3,
+          "subagent_tokens": 225505
+        },
+        {
+          "wave": 4,
+          "subagent_tokens": 417903
+        }
+      ],
+      "waves_reporting": 9,
+      "waves_total": 9
+    }
+  }
+}

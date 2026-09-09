@@ -1,0 +1,601 @@
+{
+  "schema_version": 2,
+  "id": "j1",
+  "status": "DONE",
+  "branch": "spec-loop/20260908-jira-intake/j1",
+  "commits": {
+    "base": "5bf313aade526424b196814d25cf2c3aa5a9d364",
+    "head": "f79156b"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 15,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 7,
+  "review": {
+    "confirmed": 1,
+    "refuted": 36,
+    "evidence_failed": 0,
+    "fix_rounds": 2,
+    "residual": [
+      "P2: A comment page whose `total` key is absent or null silently truncates the sweep to the first page: `int(page.get(\"total\") or 0)` collapses to 0, `len(comments) >= 0` is always true, and the function returns after one request with no signal. Verified: a page `{'startAt':0,'maxResults':100,'comments':[...]}` with no `total` returns after exactly 1 call. This is the same class of shape change the line above deliberately raises on -- the docstring says 'swallowing a shape change here would silently defeat dedupe on a chatty card' -- so the missing-`total` case is the one asymmetry in an otherwise fail-closed sweep. Relatedly, a non-numeric `total` ('many') raises an unmapped ValueError rather than a JiraError.",
+      "P2: The ADF renderer and the comment normalizer assume every node and every content item is a dict carrying string text; malformed shapes raise unmapped AttributeError/TypeError that escape the JiraError contract and reach the user as a traceback instead of the {\"ok\": false, ...} stderr object. Verified against the module: a non-dict child in `content` -> AttributeError 'str' object has no attribute 'get'; `content` that is not a list -> AttributeError; `{'type':'text','text':None}` -> TypeError in the join; a mention whose attrs.text is null -> AttributeError on .startswith; a heading with a string `level` -> TypeError on '#' * level; and a non-dict entry in a comment page -> AttributeError at `c.get(\"id\")`. This is inconsistent with the isinstance guards the implementer deliberately added at find_ac_field_id (a non-object catalogue entry is skipped) and resolve_acceptance_criteria (a non-str/dict field degrades) for exactly this failure mode. Trigger requires a malformed body from the server, so likelihood is low, but the blast radius is the module's public error contract that the command slice consumes.",
+      "P3: `raw.decode(\"utf-8\")` sits inside find_ac_field_id's try block but the handler catches only JiraError, so a non-UTF-8 response body raises UnicodeDecodeError and defeats the one degrade-to-None contract this function exists to provide -- the best-effort catalogue read becomes a hard failure of the whole resolve. fetch_issue (line 331) and fetch_comments (line 406) decode the same way, where the failure mode is an unmapped traceback instead of a JiraError. Theoretical for Jira Cloud (UTF-8 JSON by spec) and already flagged by the implementer; noted here as the same unmapped-exception class as J1-R1-04.",
+      "P3: The clock-read guard is a whole-source substring scan for the literal 'datetime' with only '# ' stripped, so it constrains prose as well as code: any future docstring or comment sentence containing the word 'datetime' turns CI red for a module that still reads no clock. It has already forced one docstring rewording during this slice (per the implementer's own deviation note), which is the guard shaping the prose rather than the behaviour it means to pin.",
+      "P2: main()'s refusal output diverges from the exact two-file precedent conventions.md cites for this behavior (dag.py:775-782, run_state.py:1289-1295): both JiraUsageError (exit 2) and JiraError (exit 1) print the same JSON `{\"ok\": false, \"errors\": [...]}` shape to stderr, whereas the established repo pattern prints the contract-failure (exit 1) JSON refusal to STDOUT and the usage-failure (exit 2) message as plain `\"error: %s\"` text to STDERR. This is a real, verifiable output-shape/stream inconsistency with the only two files conventions.md names as the reference for this exact behavior, not a stylistic taste call -- any downstream tooling that follows the established repo idiom to distinguish the two refusal shapes/streams will not find what it expects from this module.",
+      "P2: ISSUE_KEY_RE (and ALLOWED_HOST_RE) are anchored with a bare `$` and checked with `.match()`, not `.fullmatch()`/`\\Z`. In Python, `$` (without re.MULTILINE) matches at end-of-string OR just before a single trailing newline, so a key with a trailing `\\n` passes validation silently. Verified empirically in the worktree: `jc.validate_issue_key(\"ABC-123\\n\")` returns `\"ABC-123\\n\"` unchanged instead of raising `JiraUsageError`. This contradicts both the plan's binding constraint (\"Validate the Jira issue key against a strict regex ... before it reaches a URL segment, a filesystem path, or argv\") and the function's own docstring claim (\"Rejects ... anything else outside ISSUE_KEY_RE\"). Current call sites happen to percent-encode the key before every URL use, bounding today's exploitability, but the validator's own contract is broken, and a future consumer (e.g. the deferred write-back/comment-POST slice) that trusts \"already regex-validated\" without re-encoding would inherit the gap. No test in the otherwise-thorough injection-negative suite (leading dash, embedded slash, path traversal) covers a trailing/embedded newline.",
+      "P3: Task 7's own instruction says to \"Re-wrap the list lines to stay under the file's existing wrap width\" when inserting `jira_client` into the Scripts enumeration, but the resulting third line of the bullet is 84 characters wide, longer than every other line in the same Components bullet block (the surrounding Agents/Skills/Scripts lines all sit at 55-78 chars) -- it was not re-wrapped, it was left to grow."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs plugins/spec-loop/scripts/slice_wave_radius.test.mjs plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs plugins/spec-loop/scripts/slice_wave_replan.test.mjs ; node --test --experimental-test-coverage plugins/spec-loop/scripts/dashboard_assets/index.test.mjs",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at f79156b, all six segments run as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 126 tests OK; plugins/spec-loop/scripts/ Ran 1588 tests OK (baseline 1479, so +109 new tests and none deleted); coverage 'PASS: all per-file and total floors met' with 1714 tests, TOTAL 97.1% (6587/6784) vs a 90% floor and the newly-registered jira_client.py at 99.3% (296/298) vs its 93% floor; node slice_wave suites 98 tests 98 pass 0 fail; node dashboard_assets 48 tests 48 pass 0 fail. The workflow's own verifier reported the same six segments green across all three dispatches; this line records the controller's independent re-run, not the verifier's claim. CI segment 7 (claude plugin validate) is not run locally.",
+    "scope": "full",
+    "tree_sha": "41f7fcbe5c8a451f74b05c10b030ff21b99e6b07"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "ACCEPTED by prior-run precedent (run 20260825-scope-ceiling s1:quality-gate-block: 'ACCEPT AS PRE-EXISTING DEBT, no threshold weakened'), no threshold weakened, no file split, and nothing added to coverage_omit.txt. CONTROLLER-MEASURED first-hand at f79156b: 4 failures of 799 checks, non-vacuous, down from 24 at the first dispatch. ZERO unforced function-level violations survive. The four are (1) parameter_count 6 on redirect_request - forced by the stdlib urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, headers, newurl) override signature, whose one-line 'return None' body is the cross-origin credential-leak defense this run's constraints require; and (2-4) whole-file class_lines breaches on jira_client.py 536, test_jira_client.py 700 and measure_coverage.py 537 against a 300 threshold. Evidence that this is the accepted pre-existing class: the same gate run over untouched history (base = the commit before pr_resolver.py was added, head = main) yields 600 failures on shipped code including 23 class_lines breaches - pr_resolver.py 424, test_pr_resolver.py 593, run_state.py 1080, quality_gate.py 1403, test_dashboard_server.py 2467. measure_coverage.py measured 535 at base before this slice added two register entries, and the two new files are smaller than the pr_resolver pair they mirror."
+  },
+  "escalations": [
+    {
+      "id": "j1:quality-gate-block:2",
+      "trigger": "quality-gate-block",
+      "title": "verification failed",
+      "context": "suite: All 6 suite segments passed: marketplace validation, 126 script tests, 1588 plugin tests, 1714 coverage tests (all floors met), 98 slice_wave tests, 48 dashboard_assets tests; quality: FAIL (summary_pass=false — Quality gate exited with status 1; 4 measured violations in summary.failures array)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: All 6 suite segments passed: marketplace validation, 126 script tests, 1588 plugin tests, 1714 coverage tests (all floors met), 98 slice_wave tests, 48 dashboard_assets tests; quality: FAIL (summary_pass=false — Quality gate exited with status 1; 4 measured violations in summary.failures array)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "OPEN"
+    }
+  ],
+  "agents_used": 21,
+  "wave": 1,
+  "events": [
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "refactor-radius",
+      "payload": {
+        "summary": "refactor radius WITHIN: every declared number is at or under its ceiling (compared: rewrite_ratio, touched_existing_files)",
+        "state": "WITHIN",
+        "exceeded": [],
+        "measured": {
+          "rewrite_ratio": 0.002,
+          "touched_existing_files": 4,
+          "rewritten_lines": 3
+        },
+        "thresholds": {
+          "enabled": true,
+          "max_rewrite_ratio": 0.5,
+          "max_touched_existing_files": 8,
+          "min_rewritten_lines": 150
+        },
+        "compared": [
+          "rewrite_ratio",
+          "touched_existing_files"
+        ],
+        "skipped": [],
+        "basis": "Counted from the final task list: only Task 7 touches pre-existing files (measure_coverage.py and coverage_omit.txt are pure additions; one comment line in test_measure_coverage_manifest.py and two list/count lines in plugins/spec-loop/README.md are reworded, ~3 existing lines), against roughly 1500 total plan-changed lines dominated by the two new Create files."
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 13,
+        "deferred": [
+          "PREMISE / forward risk for the command slice, NOT to be built here: this module renders untrusted Jira prose into MARKDOWN (headings as `## X`, lists as `- `, fenced code blocks) and hands it to a downstream consumer that will feed it to a model. Card text containing `## Acceptance Criteria` or instruction-shaped prose becomes structurally indistinguishable from the intake command's own prose. Two consequences: (a) `acceptance_criteria_from_description` can be steered by attacker-authored heading text; (b) the command slice's untrusted-data framing (peer-review.md:48-51) must fence or delimit `description`/`acceptance_criteria`/comment bodies rather than inline them. Log this for the command slice; do not expand j1's record contract to carry it.",
+          "Untrusted card text reaches a human reviewer and an agent unfiltered for invisible Unicode. `adf_to_text` (Task 3) renders summary, description and every comment body verbatim, and `main` emits them with `json.dumps(..., ensure_ascii=False)` (Task 6, j1.md:1368). JSON escapes C0 controls but not Unicode bidi and format characters (U+202A-202E, U+2066-2069, U+200B-200F), so card text can render one way for a human reading the artifact and another for the model consuming it -- a Trojan-Source-shaped trick on a field the run already designates untrusted. The boundary where this is enforced belongs to the command slice per the run's own framing, so out of scope here, but `adf_to_text` is the natural single home for a strip and this should not be lost between slices. Mitigation when it is taken up: strip category-Cf characters in the renderer, with a test asserting a U+202E-bearing comment body round-trips clean."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "deferred",
+      "payload": {
+        "summary": "PREMISE / forward risk for the command slice, NOT to be built here: this module renders untrusted Jira prose into MARKDOWN (headings as `## X`, lists as `- `, fenced code blocks) and hands it to a downstream consumer that will feed it to a model. Card text containing `## Acceptance Criteria` or instruction-shaped prose becomes structurally indistinguishable from the intake command's own prose. Two consequences: (a) `acceptance_criteria_from_description` can be steered by attacker-authored heading text; (b) the command slice's untrusted-data framing (peer-review.md:48-51) must fence or delimit `description`/`acceptance_criteria`/comment bodies rather than inline them. Log this for the command slice; do not expand j1's record contract to carry it.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "deferred",
+      "payload": {
+        "summary": "Untrusted card text reaches a human reviewer and an agent unfiltered for invisible Unicode. `adf_to_text` (Task 3) renders summary, description and every comment body verbatim, and `main` emits them with `json.dumps(..., ensure_ascii=False)` (Task 6, j1.md:1368). JSON escapes C0 controls but not Unicode bidi and format characters (U+202A-202E, U+2066-2069, U+200B-200F), so card text can render one way for a human reading the artifact and another for the model consuming it -- a Trojan-Source-shaped trick on a field the run already designates untrusted. The boundary where this is enforced belongs to the command slice per the run's own framing, so out of scope here, but `adf_to_text` is the natural single home for a strip and this should not be lost between slices. Mitigation when it is taken up: strip category-Cf characters in the renderer, with a test asserting a U+202E-bearing comment body round-trips clean.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j1-t1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j1-t2",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j1-t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j1-t4",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j1-t5",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j1-t6",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j1-t7",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 34
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-1 refuted by batched verifier",
+        "rationale": "jira_client.py:165-183 `_http_get` has only two nested blocks in its body: `try:` then a `with _OPENER.open(...) as resp:` inside it (max block nesting depth 2, or 3 if the function body itself is counted as depth 1); there is no fourth level of nesting anywhere in the function. This is consistent with a broader pattern of this heuristic's nesting_depth numbers on this file/test-file being demonstrably inflated (see qg-8/qg-9/qg-11 etc., where functions with zero or one nested block are scored 4-8).",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-8 refuted by batched verifier",
+        "rationale": "jira_client.py:452-473 `resolve_issue` contains no if/for/while/try blocks at all -- it is a straight-line sequence of assignments and a single dict-literal return, so its actual nesting depth is 1 (just the function body), not 4 as claimed.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-9 refuted by batched verifier",
+        "rationale": "jira_client.py:478-489 `build_parser` contains zero conditional/loop/try blocks -- it is five sequential statements (ArgumentParser construction, add_subparsers, add_parser, add_argument, return), so its nesting depth is 1, not 6 as claimed.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-11 refuted by batched verifier",
+        "rationale": "test_jira_client.py:178-184 `test_the_request_method_is_get` has a single `with mock.patch.object(...)` block and nothing nested inside it beyond one call -- actual nesting depth ~2, not 5.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-12 refuted by batched verifier",
+        "rationale": "test_jira_client.py:186-191 `test_the_request_carries_no_body` has one `with` block, no further nesting -- actual depth ~2, not 5.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-13 refuted by batched verifier",
+        "rationale": "test_jira_client.py:193-199 `test_the_authorization_header_is_basic` has one `with` block, no further nesting -- actual depth ~2, not 5.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-14 refuted by batched verifier",
+        "rationale": "test_jira_client.py:233-235 `test_the_module_opener_installs_the_no_redirect_handler` is a single `assertTrue(any(... for h in ...))` statement with zero if/for/with/try blocks -- actual nesting depth 1, not 6.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-15 refuted by batched verifier",
+        "rationale": "test_jira_client.py:278-288 `test_secrets_absent_from_an_http_error_message` has two sequential-but-nested `with` blocks (mock.patch.object then assertRaises) and nothing deeper -- actual nesting depth ~3, not 6.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-16 refuted by batched verifier",
+        "rationale": "test_jira_client.py:334-336 `test_a_heading_renders_with_hash_markers` is a single assertEqual call with zero nested blocks -- actual nesting depth 1, not 5.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-17 refuted by batched verifier",
+        "rationale": "test_jira_client.py:341-345 `test_ordered_list_items_are_numbered` is a dict-literal construction plus one assertEqual, with zero if/for/with/try blocks -- actual nesting depth 1, not 6.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-18 refuted by batched verifier",
+        "rationale": "test_jira_client.py:432-436 `test_a_403_on_the_catalogue_degrades_to_none_rather_than_failing` has one `with mock.patch.object(...)` block containing one assertion -- actual nesting depth 2, not 6.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-19 refuted by batched verifier",
+        "rationale": "test_jira_client.py:461-466 `test_the_ac_field_id_is_appended_to_the_field_set` has one `with mock.patch.object(...)` block -- actual nesting depth 2, not 5.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-20 refuted by batched verifier",
+        "rationale": "test_jira_client.py:540-543 `comment_page` is a single return statement building a dict/json.dumps call, with zero blocks -- actual nesting depth 1, not 5.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-21 refuted by batched verifier",
+        "rationale": "test_jira_client.py:611-616 `test_a_page_missing_the_comments_key_raises` has two nested `with` blocks (mock.patch.object then assertRaises) -- actual nesting depth ~3, not 6.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-23 refuted by batched verifier",
+        "rationale": "test_jira_client.py:656-662 `_resolve` is a single `with` statement using backslash-joined multiple context managers (still one block, not nested) followed by one return -- actual nesting depth 2, not 6.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-24 refuted by batched verifier",
+        "rationale": "test_jira_client.py:664-675 `test_the_full_record_is_assembled` is a straight sequence of assertEqual calls with zero nested blocks -- actual nesting depth 1, not 8.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-25 refuted by batched verifier",
+        "rationale": "test_jira_client.py:677-681 `test_the_server_returned_key_wins_over_the_requested_one` is a straight sequence of assertEqual calls with zero nested blocks -- actual nesting depth 1, not 5.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-26 refuted by batched verifier",
+        "rationale": "test_jira_client.py:711-715 `test_success_prints_one_json_object_and_exits_zero` is a straight-line sequence with zero nested blocks -- actual nesting depth 1, not 6.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-27 refuted by batched verifier",
+        "rationale": "test_jira_client.py:717-721 `test_a_usage_error_exits_two_with_the_refusal_shape` is a straight-line sequence with zero nested blocks -- actual nesting depth 1, not 6.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-28 refuted by batched verifier",
+        "rationale": "test_jira_client.py:723-727 `test_a_contract_error_exits_one` is a straight-line sequence with zero nested blocks -- actual nesting depth 1, not 6.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-29 refuted by batched verifier",
+        "rationale": "test_jira_client.py:760-763 `test_no_mutating_http_method_appears_in_the_source` has a single for-loop with no further nesting -- actual nesting depth 2, not 4.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-30 refuted by batched verifier",
+        "rationale": "test_jira_client.py:772-778 `test_the_entry_shim_is_exactly_two_lines` is two list-comprehension assignments plus two assertEqual calls, no nested blocks beyond the comprehensions themselves -- actual nesting depth ~2, not 5.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-31 refuted by batched verifier",
+        "rationale": "jira_client.py defines only three tiny classes (JiraError at :70, JiraUsageError at :75, _NoRedirect at :121-127), none spanning anywhere near 441 lines; the module is function-oriented, not class-oriented, so a 'class_lines' metric of 441 does not correspond to any actual class in this file.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-33 refuted by batched verifier",
+        "rationale": "scripts/measure_coverage.py defines only small classes (FileStat :162, GateResult :174, OmitSpec :273, FileLines :367) in a 627-line, function-oriented module; none of these classes plausibly spans 537 of the file's lines, so the 'class_lines' figure does not correspond to any actual class, mirroring the same metric unreliability demonstrated for qg-31 and the qg-11..qg-30 nesting_depth findings.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260908-jira-intake/j1/plugins/spec-loop/scripts/jira_client.py, /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260908-jira-intake/j1/plugins/spec-loop/scripts/test_jira_client.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "decision",
+      "payload": {
+        "summary": "finding qg-32 refuted by batched verifier",
+        "rationale": "plugins/spec-loop/scripts/test_jira_client.py contains 18 separate classes (TestIssueKeyValidation, TestBaseUrlValidation, TestCredentials, TestAuthHeader, TestHttpGetIsReadOnly, TestRedirectsAreRefused, TestParseJson, TestSecretsNeverLeak, TestAdfToText, TestIssueUrl, TestFindAcFieldId, TestFetchIssue, TestAcceptanceCriteria, TestFetchComments, TestNormalizedRecord, TestResolveIssue, TestMain, TestReadOnlyContract), measured by line span between consecutive 'class ' declarations. The largest is TestFetchComments at line 598 spanning 100 lines; every other class spans between 10 and 81 lines. No class in the file comes anywhere close to 624 lines, let alone exceeds the 300-line threshold -- the file's total length is 868 lines, so 624 does not correspond to any real class in this file. The finding's class_lines=624 metric does not match the actual code structure.",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:2",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:2",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 2 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260908-jira-intake/j1/plugins/spec-loop/scripts/jira_client.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "review-summary",
+      "payload": {
+        "findings": 9,
+        "confirmed": 1,
+        "refuted": 36,
+        "fix_rounds": 2,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "j1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}

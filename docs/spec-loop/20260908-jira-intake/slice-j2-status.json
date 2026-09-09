@@ -1,0 +1,252 @@
+{
+  "schema_version": 2,
+  "id": "j2",
+  "status": "DONE",
+  "branch": "spec-loop/20260908-jira-intake/j2",
+  "commits": {
+    "base": "f6ed728664cb6ae176b9c9f141113bfa96ae5735",
+    "head": "d3cc117"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 5,
+    "over_scope": {
+      "flag": false,
+      "reason": null
+    }
+  },
+  "tasks_completed": 3,
+  "review": {
+    "confirmed": 4,
+    "refuted": 2,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: Two id fields reach the artifact unneutralized: `r[\"id\"]` in the risks row (only `r[\"risk\"]` is wrapped) and `comment[\"gap_id\"]` in the section-5 heading at line 463 (only the fenced body is wrapped). Both ids are validated merely as non-empty strings (`_errors_for_gap` / `_errors_for_risk`), so a multi-line id passes validation. Reproduced: a risk with `id=\"before\\n---\\nafter\"` and a gap with the same id each render 3 lines equal to `---`.",
+      "CONTROLLER-VERIFIED KNOWN LIMITATION (accepted, not fixed in j2): the delimiter neutralization covers every card-derived surface but not two MODEL-authored id fields - risks[].id and the gap_id in the Section 5 heading. Reproduced at d3cc117: a risk with id='x\\n---\\ny' and a gap with the same id each render 3 lines equal to '---' instead of 2. Severity is lower than the fixed defects because these ids are authored by the refinement pass itself (G1/R1 style), not carried from Jira card text, so ordinary or hostile card data cannot reach them - only a refinement that emits a multi-line id can. validate_refinement already checks both as non-empty strings and is the natural choke point. Folded into slice j3's packet, which edits this same module, rather than spending a sixth j2 dispatch on it."
+    ]
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p test_*.py ; python3 -m unittest discover -s plugins/spec-loop/scripts -p test_*.py ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/slice_wave_*.test.mjs ; node --test --experimental-test-coverage plugins/spec-loop/scripts/dashboard_assets/index.test.mjs",
+    "result": "GREEN - CONTROLLER-MEASURED first-hand in the slice worktree at d3cc117, all six segments run as separate invocations: marketplace 'OK: marketplace and all plugins valid (.)'; scripts/ Ran 126 tests OK; plugins/spec-loop/scripts/ Ran 1659 tests OK; coverage 'PASS: all per-file and total floors met' with 1785 tests, TOTAL 97.0% (6930/7141) vs a 90% floor, jira_intake.py 96.1% (343/357) vs its newly-registered 89% floor and jira_client.py 99.3% vs 93; node slice_wave suites 98/98; node dashboard_assets 48/48. CI segment 7 (claude plugin validate) is not run locally.",
+    "scope": "full",
+    "tree_sha": "8c792edd06a415ac1384126fcf05fc243d948a37"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "ACCEPTED by precedent (run 20260825-scope-ceiling s1: 'ACCEPT AS PRE-EXISTING DEBT, no threshold weakened'). CONTROLLER-MEASURED first-hand at d3cc117 against the wave base f6ed728: THREE failures of 594 checks, all whole-file class_lines - jira_intake.py 492, test_jira_intake.py 443, measure_coverage.py 539, against 300. ZERO function-level violations. The sidecar's own returned quality.detail claimed a NEW function-level breach, 'validate_record cognitive_complexity 22 vs threshold 15'; that is FALSE and was measured directly - validate_record scores cyclomatic 4, cognitive 6, method_lines 16, parameter_count 1, nesting_depth 2, every one passing. Fourth stale quality block this run."
+  },
+  "escalations": [
+    {
+      "id": "j2:quality-gate-block",
+      "trigger": "quality-gate-block",
+      "title": "verification failed",
+      "context": "suite: All suite segments passed. Marketplace validation: OK. Python tests: 126 + 1659 + 1785 (with 3 skipped) all OK, coverage PASS (97.0% total, all per-file and total floors met). Node tests: 98 + 48 all passed.; quality: FAIL (summary_pass=false — Gate exited with code 1. Output shows summary.pass false with 2 violations in summary.failures array: jira_intake.py class_lines 492 (threshold 300) and test_jira_intake.py class_lines 443 (threshold 300). Both marked source builtin-heuristic.)",
+      "question": "Verification cannot pass automatically. Guide, accept, or drop?",
+      "options": [
+        {
+          "label": "Proceed with the recommended default",
+          "detail": "suite: All suite segments passed. Marketplace validation: OK. Python tests: 126 + 1659 + 1785 (with 3 skipped) all OK, coverage PASS (97.0% total, all per-file and total floors met). Node tests: 98 + 48 all passed.; quality: FAIL (summary_pass=false — Gate exited with code 1. Output shows summary.pass false with 2 violations in summary.failures array: jira_intake.py class_lines 492 (threshold 300) and test_jira_intake.py class_lines 443 (threshold 300). Both marked source builtin-heuristic.)",
+          "recommended": true
+        }
+      ],
+      "if_unanswered": "pause this slice; continue all independent slices",
+      "status": "OPEN"
+    }
+  ],
+  "agents_used": 10,
+  "wave": 2,
+  "events": [
+    {
+      "scope": "j2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "refactor-radius",
+      "payload": {
+        "summary": "refactor radius WITHIN: every declared number is at or under its ceiling (compared: rewrite_ratio, touched_existing_files)",
+        "state": "WITHIN",
+        "exceeded": [],
+        "measured": {
+          "rewrite_ratio": 0.28,
+          "touched_existing_files": 2,
+          "rewritten_lines": 25
+        },
+        "thresholds": {
+          "enabled": true,
+          "max_rewrite_ratio": 0.5,
+          "max_touched_existing_files": 8,
+          "min_rewritten_lines": 150
+        },
+        "compared": [
+          "rewrite_ratio",
+          "touched_existing_files"
+        ],
+        "skipped": [],
+        "basis": "Counted from the final task list: ~25 existing lines rewritten (validate_record body ~8, _duplicate_gap_id_errors loop ~8, render_artifact/_gap_rows/_comment_blocks composition lines ~9) against ~90 total lines changed, the remainder being the new helper and appended tests."
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council"
+        ],
+        "safety": false,
+        "concerns_folded": 3,
+        "deferred": [
+          "Task 2 tightens types but not emptiness: status=\"\" still renders `issue_status: \"\"`. jira_client.py:598 emits `... or \"\"` for a missing status, so an empty scalar is a real reachable state and the artifact still misreports the card, just less loudly than 'None'. Out of the named goal (which says type-check as strings); log rather than build.",
+          "Task 3 fixes the duplicate-id fold, but validate_refinement:236 still builds `gap_ids = {g.get(\"id\") for g in gaps if isinstance(g, dict)}`, which admits None into the id set and can make _errors_for_answers behave oddly for id-less gaps. Same root cause, adjacent line, not named in the three defects. Log it."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": null
+        }
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "deferred",
+      "payload": {
+        "summary": "Task 2 tightens types but not emptiness: status=\"\" still renders `issue_status: \"\"`. jira_client.py:598 emits `... or \"\"` for a missing status, so an empty scalar is a real reachable state and the artifact still misreports the card, just less loudly than 'None'. Out of the named goal (which says type-check as strings); log rather than build.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "deferred",
+      "payload": {
+        "summary": "Task 3 fixes the duplicate-id fold, but validate_refinement:236 still builds `gap_ids = {g.get(\"id\") for g in gaps if isinstance(g, dict)}`, which admits None into the id set and can make _errors_for_answers behave oddly for id-less gaps. Same root cause, adjacent line, not named in the three defects. Log it.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j2-t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j2-t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:j2-t3",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:full",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "quality-gate",
+      "payload": {
+        "status": "FAIL",
+        "violations": 3
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260908-jira-intake/j2/plugins/spec-loop/scripts/jira_intake.py, /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260908-jira-intake/j2/plugins/spec-loop/scripts/test_jira_intake.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "review-summary",
+      "payload": {
+        "findings": 2,
+        "confirmed": 4,
+        "refuted": 2,
+        "fix_rounds": 1,
+        "reviewers": 1
+      }
+    },
+    {
+      "scope": "j2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    }
+  ]
+}
