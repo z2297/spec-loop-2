@@ -633,8 +633,8 @@ def main(argv=None):
         print("error: %s" % exc, file=sys.stderr)
         return 2
     except JiraError as exc:
-        print(json.dumps({"ok": False, "errors": [str(exc)]},
-                         ensure_ascii=False, indent=2))
+        refusal = {"ok": False, "errors": [str(exc)]}
+        print(json.dumps(refusal, ensure_ascii=False, indent=2))
         return 1
     print(json.dumps(record, ensure_ascii=False, indent=2))
     return 0
