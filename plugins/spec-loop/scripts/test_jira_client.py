@@ -71,9 +71,20 @@ class TestIssueKeyValidation(unittest.TestCase):
             jc.validate_issue_key("ABC-123\nrm -rf /")
 
     def test_the_rejection_message_names_the_expected_pattern(self):
+        # The message's own worked examples must be keys this function
+        # ACCEPTS. Asserting a bare substring is what let 'A-1' -- which
+        # ISSUE_KEY_RE rejects, since it requires two to ten characters
+        # before the hyphen -- sit in the message unchallenged.
         with self.assertRaises(jc.JiraUsageError) as ctx:
             jc.validate_issue_key("nope")
-        self.assertIn("A-1", str(ctx.exception))
+        message = str(ctx.exception)
+        self.assertIn("e.g. ", message)
+        tail = message.split("e.g. ", 1)[1].strip().rstrip(")")
+        examples = [part.strip() for part in tail.split(" or ")]
+        self.assertTrue(examples)
+        for example in examples:
+            with self.subTest(example=example):
+                self.assertEqual(jc.validate_issue_key(example), example)
 
 
 class TestBaseUrlValidation(unittest.TestCase):
@@ -265,6 +276,32 @@ class TestHttpGetIsReadOnly(unittest.TestCase):
         with mock.patch.object(jc, "_OPENER", opener):
             with self.assertRaises(jc.JiraError):
                 jc._http_get("https://acme.atlassian.net/x", "fred@example.com", "tok")
+
+    def test_a_bare_timeout_reading_the_response_becomes_a_jira_error(self):
+        # urllib only wraps an OSError raised by h.request() into a
+        # URLError; a timeout or reset while READING the response to a
+        # GET raises a bare TimeoutError (a plain OSError subclass) out
+        # of h.getresponse()/resp.read() and propagates unwrapped. GET is
+        # the path every invocation takes, so an unmapped OSError here
+        # escapes main()'s exit-1 JSON contract as a raw traceback.
+        opener = mock.MagicMock()
+        opener.open.side_effect = TimeoutError("timed out")
+        with mock.patch.object(jc, "_OPENER", opener):
+            with self.assertRaises(jc.JiraError):
+                jc._http_get("https://acme.atlassian.net/x", "fred@example.com", "tok")
+
+    def test_the_bare_oserror_message_leaks_no_credential(self):
+        email = "fred@example.com"
+        token = "s3cr3t-token"
+        pair = base64.b64encode(f"{email}:{token}".encode("utf-8")).decode("ascii")
+        opener = mock.MagicMock()
+        opener.open.side_effect = ConnectionResetError("reset by peer")
+        with mock.patch.object(jc, "_OPENER", opener):
+            with self.assertRaises(jc.JiraError) as ctx:
+                jc._http_get("https://acme.atlassian.net/x", email, token)
+        message = str(ctx.exception)
+        for secret in (token, email, pair):
+            self.assertNotIn(secret, message)
 
 
 class TestHttpPostIsTheOnlyWriter(unittest.TestCase):
