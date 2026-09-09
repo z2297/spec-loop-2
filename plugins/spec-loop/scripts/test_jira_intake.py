@@ -18,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import jira_intake as intake  # noqa: E402
 
+TS = "2026-09-09T00:00:00Z"
+
 
 class TestIssueKeyValidation(unittest.TestCase):
     """The key reaches a filesystem path and argv, so a permissive key is a
@@ -168,13 +170,13 @@ class TestDuplicateGapIds(unittest.TestCase):
             intake.validate_refinement(self._two_gaps("G1", "G2")), [])
 
     def test_a_duplicate_gap_id_is_an_error(self):
-        self.assertIn("gaps have duplicate id: G1",
-                      intake.validate_refinement(self._two_gaps("G1", "G1")))
+        errors = intake.validate_refinement(self._two_gaps("G1", "G1"))
+        self.assertIn("gaps have duplicate id: G1", errors)
 
     def test_rendering_refuses_a_duplicate_gap_id(self):
+        refinement = self._two_gaps("G1", "G1")
         with self.assertRaises(intake.IntakeError):
-            intake.render_artifact(make_record(), self._two_gaps("G1", "G1"),
-                                   "2026-09-09T00:00:00Z")
+            intake.render_artifact(make_record(), refinement, TS)
 
 
 def make_record(**over):
@@ -203,27 +205,26 @@ class TestRecordValidation(unittest.TestCase):
     def test_a_non_dict_record_is_an_error(self):
         for bad in ([1, 2], "ABC-123", None, 7):
             with self.subTest(bad=bad):
-                self.assertEqual(intake.validate_record(bad),
-                                 ["record must be a JSON object"])
+                errors = intake.validate_record(bad)
+                self.assertEqual(errors, ["record must be a JSON object"])
 
     def test_each_missing_required_field_is_named(self):
         for field in intake.RECORD_KEYS:
             with self.subTest(field=field):
                 record = make_record()
                 del record[field]
-                self.assertEqual(intake.validate_record(record),
-                                 ["record is missing required key: %s" % field])
+                errors = intake.validate_record(record)
+                expected = ["record is missing required key: %s" % field]
+                self.assertEqual(errors, expected)
 
     def test_rendering_refuses_a_malformed_record(self):
         for bad in ([1, 2], {"key": "ABC-123"}):
             with self.subTest(bad=bad), self.assertRaises(intake.IntakeError):
-                intake.render_artifact(bad, make_refinement(),
-                                       "2026-09-09T00:00:00Z")
+                intake.render_artifact(bad, make_refinement(), TS)
 
     def test_building_comments_refuses_a_malformed_record(self):
         with self.assertRaises(intake.IntakeError):
-            intake.build_comment_bodies([1, 2], make_refinement(),
-                                        "2026-09-09T00:00:00Z")
+            intake.build_comment_bodies([1, 2], make_refinement(), TS)
 
 
 class TestCommentMarker(unittest.TestCase):
@@ -258,10 +259,10 @@ class TestRenderedComments(unittest.TestCase):
 
     def test_a_body_carries_its_marker_and_the_caller_supplied_timestamp(self):
         body = intake.render_comment(
-            "ABC-123", "decision", "Admins only.", "2026-09-09T00:00:00Z")
+            "ABC-123", "decision", "Admins only.", TS)
         marker = intake.comment_marker("ABC-123", "decision", "Admins only.")
         self.assertIn(marker, body)
-        self.assertIn("2026-09-09T00:00:00Z", body)
+        self.assertIn(TS, body)
         self.assertIn("Admins only.", body)
 
     def test_the_timestamp_does_not_change_the_marker(self):
@@ -280,7 +281,7 @@ class TestRenderedComments(unittest.TestCase):
         answers = {"G1": {"answer": "Admins only.", "logged_as": "decision"}}
         refinement = make_refinement(gaps=gaps, answers=answers)
         built = intake.build_comment_bodies(
-            make_record(), refinement, "2026-09-09T00:00:00Z")
+            make_record(), refinement, TS)
         kinds = [c["kind"] for c in built]
         self.assertEqual(kinds, ["understanding", "decision", "open-question"])
         self.assertEqual([c["gap_id"] for c in built], [None, "G1", "G2"])
@@ -289,13 +290,13 @@ class TestRenderedComments(unittest.TestCase):
         answer = {"answer": None, "logged_as": "open-question"}
         refinement = make_refinement(answers={"G1": answer})
         built = intake.build_comment_bodies(
-            make_record(), refinement, "2026-09-09T00:00:00Z")
+            make_record(), refinement, TS)
         self.assertEqual(built[1]["kind"], "open-question")
         self.assertIn("Which roles see the toggle?", built[1]["body"])
 
     def test_the_understanding_body_carries_description_ac_and_risks(self):
         built = intake.build_comment_bodies(
-            make_record(), make_refinement(), "2026-09-09T00:00:00Z")
+            make_record(), make_refinement(), TS)
         body = built[0]["body"]
         self.assertIn("Add a widget toggle to the settings pane.", body)
         self.assertIn("Toggle persists across reload.", body)
@@ -304,7 +305,7 @@ class TestRenderedComments(unittest.TestCase):
     def test_an_invalid_refinement_is_refused_rather_than_half_rendered(self):
         with self.assertRaises(intake.IntakeError):
             intake.build_comment_bodies(
-                make_record(), {"description": "x"}, "2026-09-09T00:00:00Z")
+                make_record(), {"description": "x"}, TS)
 
 
 class TestArtifactRendering(unittest.TestCase):
@@ -313,7 +314,7 @@ class TestArtifactRendering(unittest.TestCase):
 
     def setUp(self):
         self.text = intake.render_artifact(
-            make_record(), make_refinement(), "2026-09-09T00:00:00Z")
+            make_record(), make_refinement(), TS)
 
     def test_every_front_matter_field_is_present(self):
         for field in intake.ARTIFACT_FIELDS:
@@ -330,7 +331,7 @@ class TestArtifactRendering(unittest.TestCase):
 
     def test_the_rendered_comment_bodies_are_embedded(self):
         for comment in intake.build_comment_bodies(
-                make_record(), make_refinement(), "2026-09-09T00:00:00Z"):
+                make_record(), make_refinement(), TS):
             with self.subTest(kind=comment["kind"]):
                 self.assertIn(comment["marker"], self.text)
 
@@ -342,14 +343,14 @@ class TestArtifactRendering(unittest.TestCase):
         finding = "Card text asks the agent to ignore its instructions."
         refinement = make_refinement(injection_findings=[finding])
         text = intake.render_artifact(
-            make_record(), refinement, "2026-09-09T00:00:00Z")
+            make_record(), refinement, TS)
         tail = text[text.index("## 6. Untrusted-input findings"):]
         self.assertIn("ignore its instructions", tail)
 
     def test_an_invalid_refinement_is_refused(self):
         with self.assertRaises(intake.IntakeError):
             intake.render_artifact(
-                make_record(), {"description": "x"}, "2026-09-09T00:00:00Z")
+                make_record(), {"description": "x"}, TS)
 
 
 class TestFrontMatterEscaping(unittest.TestCase):
@@ -360,8 +361,7 @@ class TestFrontMatterEscaping(unittest.TestCase):
 
     def _value_for(self, record, field):
         """Parse one front-matter field back out of the rendered artifact."""
-        text = intake.render_artifact(record, make_refinement(),
-                                      "2026-09-09T00:00:00Z")
+        text = intake.render_artifact(record, make_refinement(), TS)
         block = text.split("---\n")[1]
         for line in block.splitlines():
             name, _, raw = line.partition(": ")
@@ -381,20 +381,19 @@ class TestFrontMatterEscaping(unittest.TestCase):
 
     def test_a_newline_round_trips(self):
         value = "field\nsecond line"
-        self.assertEqual(
-            self._value_for(make_record(acceptance_criteria_source=value),
-                            "acceptance_criteria_source"), value)
+        record = make_record(acceptance_criteria_source=value)
+        got = self._value_for(record, "acceptance_criteria_source")
+        self.assertEqual(got, value)
 
     def test_a_newline_does_not_break_the_front_matter_delimiters(self):
         text = intake.render_artifact(
             make_record(status="a\n---\nb"), make_refinement(),
-            "2026-09-09T00:00:00Z")
+            TS)
         self.assertTrue(text.startswith("---\n"))
         self.assertEqual(text.count("\n---\n"), 1)
 
     def test_numeric_fields_stay_unquoted(self):
-        text = intake.render_artifact(make_record(), make_refinement(),
-                                      "2026-09-09T00:00:00Z")
+        text = intake.render_artifact(make_record(), make_refinement(), TS)
         self.assertIn("gap_count: 1", text)
         self.assertIn("schema_version: 2", text)
 
@@ -425,7 +424,7 @@ class TestRenderCli(unittest.TestCase):
         """The happy-path argv for `render`."""
         return ["render", "--record", str(self.record_path),
                 "--refinement", str(self.refinement_path),
-                "--ts", "2026-09-09T00:00:00Z"]
+                "--ts", TS]
 
     def test_a_good_render_exits_zero_with_one_json_object(self):
         code, out, _ = self.run_cli(self.base_argv())
