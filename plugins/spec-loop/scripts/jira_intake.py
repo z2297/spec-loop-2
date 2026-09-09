@@ -92,3 +92,111 @@ def artifact_path(key, artifact_root):
         raise IntakeUsageError(
             "error: refusing to write outside the artifact root %r" % (root,))
     return path
+
+
+IMPACT_ORDER = {"high": 0, "medium": 1, "low": 2}
+LOGGED_AS_VALUES = ("decision", "open-question")
+REFINEMENT_KEYS = ("description", "acceptance_criteria", "risks", "gaps",
+                   "injection_findings", "answers")
+
+
+def _errors_for_gap(gap, index):
+    """Error strings for ONE gap entry. (PURE)"""
+    where = "gaps[%d]" % index
+    if not isinstance(gap, dict):
+        return ["%s must be an object" % where]
+    errors = []
+    for field in ("id", "question"):
+        if not isinstance(gap.get(field), str) or not gap.get(field):
+            errors.append("%s.%s must be a non-empty string" % (where, field))
+    if gap.get("impact") not in IMPACT_ORDER:
+        errors.append("%s.impact must be one of high|medium|low" % where)
+    if not isinstance(gap.get("blocking"), bool):
+        errors.append("%s.blocking must be a boolean" % where)
+    return errors
+
+
+def _errors_for_risk(risk, index):
+    """Error strings for ONE risk entry. (PURE)"""
+    where = "risks[%d]" % index
+    if not isinstance(risk, dict):
+        return ["%s must be an object" % where]
+    errors = []
+    for field in ("id", "risk"):
+        if not isinstance(risk.get(field), str) or not risk.get(field):
+            errors.append("%s.%s must be a non-empty string" % (where, field))
+    if risk.get("severity") not in IMPACT_ORDER:
+        errors.append("%s.severity must be one of high|medium|low" % where)
+    return errors
+
+
+def _errors_for_answers(answers, gap_ids):
+    """Error strings for the answers map, keyed by gap id. (PURE)"""
+    if not isinstance(answers, dict):
+        return ["answers must be an object keyed by gap id"]
+    errors = []
+    for gap_id, entry in sorted(answers.items()):
+        if gap_id not in gap_ids:
+            errors.append("answers has no matching gap for id %s" % gap_id)
+            continue
+        if not isinstance(entry, dict):
+            errors.append("answers[%s] must be an object" % gap_id)
+            continue
+        if entry.get("logged_as") not in LOGGED_AS_VALUES:
+            errors.append("answers[%s].logged_as must be one of decision|"
+                          "open-question" % gap_id)
+        if entry.get("answer") is not None and not isinstance(
+                entry.get("answer"), str):
+            errors.append("answers[%s].answer must be a string or null"
+                          % gap_id)
+    return errors
+
+
+def _errors_for_str_list(value, name):
+    """Error strings for a list-of-non-empty-strings field. (PURE)"""
+    if not isinstance(value, list):
+        return ["%s must be a list of strings" % name]
+    return ["%s[%d] must be a non-empty string" % (name, i)
+            for i, item in enumerate(value)
+            if not isinstance(item, str) or not item]
+
+
+def validate_refinement(refinement):
+    """Return a list of human-readable error strings; [] means valid. (PURE)"""
+    if not isinstance(refinement, dict):
+        return ["refinement must be a JSON object"]
+    errors = ["missing required key: %s" % key
+              for key in REFINEMENT_KEYS if key not in refinement]
+    if errors:
+        return errors
+    if not isinstance(refinement["description"], str) or not refinement["description"]:
+        errors.append("description must be a non-empty string")
+    errors += _errors_for_str_list(refinement["acceptance_criteria"],
+                                   "acceptance_criteria")
+    errors += _errors_for_str_list(refinement["injection_findings"],
+                                   "injection_findings")
+    gaps = refinement["gaps"] if isinstance(refinement["gaps"], list) else []
+    if not isinstance(refinement["gaps"], list):
+        errors.append("gaps must be a list")
+    risks = refinement["risks"] if isinstance(refinement["risks"], list) else []
+    if not isinstance(refinement["risks"], list):
+        errors.append("risks must be a list")
+    for index, gap in enumerate(gaps):
+        errors += _errors_for_gap(gap, index)
+    for index, risk in enumerate(risks):
+        errors += _errors_for_risk(risk, index)
+    gap_ids = {g.get("id") for g in gaps if isinstance(g, dict)}
+    errors += _errors_for_answers(refinement["answers"], gap_ids)
+    return errors
+
+
+def _gap_sort_key(gap):
+    """Total, deterministic ordering key for one gap. (PURE)"""
+    return (0 if gap.get("blocking") else 1,
+            IMPACT_ORDER.get(gap.get("impact"), len(IMPACT_ORDER)),
+            str(gap.get("id")))
+
+
+def rank_gaps(gaps):
+    """Blocking first, then impact, then id. Returns a new list. (PURE)"""
+    return sorted(list(gaps), key=_gap_sort_key)
