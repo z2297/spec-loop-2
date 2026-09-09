@@ -115,3 +115,79 @@ def validate_base_url(raw):
             "*.atlassian.net or *.jira.com host (e.g. https://your-site.atlassian.net)"
         )
     return f"https://{parts.hostname.lower()}"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every 3xx. The base URL is user-supplied, so pr_resolver's
+    hardcoded-origin property is gone: following a redirect could replay the
+    Authorization header to another origin. Returning None makes urllib raise
+    the HTTPError instead of following it."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Return None so urllib treats the 3xx as a terminal error."""
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+CRED_VARS = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")
+
+
+def credentials():
+    """Read the Jira credentials from the ENVIRONMENT ONLY and fail closed with
+    an actionable message when any is unset. Never read from argv: argv is
+    visible in `ps` and lands in shell history."""
+    values = {name: (os.environ.get(name) or "").strip() for name in CRED_VARS}
+    missing = [name for name in CRED_VARS if not values[name]]
+    if missing:
+        raise JiraUsageError(
+            "Jira access requires the environment variable(s) "
+            + ", ".join(missing)
+            + ". Set JIRA_BASE_URL to your site origin (e.g. "
+            "https://your-site.atlassian.net), JIRA_EMAIL to your Atlassian "
+            "account email, and JIRA_API_TOKEN to an API token created at "
+            "https://id.atlassian.com/manage-profile/security/api-tokens. "
+            "Pass them in the environment, never on the command line."
+        )
+    return (validate_base_url(values["JIRA_BASE_URL"]),
+            values["JIRA_EMAIL"], values["JIRA_API_TOKEN"])
+
+
+def _auth_header(email, token):
+    """Build the Jira Cloud Basic auth header: base64("email:api_token").
+    Verified against Atlassian's basic-auth-for-rest-apis page (2026-09-08) --
+    Jira Cloud REST v3 uses Basic with an API token, NOT Bearer."""
+    raw = f"{email}:{token}".encode("utf-8")
+    return "Basic " + base64.b64encode(raw).decode("ascii")
+
+
+def _http_get(url, email, token):
+    """HTTP GET via the no-redirect opener (READ-ONLY: never sets a body and
+    never a mutating method). The sole network entry point in this module.
+    Errors reference only the URL -- the credentials ride in a header, so
+    neither the token, the email, nor the composed base64 pair can appear in an
+    exception message."""
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": _auth_header(email, token),
+                 "Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with _OPENER.open(req, timeout=30) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise JiraError(f"HTTP {exc.code} fetching {url}: {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise JiraError(f"network error fetching {url}: {exc.reason}") from exc
+
+
+def _parse_json(raw, what):
+    """json.loads with an actionable JiraError, so a malformed response fails
+    with a clear message rather than a raw traceback."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise JiraError(
+            f"Jira returned a {what} response that is not valid JSON ({exc})"
+        ) from exc
