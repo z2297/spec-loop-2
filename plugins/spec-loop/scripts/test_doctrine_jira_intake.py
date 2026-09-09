@@ -104,6 +104,22 @@ class TestTheJiraWriteIsBoundedToComments(unittest.TestCase):
         self.assertIn("card's own full comment list", self.text)
         self.assertIn("already-posted", self.text)
 
+    def test_recovery_is_the_posting_step_not_the_whole_command(self):
+        """A regenerated refinement yields new markers, so 'just re-run the
+        command' would double-post. The prose must scope recovery to
+        re-posting the SAME rendered comments file."""
+        self.assertIn(
+            "re-run the POSTING step with the same rendered comments file",
+            self.text)
+        self.assertIn("NOT re-run the refinement", self.text)
+        self.assertIn(
+            "a regenerated refinement produces new markers", self.text)
+
+    def test_the_cross_process_dedupe_window_is_disclosed(self):
+        """The pre-write read is per-invocation, so concurrent arming can
+        double-post. That window is disclosed, not implied."""
+        self.assertIn("read once per invocation", self.text)
+
     def test_it_records_the_supersession_it_reverses(self):
         self.assertIn("peer-review.md", self.text)
         self.assertIn("pr_resolver.py", self.text)
