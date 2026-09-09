@@ -353,6 +353,23 @@ ARTIFACT_SECTIONS = ("## 1. Refined description",
                      "## 6. Untrusted-input findings")
 
 
+def _yaml_scalar(value):
+    """One front-matter value, safe in YAML scalar position. (PURE)
+
+    Jira-controlled strings reach this block (issue_status, issue_type,
+    acceptance_criteria_source, issue_url), and a value containing ': ' is
+    read by real YAML as a nested mapping, which makes the whole artifact
+    unparseable; an embedded newline can even forge the closing '---'
+    delimiter. YAML 1.2 is a JSON superset, so a json.dumps string literal is
+    a valid double-quoted scalar and escapes quotes, backslashes and newlines
+    for free. ensure_ascii=False keeps non-ASCII card text readable. Ints and
+    bools stay bare so gap_count and schema_version remain numbers rather
+    than strings."""
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
 def _front_matter(record, refinement, comments, ts):
     """The artifact's YAML front matter, in ARTIFACT_FIELDS order. (PURE)"""
     open_questions = len([c for c in comments if c["kind"] == "open-question"])
@@ -366,7 +383,8 @@ def _front_matter(record, refinement, comments, ts):
               "open_question_count": open_questions,
               "generated": ts}
     lines = ["---"]
-    lines += ["%s: %s" % (name, values[name]) for name in ARTIFACT_FIELDS]
+    lines += ["%s: %s" % (name, _yaml_scalar(values[name]))
+              for name in ARTIFACT_FIELDS]
     lines.append("---")
     return lines
 

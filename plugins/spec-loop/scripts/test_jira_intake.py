@@ -324,6 +324,53 @@ class TestArtifactRendering(unittest.TestCase):
                 make_record(), {"description": "x"}, "2026-09-09T00:00:00Z")
 
 
+class TestFrontMatterEscaping(unittest.TestCase):
+    """The artifact IS the file handed to /spec-loop:spec-loop --from-plan, so
+    front matter that will not parse is a broken handoff, not a cosmetic nit.
+    issue_status, issue_type and acceptance_criteria_source are all
+    Jira-controlled strings, and colon-space is common in real statuses."""
+
+    def _value_for(self, record, field):
+        """Parse one front-matter field back out of the rendered artifact."""
+        text = intake.render_artifact(record, make_refinement(),
+                                      "2026-09-09T00:00:00Z")
+        block = text.split("---\n")[1]
+        for line in block.splitlines():
+            name, _, raw = line.partition(": ")
+            if name == field:
+                return json.loads(raw)
+        self.fail("field %s missing from front matter" % field)
+
+    def test_a_colon_space_status_round_trips(self):
+        value = "Blocked: waiting on design"
+        self.assertEqual(
+            self._value_for(make_record(status=value), "issue_status"), value)
+
+    def test_a_double_quote_round_trips(self):
+        value = 'Needs "final" sign-off'
+        self.assertEqual(
+            self._value_for(make_record(issue_type=value), "issue_type"), value)
+
+    def test_a_newline_round_trips(self):
+        value = "field\nsecond line"
+        self.assertEqual(
+            self._value_for(make_record(acceptance_criteria_source=value),
+                            "acceptance_criteria_source"), value)
+
+    def test_a_newline_does_not_break_the_front_matter_delimiters(self):
+        text = intake.render_artifact(
+            make_record(status="a\n---\nb"), make_refinement(),
+            "2026-09-09T00:00:00Z")
+        self.assertTrue(text.startswith("---\n"))
+        self.assertEqual(text.count("\n---\n"), 1)
+
+    def test_numeric_fields_stay_unquoted(self):
+        text = intake.render_artifact(make_record(), make_refinement(),
+                                      "2026-09-09T00:00:00Z")
+        self.assertIn("gap_count: 1", text)
+        self.assertIn("schema_version: 2", text)
+
+
 class TestRenderCli(unittest.TestCase):
     """The command shells this CLI; its exit codes and stream choice must
     match jira_client.py so the command handles one idiom, not two."""

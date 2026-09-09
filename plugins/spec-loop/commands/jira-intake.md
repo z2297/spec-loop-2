@@ -136,6 +136,9 @@ the tool set and this section exact.
    ## 5. Comment bodies (rendered, not posted)
    ## 6. Untrusted-input findings
    ```
+   Every string-valued field is emitted as a double-quoted, JSON-escaped scalar so that
+   Jira-controlled text containing `: `, a quote, or a newline cannot corrupt the block;
+   the count fields and `schema_version` stay bare numbers.
 
 7. **Print the summary and the handoff.** Print, as the final user-facing output: the artifact
    path `.spec-loop-jira/<KEY>/intake.md`; the gap count and the open-question count; one line
