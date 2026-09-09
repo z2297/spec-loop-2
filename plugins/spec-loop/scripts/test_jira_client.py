@@ -853,6 +853,99 @@ class TestFetchComments(unittest.TestCase):
         get.assert_not_called()
 
 
+MARKER = "[spec-loop-intake:decision:0123456789ab]"
+
+
+def entry(kind="decision", marker=MARKER, body=None):
+    """One comment entry in the shape jira_intake.build_comment_bodies
+    prints: the marker always lives inside the body."""
+    return {"kind": kind, "marker": marker,
+            "body": body if body is not None else
+            "spec-loop intake - decision %s\nRecorded X.\n\npayload" % marker}
+
+
+class TestCommentEntryValidation(unittest.TestCase):
+    def test_a_well_formed_entry_has_no_errors(self):
+        self.assertEqual(jc.validate_comment_entries([entry()]), [])
+
+    def test_an_empty_list_is_refused(self):
+        self.assertNotEqual(jc.validate_comment_entries([]), [])
+
+    def test_a_non_list_is_refused(self):
+        self.assertNotEqual(jc.validate_comment_entries({"a": 1}), [])
+
+    def test_a_non_object_entry_is_refused(self):
+        errors = jc.validate_comment_entries(["nope"])
+        self.assertIn("comments[0]", errors[0])
+
+    def test_a_missing_body_is_refused(self):
+        bad = entry()
+        del bad["body"]
+        self.assertNotEqual(jc.validate_comment_entries([bad]), [])
+
+    def test_a_marker_of_the_wrong_shape_is_refused(self):
+        errors = jc.validate_comment_entries(
+            [entry(marker="[not-a-marker]", body="[not-a-marker] x")])
+        self.assertTrue(any("marker" in e for e in errors), errors)
+
+    def test_a_marker_of_an_unknown_kind_is_refused(self):
+        bad = "[spec-loop-intake:transition:0123456789ab]"
+        self.assertNotEqual(
+            jc.validate_comment_entries([entry(marker=bad, body=bad)]), [])
+
+    def test_a_body_that_lost_its_marker_is_refused(self):
+        errors = jc.validate_comment_entries(
+            [entry(body="a body with no marker in it")])
+        self.assertTrue(any("marker" in e for e in errors), errors)
+
+    def test_a_real_intake_body_validates(self):
+        # Proves the shape contract with the module that produces it.
+        import jira_intake as intake
+        built = intake.build_comment_bodies(
+            {"key": "ABC-1",
+             "web_url": "https://acme.atlassian.net/browse/ABC-1",
+             "summary": "s", "description": "d",
+             "acceptance_criteria": "", "acceptance_criteria_source": "",
+             "status": "Open", "issue_type": "Task", "comments": []},
+            {"description": "d", "acceptance_criteria": ["a"],
+             "risks": [], "gaps": [], "injection_findings": [],
+             "answers": {}},
+            "2026-09-09T00:00:00Z")
+        self.assertEqual(jc.validate_comment_entries(built), [])
+
+
+class TestPlanComments(unittest.TestCase):
+    """The dedupe gate is the card's own comment list, read back over the
+    network -- never a local file."""
+
+    def test_an_empty_card_leaves_everything_pending(self):
+        plan = jc.plan_comments([entry()], [])
+        self.assertEqual(plan, [{"kind": "decision", "marker": MARKER,
+                                 "already_posted": False}])
+
+    def test_a_marker_already_on_the_card_is_already_posted(self):
+        plan = jc.plan_comments([entry()], ["old", entry()["body"]])
+        self.assertTrue(plan[0]["already_posted"])
+
+    def test_a_marker_on_a_later_page_still_matches(self):
+        plan = jc.plan_comments(
+            [entry()], ["a", "b", "c", "noise " + MARKER + " noise"])
+        self.assertTrue(plan[0]["already_posted"])
+
+    def test_a_different_marker_does_not_match(self):
+        other = "[spec-loop-intake:decision:ffffffffffff]"
+        plan = jc.plan_comments([entry()], [other])
+        self.assertFalse(plan[0]["already_posted"])
+
+    def test_the_plan_preserves_input_order_and_length(self):
+        second = entry(kind="open-question",
+                       marker="[spec-loop-intake:open-question:aaaaaaaaaaaa]",
+                       body="x [spec-loop-intake:open-question:aaaaaaaaaaaa]")
+        plan = jc.plan_comments([entry(), second], [entry()["body"]])
+        self.assertEqual([p["already_posted"] for p in plan], [True, False])
+        self.assertEqual([p["kind"] for p in plan],
+                         ["decision", "open-question"])
+
 
 class TestNormalizedRecord(unittest.TestCase):
     VALUES = {"key": "ABC-123",

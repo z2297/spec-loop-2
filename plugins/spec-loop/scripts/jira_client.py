@@ -635,6 +635,64 @@ def fetch_comments(base_url, email, token, key):
         f"pages for {key}; refusing a possibly-truncated comment history")
 
 
+COMMENT_MARKER_RE = re.compile(
+    r"^\[spec-loop-intake:(?:understanding|decision|open-question)"
+    r":[0-9a-f]{12}\]$")
+
+_COMMENT_ENTRY_KEYS = ("kind", "marker", "body")
+
+
+def _errors_for_comment_entry(entry, index):
+    """Error strings for ONE comment entry of the posting plan. (PURE)"""
+    where = "comments[%d]" % index
+    if not isinstance(entry, dict):
+        return ["%s must be an object" % where]
+    errors = ["%s.%s must be a non-empty string" % (where, field)
+              for field in _COMMENT_ENTRY_KEYS
+              if not isinstance(entry.get(field), str) or not entry.get(field)]
+    if errors:
+        return errors
+    if not COMMENT_MARKER_RE.fullmatch(entry["marker"]):
+        return ["%s.marker is not a spec-loop intake marker" % where]
+    if entry["marker"] not in entry["body"]:
+        return ["%s.body does not contain its own marker" % where]
+    return []
+
+
+def validate_comment_entries(comments):
+    """Error strings for the comment entries to post; [] means valid.
+    (PURE)
+
+    Entries come from jira_intake.py's `render` payload
+    ({"kind", "gap_id", "marker", "body"}); this module never builds a
+    marker of its own. The marker MUST appear inside the body, because
+    the body is what the POST writes: the body carrying the marker is
+    exactly what makes the marker written by, and only by, the call
+    that performs the write. An entry whose body lost its marker would
+    post a comment no re-run could ever dedupe, so it is refused."""
+    if not isinstance(comments, list) or not comments:
+        return ["comments must be a non-empty list of comment entries"]
+    errors = []
+    for index, item in enumerate(comments):
+        errors += _errors_for_comment_entry(item, index)
+    return errors
+
+
+def plan_comments(comments, existing_bodies):
+    """Decide, per comment, whether it is already on the card. (PURE)
+
+    `existing_bodies` is the plain text of EVERY comment on the card,
+    from fetch_comments' full paginated sweep -- the card's own comment
+    list read back over the network is the dedupe gate, never a local
+    file, so a fresh clone cannot double-post. A marker already visible
+    in any existing body means the comment is already there, and the
+    result says so explicitly rather than reporting a silent success."""
+    haystack = "\n".join(existing_bodies)
+    return [{"kind": item["kind"], "marker": item["marker"],
+             "already_posted": item["marker"] in haystack}
+            for item in comments]
+
+
 RECORD_FIELDS = ("key", "web_url", "summary", "description",
                  "acceptance_criteria", "acceptance_criteria_source",
                  "status", "issue_type", "comments")
