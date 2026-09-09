@@ -622,5 +622,160 @@ class TestFetchComments(unittest.TestCase):
         get.assert_not_called()
 
 
+
+class TestNormalizedRecord(unittest.TestCase):
+    VALUES = {"key": "ABC-123",
+              "web_url": "https://acme.atlassian.net/browse/ABC-123",
+              "summary": "Add a widget", "description": "Some background.",
+              "acceptance_criteria": "- one", "acceptance_criteria_source": "field",
+              "status": "In Progress", "issue_type": "Story", "comments": []}
+
+    def test_the_record_has_exactly_the_contract_fields_in_order(self):
+        self.assertEqual(list(jc._normalized(self.VALUES)), list(jc.RECORD_FIELDS))
+
+    def test_an_empty_description_is_allowed(self):
+        rec = jc._normalized(dict(self.VALUES, description=""))
+        self.assertEqual(rec["description"], "")
+
+    def test_an_empty_comment_list_is_allowed(self):
+        self.assertEqual(jc._normalized(self.VALUES)["comments"], [])
+
+    def test_each_required_field_being_empty_is_a_half_resolve(self):
+        for field in jc.REQUIRED_FIELDS:
+            with self.subTest(field=field):
+                with self.assertRaises(jc.JiraError) as ctx:
+                    jc._normalized(dict(self.VALUES, **{field: ""}))
+                self.assertIn(field, str(ctx.exception))
+
+
+class TestResolveIssue(unittest.TestCase):
+    ENV = {"JIRA_BASE_URL": "https://acme.atlassian.net",
+           "JIRA_EMAIL": "fred@example.com",
+           "JIRA_API_TOKEN": "tok"}
+
+    def _resolve(self, issue=None, comments=None, ac_field_id=None):
+        with mock.patch.dict(jc.os.environ, self.ENV, clear=True), \
+             mock.patch.object(jc, "find_ac_field_id", return_value=ac_field_id), \
+             mock.patch.object(jc, "fetch_issue",
+                               return_value=issue if issue else issue_bean()), \
+             mock.patch.object(jc, "fetch_comments", return_value=comments or []):
+            return jc.resolve_issue("ABC-123")
+
+    def test_the_full_record_is_assembled(self):
+        rec = self._resolve(comments=[{"id": "1", "author": "Mia",
+                                       "created": "c", "updated": "u",
+                                       "body": "hi"}])
+        self.assertEqual(rec["key"], "ABC-123")
+        self.assertEqual(rec["summary"], "Add a widget")
+        self.assertEqual(rec["status"], "In Progress")
+        self.assertEqual(rec["issue_type"], "Story")
+        self.assertEqual(rec["description"], "Some background.")
+        self.assertEqual(rec["web_url"],
+                         "https://acme.atlassian.net/browse/ABC-123")
+        self.assertEqual(len(rec["comments"]), 1)
+
+    def test_the_server_returned_key_wins_over_the_requested_one(self):
+        rec = self._resolve(issue=dict(issue_bean(), key="MOVED-9"))
+        self.assertEqual(rec["key"], "MOVED-9")
+        self.assertEqual(rec["web_url"],
+                         "https://acme.atlassian.net/browse/MOVED-9")
+
+    def test_a_missing_status_is_a_half_resolve(self):
+        with self.assertRaises(jc.JiraError):
+            self._resolve(issue=issue_bean(status={}))
+
+    def test_missing_credentials_raise_a_usage_error_before_any_call(self):
+        with mock.patch.dict(jc.os.environ, {}, clear=True), \
+             mock.patch.object(jc, "fetch_issue") as fetch:
+            with self.assertRaises(jc.JiraUsageError):
+                jc.resolve_issue("ABC-123")
+        fetch.assert_not_called()
+
+
+class TestMain(unittest.TestCase):
+    RECORD = {"key": "ABC-123", "web_url": "https://acme.atlassian.net/browse/ABC-123",
+              "summary": "s", "description": "", "acceptance_criteria": "",
+              "acceptance_criteria_source": "", "status": "Open",
+              "issue_type": "Task", "comments": []}
+
+    def _run(self, argv, **patches):
+        out, err = [], []
+        with mock.patch.object(jc.sys, "stdout") as so, \
+             mock.patch.object(jc.sys, "stderr") as se, \
+             mock.patch.object(jc, "resolve_issue", **patches):
+            rc = jc.main(argv)
+            out = "".join(c.args[0] for c in so.write.call_args_list if c.args)
+            err = "".join(c.args[0] for c in se.write.call_args_list if c.args)
+        return rc, out, err
+
+    def test_success_prints_one_json_object_and_exits_zero(self):
+        rc, out, _ = self._run(["resolve", "--key", "ABC-123"],
+                               return_value=self.RECORD)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out), self.RECORD)
+
+    def test_a_usage_error_exits_two_with_the_refusal_shape(self):
+        rc, _, err = self._run(["resolve", "--key", "ABC-123"],
+                               side_effect=jc.JiraUsageError("no creds"))
+        self.assertEqual(rc, 2)
+        self.assertEqual(json.loads(err), {"ok": False, "errors": ["no creds"]})
+
+    def test_a_contract_error_exits_one(self):
+        rc, _, err = self._run(["resolve", "--key", "ABC-123"],
+                               side_effect=jc.JiraError("HTTP 500"))
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(err), {"ok": False, "errors": ["HTTP 500"]})
+
+    def test_secrets_never_reach_stdout_or_stderr(self):
+        token, email = "s3cr3t-api-token-value", "fred@example.com"
+        composed = base64.b64encode(f"{email}:{token}".encode("utf-8")).decode("ascii")
+        env = {"JIRA_BASE_URL": "https://acme.atlassian.net",
+               "JIRA_EMAIL": email, "JIRA_API_TOKEN": token}
+        opener = mock.MagicMock()
+        opener.open.side_effect = urllib.error.URLError("connection refused")
+        with mock.patch.dict(jc.os.environ, env, clear=True), \
+             mock.patch.object(jc, "_OPENER", opener), \
+             mock.patch.object(jc.sys, "stdout") as so, \
+             mock.patch.object(jc.sys, "stderr") as se:
+            rc = jc.main(["resolve", "--key", "ABC-123"])
+            out = "".join(c.args[0] for c in so.write.call_args_list if c.args)
+            err = "".join(c.args[0] for c in se.write.call_args_list if c.args)
+        self.assertNotEqual(rc, 0)
+        for secret in (token, email, composed):
+            self.assertNotIn(secret, out)
+            self.assertNotIn(secret, err)
+
+
+class TestReadOnlyContract(unittest.TestCase):
+    """The module must be structurally incapable of mutating Jira."""
+
+    SOURCE = (Path(__file__).resolve().parent / "jira_client.py").read_text()
+
+    def test_the_module_never_imports_subprocess(self):
+        self.assertNotIn("import subprocess", self.SOURCE)
+
+    def test_the_module_never_calls_datetime_now(self):
+        self.assertNotIn("datetime", self.SOURCE.replace("# ", ""))
+
+    def test_no_mutating_http_method_appears_in_the_source(self):
+        for verb in ('"POST"', '"PUT"', '"PATCH"', '"DELETE"',
+                     "'POST'", "'PUT'", "'PATCH'", "'DELETE'"):
+            self.assertNotIn(verb, self.SOURCE, verb)
+
+    def test_the_only_request_construction_sets_method_get(self):
+        self.assertEqual(self.SOURCE.count("urllib.request.Request("), 1)
+        self.assertIn('method="GET"', self.SOURCE)
+
+    def test_the_only_network_call_goes_through_the_module_opener(self):
+        self.assertEqual(self.SOURCE.count("_OPENER.open("), 1)
+
+    def test_the_entry_shim_is_exactly_two_lines(self):
+        lines = [ln for ln in self.SOURCE.splitlines()
+                 if ln.startswith("if __name__")]
+        self.assertEqual(len(lines), 1)
+        idx = self.SOURCE.splitlines().index(lines[0])
+        self.assertEqual(self.SOURCE.splitlines()[idx + 1].strip(),
+                         "sys.exit(main())")
+
 if __name__ == "__main__":
     unittest.main()

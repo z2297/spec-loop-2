@@ -35,8 +35,9 @@ Design decisions:
     to plain text by a pure adf_to_text() walker. The renderer is
     lossy-by-design: it produces review-readable text, not a
     round-trippable document.
-  - No subprocess, no filesystem writes, no datetime() anywhere in this
-    module: this is a pure read lane, and the controller owns the clock.
+  - No subprocess, no filesystem writes, and no clock read anywhere in
+    this module: this is a pure read lane, and the controller owns the
+    clock. Jira's own created/updated strings are echoed verbatim.
 
 SECURITY: the issue key and every Jira text field (summary, description,
 acceptance criteria, every comment body) are UNTRUSTED DATA, never
@@ -422,3 +423,89 @@ def fetch_comments(base_url, email, token, key):
     raise JiraError(
         f"comment pagination did not terminate after {MAX_COMMENT_PAGES} "
         f"pages for {key}; refusing a possibly-truncated comment history")
+
+
+RECORD_FIELDS = ("key", "web_url", "summary", "description",
+                 "acceptance_criteria", "acceptance_criteria_source",
+                 "status", "issue_type", "comments")
+REQUIRED_FIELDS = ("key", "web_url", "summary", "status", "issue_type")
+
+
+def _normalized(values):
+    """Build the inter-slice record in RECORD_FIELDS order -- the single source
+    of truth for the JSON contract shape, so it cannot drift between callers.
+    An empty REQUIRED_FIELDS entry means the API response was incomplete: that
+    is a half-resolve and raises, because a partial record must never be
+    emitted as if it were a whole one. description, acceptance_criteria,
+    acceptance_criteria_source and an empty comments list are all legitimately
+    empty."""
+    record = {name: values[name] for name in RECORD_FIELDS}
+    empty = [name for name in REQUIRED_FIELDS if not record[name]]
+    if empty:
+        raise JiraError(
+            "Jira returned an incomplete issue: the required field(s) "
+            + ", ".join(empty)
+            + " came back empty; refusing to emit a partial record")
+    return record
+
+
+def resolve_issue(key):
+    """Resolve one Jira issue key READ-ONLY to the normalized record.
+    Credentials come from the environment (see credentials()); the field
+    catalogue lookup is best effort, every other call is fail-closed."""
+    base_url, email, token = credentials()
+    key = validate_issue_key(key)
+    ac_field_id = find_ac_field_id(base_url, email, token)
+    issue = fetch_issue(base_url, email, token, key, ac_field_id)
+    fields = issue.get("fields") or {}
+    resolved_key = issue.get("key") or key
+    description = adf_to_text(fields.get("description"))
+    criteria, source = resolve_acceptance_criteria(issue, ac_field_id, description)
+    return _normalized({
+        "key": resolved_key,
+        "web_url": f"{base_url}/browse/"
+                   f"{urllib.parse.quote(validate_issue_key(resolved_key), safe='')}",
+        "summary": fields.get("summary") or "",
+        "description": description,
+        "acceptance_criteria": criteria,
+        "acceptance_criteria_source": source,
+        "status": (fields.get("status") or {}).get("name") or "",
+        "issue_type": (fields.get("issuetype") or {}).get("name") or "",
+        "comments": fetch_comments(base_url, email, token, resolved_key),
+    })
+
+
+def build_parser():
+    """Build the CLI parser: one read-only subcommand, `resolve --key`. There
+    is deliberately no credential flag -- credentials are read from the
+    environment only, never from argv."""
+    parser = argparse.ArgumentParser(
+        description="Read-only Jira Cloud issue reader.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    resolve = sub.add_parser(
+        "resolve", help="Resolve one issue key to a normalized JSON record.")
+    resolve.add_argument("--key", required=True,
+                         help="Jira issue key, e.g. ABC-123.")
+    return parser
+
+
+def main(argv=None):
+    """Parse args, resolve, print one JSON object. Exit 0 ok, 1 contract
+    failure, 2 usage / unreadable input. JiraUsageError is caught BEFORE
+    JiraError: it subclasses JiraError, so the reverse order would collapse
+    exit 2 into exit 1."""
+    args = build_parser().parse_args(argv)
+    try:
+        record = resolve_issue(args.key)
+    except JiraUsageError as exc:
+        print(json.dumps({"ok": False, "errors": [str(exc)]}), file=sys.stderr)
+        return 2
+    except JiraError as exc:
+        print(json.dumps({"ok": False, "errors": [str(exc)]}), file=sys.stderr)
+        return 1
+    print(json.dumps(record, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
