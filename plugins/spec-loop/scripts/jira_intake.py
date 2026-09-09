@@ -44,6 +44,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 
@@ -200,3 +201,86 @@ def _gap_sort_key(gap):
 def rank_gaps(gaps):
     """Blocking first, then impact, then id. Returns a new list. (PURE)"""
     return sorted(list(gaps), key=_gap_sort_key)
+
+
+COMMENT_KINDS = ("understanding", "decision", "open-question")
+COMMENT_HEADINGS = {
+    "understanding": "spec-loop intake - refined understanding",
+    "decision": "spec-loop intake - decision",
+    "open-question": "spec-loop intake - open question",
+}
+
+
+def comment_marker(key, kind, payload):
+    """The visible dedupe marker j3 matches on. (PURE)
+
+    The timestamp is deliberately NOT hashed: the caller owns the clock, and
+    hashing it would make a re-run look like a new comment."""
+    validate_issue_key(key)
+    if kind not in COMMENT_KINDS:
+        raise IntakeUsageError(
+            "error: unknown comment kind %r; expected one of %s"
+            % (kind, ", ".join(COMMENT_KINDS)))
+    digest = hashlib.sha256("\n".join([key, kind, payload]).encode("utf-8"))
+    return "[spec-loop-intake:%s:%s]" % (kind, digest.hexdigest()[:12])
+
+
+def render_comment(key, kind, payload, ts):
+    """One Jira comment body: heading, marker, timestamp, payload. (PURE)"""
+    marker = comment_marker(key, kind, payload)
+    return "\n".join([
+        "%s %s" % (COMMENT_HEADINGS[kind], marker),
+        "Recorded %s by /spec-loop:jira-intake." % ts,
+        "",
+        payload,
+    ])
+
+
+def _understanding_payload(refinement):
+    """The confirmed-understanding comment's payload text. (PURE)"""
+    lines = ["Description", refinement["description"], "", "Acceptance criteria"]
+    lines += ["- %s" % item for item in refinement["acceptance_criteria"]]
+    lines += ["", "Risks"]
+    lines += ["- [%s] %s: %s" % (risk["severity"], risk["id"], risk["risk"])
+              for risk in refinement["risks"]]
+    return "\n".join(lines)
+
+
+def _gap_payload(gap, answer):
+    """The decision or open-question payload for one gap. (PURE)"""
+    if answer is None:
+        return "Open question (%s, impact %s): %s" % (
+            gap["id"], gap["impact"], gap["question"])
+    return "Question (%s): %s\nDecision: %s" % (
+        gap["id"], gap["question"], answer)
+
+
+def _gap_comment(record, gap, answers, ts):
+    """Render ONE gap's comment entry. (PURE)"""
+    entry = answers.get(gap["id"]) or {}
+    answer = entry.get("answer")
+    kind = "decision" if entry.get("logged_as") == "decision" and answer else "open-question"
+    payload = _gap_payload(gap, answer if kind == "decision" else None)
+    return {"kind": kind, "gap_id": gap["id"],
+            "marker": comment_marker(record["key"], kind, payload),
+            "body": render_comment(record["key"], kind, payload, ts)}
+
+
+def build_comment_bodies(record, refinement, ts):
+    """Every comment this intake WOULD post, in order. Posts nothing. (PURE)
+
+    Refuses a partial render: an invalid refinement raises rather than
+    emitting some comments, mirroring jira_client.py's no-half-resolve rule."""
+    errors = validate_refinement(refinement)
+    if errors:
+        raise IntakeError("refusing to render comments from an invalid "
+                          "refinement: " + "; ".join(errors))
+    key = validate_issue_key(record.get("key"))
+    payload = _understanding_payload(refinement)
+    built = [{"kind": "understanding", "gap_id": None,
+              "marker": comment_marker(key, "understanding", payload),
+              "body": render_comment(key, "understanding", payload, ts)}]
+    answers = refinement["answers"]
+    for gap in rank_gaps(refinement["gaps"]):
+        built.append(_gap_comment(record, gap, answers, ts))
+    return built

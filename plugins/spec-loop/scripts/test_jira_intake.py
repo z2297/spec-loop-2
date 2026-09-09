@@ -133,5 +133,99 @@ class TestGapRanking(unittest.TestCase):
         self.assertEqual(gaps, original)
 
 
+def make_record(**over):
+    """A minimal jira_client.py resolve record; keyword args override."""
+    base = {"key": "ABC-123",
+            "web_url": "https://example.atlassian.net/browse/ABC-123",
+            "summary": "Widget toggle",
+            "description": "Users want a toggle.",
+            "acceptance_criteria": "Toggle persists.",
+            "acceptance_criteria_source": "field",
+            "status": "To Do",
+            "issue_type": "Story",
+            "comments": []}
+    base.update(over)
+    return base
+
+
+class TestCommentMarker(unittest.TestCase):
+    """j3 dedupes by reading this marker back off the card, so it must be
+    stable across runs and must NOT contain the timestamp."""
+
+    def test_the_marker_has_the_pinned_shape(self):
+        marker = intake.comment_marker("ABC-123", "decision", "payload")
+        self.assertTrue(marker.startswith("[spec-loop-intake:decision:"))
+        self.assertTrue(marker.endswith("]"))
+        self.assertEqual(len(marker.split(":")[2].rstrip("]")), 12)
+
+    def test_the_marker_is_stable_for_the_same_payload(self):
+        self.assertEqual(intake.comment_marker("ABC-123", "decision", "p"),
+                         intake.comment_marker("ABC-123", "decision", "p"))
+
+    def test_the_marker_changes_with_key_kind_or_payload(self):
+        base = intake.comment_marker("ABC-123", "decision", "p")
+        self.assertNotEqual(base, intake.comment_marker("ABC-124", "decision", "p"))
+        self.assertNotEqual(base, intake.comment_marker("ABC-123", "open-question", "p"))
+        self.assertNotEqual(base, intake.comment_marker("ABC-123", "decision", "q"))
+
+    def test_an_unknown_kind_is_refused(self):
+        with self.assertRaises(intake.IntakeUsageError):
+            intake.comment_marker("ABC-123", "transition", "p")
+
+
+class TestRenderedComments(unittest.TestCase):
+    """This slice RENDERS bodies and posts nothing; the bodies are the
+    artifact j3 will later post unchanged."""
+
+    def test_a_body_carries_its_marker_and_the_caller_supplied_timestamp(self):
+        body = intake.render_comment("ABC-123", "decision", "Admins only.",
+                                     "2026-09-09T00:00:00Z")
+        self.assertIn(intake.comment_marker("ABC-123", "decision", "Admins only."),
+                      body)
+        self.assertIn("2026-09-09T00:00:00Z", body)
+        self.assertIn("Admins only.", body)
+
+    def test_the_timestamp_does_not_change_the_marker(self):
+        early = intake.render_comment("ABC-123", "decision", "p", "2026-01-01T00:00:00Z")
+        late = intake.render_comment("ABC-123", "decision", "p", "2026-12-31T00:00:00Z")
+        marker = intake.comment_marker("ABC-123", "decision", "p")
+        self.assertIn(marker, early)
+        self.assertIn(marker, late)
+
+    def test_one_understanding_comment_plus_one_per_gap(self):
+        refinement = make_refinement(
+            gaps=[{"id": "G1", "question": "Which roles?", "impact": "high",
+                   "blocking": True},
+                  {"id": "G2", "question": "What timezone?", "impact": "low",
+                   "blocking": False}],
+            answers={"G1": {"answer": "Admins only.", "logged_as": "decision"}})
+        built = intake.build_comment_bodies(make_record(), refinement,
+                                            "2026-09-09T00:00:00Z")
+        self.assertEqual([c["kind"] for c in built],
+                         ["understanding", "decision", "open-question"])
+        self.assertEqual([c["gap_id"] for c in built], [None, "G1", "G2"])
+
+    def test_an_unanswered_gap_becomes_an_open_question_carrying_the_question(self):
+        refinement = make_refinement(answers={"G1": {"answer": None,
+                                                     "logged_as": "open-question"}})
+        built = intake.build_comment_bodies(make_record(), refinement,
+                                            "2026-09-09T00:00:00Z")
+        self.assertEqual(built[1]["kind"], "open-question")
+        self.assertIn("Which roles see the toggle?", built[1]["body"])
+
+    def test_the_understanding_body_carries_description_ac_and_risks(self):
+        built = intake.build_comment_bodies(make_record(), make_refinement(),
+                                            "2026-09-09T00:00:00Z")
+        body = built[0]["body"]
+        self.assertIn("Add a widget toggle to the settings pane.", body)
+        self.assertIn("Toggle persists across reload.", body)
+        self.assertIn("No migration for existing rows.", body)
+
+    def test_an_invalid_refinement_is_refused_rather_than_half_rendered(self):
+        with self.assertRaises(intake.IntakeError):
+            intake.build_comment_bodies(make_record(), {"description": "x"},
+                                        "2026-09-09T00:00:00Z")
+
+
 if __name__ == "__main__":
     unittest.main()
