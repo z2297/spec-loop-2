@@ -197,6 +197,22 @@ def _missing_keys(refinement):
     return [key for key in REFINEMENT_KEYS if key not in refinement]
 
 
+def _duplicate_gap_id_errors(gaps):
+    """Error strings for gap ids used more than once, in first-seen order.
+    (PURE)
+
+    answers is keyed by gap id, so a repeated id makes an answer
+    unattributable: both gaps resolve to the same entry."""
+    seen = set()
+    errors = []
+    for gap in gaps:
+        gap_id = gap.get("id") if isinstance(gap, dict) else None
+        if gap_id in seen:
+            errors.append("gaps have duplicate id: %s" % gap_id)
+        seen.add(gap_id)
+    return errors
+
+
 def validate_refinement(refinement):
     """Return a list of human-readable error strings; [] means valid. (PURE)"""
     if not isinstance(refinement, dict):
@@ -216,6 +232,7 @@ def validate_refinement(refinement):
     risks = _typed_list(refinement["risks"], "risks", errors)
     errors += _errors_for_entries(gaps, _errors_for_gap)
     errors += _errors_for_entries(risks, _errors_for_risk)
+    errors += _duplicate_gap_id_errors(gaps)
     gap_ids = {g.get("id") for g in gaps if isinstance(g, dict)}
     errors += _errors_for_answers(refinement["answers"], gap_ids)
     return errors

@@ -149,6 +149,34 @@ class TestGapRanking(unittest.TestCase):
         self.assertEqual(gaps, original)
 
 
+class TestDuplicateGapIds(unittest.TestCase):
+    """answers is a map keyed by gap id, so two gaps sharing an id both
+    resolve to the same entry and an answer cannot be attributed to either
+    one. Narrow, measured defect: comment markers do NOT collide when the
+    questions differ, because the marker hash covers the question text."""
+
+    def _two_gaps(self, first_id, second_id):
+        """A refinement whose two gaps carry the given ids."""
+        return make_refinement(gaps=[
+            {"id": first_id, "question": "q1", "impact": "high",
+             "blocking": True},
+            {"id": second_id, "question": "q2", "impact": "low",
+             "blocking": False}])
+
+    def test_distinct_gap_ids_are_valid(self):
+        self.assertEqual(
+            intake.validate_refinement(self._two_gaps("G1", "G2")), [])
+
+    def test_a_duplicate_gap_id_is_an_error(self):
+        self.assertIn("gaps have duplicate id: G1",
+                      intake.validate_refinement(self._two_gaps("G1", "G1")))
+
+    def test_rendering_refuses_a_duplicate_gap_id(self):
+        with self.assertRaises(intake.IntakeError):
+            intake.render_artifact(make_record(), self._two_gaps("G1", "G1"),
+                                   "2026-09-09T00:00:00Z")
+
+
 def make_record(**over):
     """A minimal jira_client.py resolve record; keyword args override."""
     base = {"key": "ABC-123",
