@@ -82,6 +82,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 
 class JiraError(Exception):
@@ -841,22 +842,69 @@ def resolve_issue(key):
     })
 
 
+def _load_comments(path):
+    """Read the comment entries to post from a JSON file.
+
+    Accepts either a bare array of entries or the whole payload printed
+    by jira_intake.py render (its `comments` key). Any read or parse
+    failure is a usage error the caller can fix, not a contract
+    failure. The entries themselves are shape-checked later by
+    validate_comment_entries."""
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise JiraUsageError(
+            f"cannot read the comments file {path}: {exc}") from exc
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        raise JiraUsageError(
+            f"the comments file {path} is not valid JSON: {exc}") from exc
+    if isinstance(payload, dict):
+        return payload.get("comments")
+    return payload
+
+
 def build_parser():
-    """Build the CLI parser: one read-only subcommand, `resolve --key`. There
-    is deliberately no credential flag -- credentials are read from the
-    environment only, never from argv."""
+    """Build the CLI parser: a read-only `resolve --key` subcommand and a
+    bounded `comment` subcommand that previews by default and posts only
+    with `--post`. There is deliberately no credential flag on either --
+    credentials are read from the environment only, never from argv."""
     parser = argparse.ArgumentParser(
-        description="Read-only Jira Cloud issue reader.")
+        description="Jira Cloud issue reader with one bounded comment writer.")
     sub = parser.add_subparsers(dest="command", required=True)
     resolve = sub.add_parser(
         "resolve", help="Resolve one issue key to a normalized JSON record.")
     resolve.add_argument(
         "--key", required=True, help="Jira issue key, e.g. ABC-123.")
+
+    comment = sub.add_parser(
+        "comment",
+        help=("Preview the spec-loop intake comments for one issue -- or, "
+              "with --post, actually add them."))
+    comment.add_argument(
+        "--key", required=True, help="Jira issue key, e.g. ABC-123.")
+    comment.add_argument(
+        "--comments", required=True,
+        help=("path to a JSON file holding the `comments` array printed by "
+              "jira_intake.py render (or that whole payload object)"))
+    comment.add_argument(
+        "--post", action="store_true",
+        help=("ARM THE WRITE. Without this flag nothing is posted: the "
+              "lane issues GETs only and reports what it would post."))
     return parser
 
 
+def _dispatch(args):
+    """Run the requested subcommand and return the object to print."""
+    if args.command == "comment":
+        return run_comment_lane(
+            args.key, _load_comments(args.comments), args.post)
+    return resolve_issue(args.key)
+
+
 def main(argv=None):
-    """Parse args, resolve, print one JSON object. Exit 0 ok, 1 contract
+    """Parse args, dispatch, print one JSON object. Exit 0 ok, 1 contract
     failure, 2 usage / unreadable input. JiraUsageError is caught BEFORE
     JiraError: it subclasses JiraError, so the reverse order would collapse
     exit 2 into exit 1.
@@ -868,7 +916,7 @@ def main(argv=None):
     to STDERR."""
     args = build_parser().parse_args(argv)
     try:
-        record = resolve_issue(args.key)
+        payload = _dispatch(args)
     except JiraUsageError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 2
@@ -876,7 +924,7 @@ def main(argv=None):
         refusal = {"ok": False, "errors": [str(exc)]}
         print(json.dumps(refusal, ensure_ascii=False, indent=2))
         return 1
-    print(json.dumps(record, ensure_ascii=False, indent=2))
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
 

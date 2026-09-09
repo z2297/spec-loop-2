@@ -19,7 +19,9 @@ Usage:
 import base64
 import inspect
 import json
+import shutil
 import sys
+import tempfile
 import unittest
 import urllib.error
 from contextlib import ExitStack
@@ -1277,6 +1279,95 @@ class TestMain(unittest.TestCase):
         for secret in (token, email, composed):
             self.assertNotIn(secret, out)
             self.assertNotIn(secret, err)
+
+
+class TestCommentCli(unittest.TestCase):
+    """Posting is off by default at the CLI boundary too: --post is what
+    arms the write."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.path = str(Path(self.dir) / "comments.json")
+
+    def _write(self, payload):
+        Path(self.path).write_text(
+            json.dumps(payload), encoding="utf-8")
+
+    def _run(self, argv, **patches):
+        with ExitStack() as stack:
+            so = stack.enter_context(mock.patch.object(jc.sys, "stdout"))
+            se = stack.enter_context(mock.patch.object(jc.sys, "stderr"))
+            lane = stack.enter_context(
+                mock.patch.object(jc, "run_comment_lane", **patches))
+            rc = jc.main(argv)
+            out = "".join(c.args[0] for c in so.write.call_args_list if c.args)
+            err = "".join(c.args[0] for c in se.write.call_args_list if c.args)
+        return rc, out, err, lane
+
+    PAYLOAD = {"ok": True, "issue_key": "ABC-1", "armed": False,
+               "posted_count": 0, "already_posted_count": 0, "results": []}
+
+    def test_without_the_flag_the_lane_is_not_armed(self):
+        self._write([entry()])
+        _, _, _, lane = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path],
+            return_value=self.PAYLOAD)
+        self.assertIs(lane.call_args.args[2], False)
+
+    def test_the_post_flag_arms_the_lane(self):
+        self._write([entry()])
+        _, _, _, lane = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path, "--post"],
+            return_value=self.PAYLOAD)
+        self.assertIs(lane.call_args.args[2], True)
+
+    def test_success_prints_one_json_object_and_exits_zero(self):
+        self._write([entry()])
+        rc, out, _, _ = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path],
+            return_value=self.PAYLOAD)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out), self.PAYLOAD)
+
+    def test_the_full_render_payload_object_is_accepted(self):
+        self._write({"ok": True, "comments": [entry()]})
+        _, _, _, lane = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path],
+            return_value=self.PAYLOAD)
+        self.assertEqual(lane.call_args.args[1], [entry()])
+
+    def test_a_missing_comments_file_exits_two(self):
+        rc, out, err, _ = self._run(
+            ["comment", "--key", "ABC-1",
+             "--comments", str(Path(self.dir) / "nope.json")],
+            return_value=self.PAYLOAD)
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, "")
+        self.assertIn("error:", err)
+
+    def test_a_malformed_comments_file_exits_two(self):
+        Path(self.path).write_text("not json", encoding="utf-8")
+        rc, _, err, _ = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path],
+            return_value=self.PAYLOAD)
+        self.assertEqual(rc, 2)
+        self.assertIn("error:", err)
+
+    def test_a_contract_failure_exits_one_as_json_on_stdout(self):
+        self._write([entry()])
+        rc, out, err, _ = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path],
+            side_effect=jc.JiraError("HTTP 403"))
+        self.assertEqual(rc, 1)
+        self.assertEqual(err, "")
+        self.assertEqual(json.loads(out),
+                         {"ok": False, "errors": ["HTTP 403"]})
+
+    def test_there_is_no_credential_flag_anywhere(self):
+        help_text = jc.build_parser().format_help()
+        for banned in ("--token", "--email", "--password", "--api-token"):
+            self.assertNotIn(banned, help_text)
 
 
 class TestTheReadLaneStaysReadOnly(unittest.TestCase):
