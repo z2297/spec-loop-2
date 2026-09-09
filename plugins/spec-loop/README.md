@@ -38,8 +38,9 @@ Other commands: `/spec-loop:review-pr` (one consolidated review of any diff),
 requirements), `/spec-loop:quality-gate` and `/spec-loop:knowledge-graph`
 (config), `/spec-loop:dashboard` (terminal) and `/spec-loop:dashboard-serve`
 (web, Docker-preferred singleton on port 8787), `/spec-loop:jira-intake` (read
-one Jira card, refine it with you, render the comments it would post, and print
-the loop handoff).
+one Jira card, refine it with you, preview the comments it would post and —
+only after an explicit confirmation — add those and nothing else to that
+card, then print the loop handoff).
 
 ## The pipeline
 

@@ -588,9 +588,11 @@ class TestTextToAdf(unittest.TestCase):
                 self.assertTrue(node["text"])
 
     def test_empty_text_yields_a_single_empty_paragraph(self):
-        self.assertEqual(
-            jc.text_to_adf(""), {"type": "doc", "version": 1,
-                                 "content": [{"type": "paragraph"}]})
+        expected = {
+            "type": "doc", "version": 1,
+            "content": [{"type": "paragraph"}],
+        }
+        self.assertEqual(jc.text_to_adf(""), expected)
 
     def test_none_is_treated_as_empty(self):
         self.assertEqual(len(jc.text_to_adf(None)["content"]), 1)
@@ -941,8 +943,10 @@ class TestPlanComments(unittest.TestCase):
 
     def test_an_empty_card_leaves_everything_pending(self):
         plan = jc.plan_comments([entry()], [])
-        self.assertEqual(plan, [{"kind": "decision", "marker": MARKER,
-                                 "already_posted": False}])
+        expected = [
+            {"kind": "decision", "marker": MARKER, "already_posted": False},
+        ]
+        self.assertEqual(plan, expected)
 
     def test_a_marker_already_on_the_card_is_already_posted(self):
         plan = jc.plan_comments([entry()], ["old", entry()["body"]])
@@ -959,13 +963,14 @@ class TestPlanComments(unittest.TestCase):
         self.assertFalse(plan[0]["already_posted"])
 
     def test_the_plan_preserves_input_order_and_length(self):
-        second = entry(kind="open-question",
-                       marker="[spec-loop-intake:open-question:aaaaaaaaaaaa]",
-                       body="x [spec-loop-intake:open-question:aaaaaaaaaaaa]")
+        marker = "[spec-loop-intake:open-question:aaaaaaaaaaaa]"
+        second = entry(
+            kind="open-question", marker=marker, body="x " + marker,
+        )
         plan = jc.plan_comments([entry(), second], [entry()["body"]])
         self.assertEqual([p["already_posted"] for p in plan], [True, False])
-        self.assertEqual([p["kind"] for p in plan],
-                         ["decision", "open-question"])
+        kinds = [p["kind"] for p in plan]
+        self.assertEqual(kinds, ["decision", "open-question"])
 
 
 ENV = {"JIRA_BASE_URL": "https://acme.atlassian.net",
@@ -1100,8 +1105,11 @@ class TestRunCommentLane(unittest.TestCase):
 
     def test_a_failing_post_stops_the_sequence(self):
         refused = {"side_effect": jc.JiraError("HTTP 403")}
-        with self.assertRaises(jc.JiraError):
+        with self.assertRaises(jc.JiraError) as ctx:
             self._run([], arm=True, post=refused)
+        # Nothing landed before this failure -- the message must not
+        # falsely claim a partial write when there was none.
+        self.assertNotIn("already posted", str(ctx.exception))
 
     def test_a_failing_post_never_reaches_the_next_comment(self):
         outcomes = [b'{"id": "1"}', jc.JiraError("HTTP 403")]
@@ -1112,9 +1120,13 @@ class TestRunCommentLane(unittest.TestCase):
                 jc, "_http_get", return_value=card_with([])))
             poster = stack.enter_context(mock.patch.object(
                 jc, "_http_post", side_effect=outcomes))
-            with self.assertRaises(jc.JiraError):
+            with self.assertRaises(jc.JiraError) as ctx:
                 jc.run_comment_lane("ABC-1", self.entries, True)
         self.assertEqual(poster.call_count, 2)
+        # The batch is not atomic: the first comment already landed
+        # before the second failed, so the error names its marker
+        # rather than silently dropping the fact that it was posted.
+        self.assertIn(MARKER, str(ctx.exception))
 
     def test_a_truncated_comment_sweep_refuses_before_any_post(self):
         # fetch_comments' fail-closed `total` guard is what makes dedupe
@@ -1361,8 +1373,8 @@ class TestCommentCli(unittest.TestCase):
             side_effect=jc.JiraError("HTTP 403"))
         self.assertEqual(rc, 1)
         self.assertEqual(err, "")
-        self.assertEqual(json.loads(out),
-                         {"ok": False, "errors": ["HTTP 403"]})
+        expected = {"ok": False, "errors": ["HTTP 403"]}
+        self.assertEqual(json.loads(out), expected)
 
     def test_there_is_no_credential_flag_anywhere(self):
         help_text = jc.build_parser().format_help()
@@ -1402,8 +1414,11 @@ class TestTheReadLaneStaysReadOnly(unittest.TestCase):
         self.assertNotIn("datetime", self.SOURCE.replace("# ", ""))
 
     def test_the_only_mutating_verb_in_the_module_is_the_comment_post(self):
-        for verb in ('"PUT"', '"PATCH"', '"DELETE"',
-                     "'PUT'", "'PATCH'", "'DELETE'"):
+        verbs = (
+            '"PUT"', '"PATCH"', '"DELETE"',
+            "'PUT'", "'PATCH'", "'DELETE'",
+        )
+        for verb in verbs:
             self.assertNotIn(verb, self.SOURCE, verb)
         self.assertEqual(self.SOURCE.count('method="POST"'), 1)
 

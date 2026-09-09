@@ -175,7 +175,11 @@ the tool set and this section exact.
    skipped rather than duplicated and a re-run of this whole command is a genuine no-op. Exit 1
    prints `{"ok": false, "errors": [...]}` on stdout and exit 2 prints `error: ...` on stderr —
    surface either verbatim and stop; do not retry, and do not post the remaining comments by
-   hand. On success print each result's `kind`, `marker` and `status`. Never echo, log, or quote
+   hand. **The batch itself is not atomic**: if a POST fails after earlier comments in the same
+   run already landed, the exit-1 error names every marker already posted to the card before the
+   failure — an undisclosed partial mutation is the one failure mode that most needs surfacing
+   on this plugin's first mutating external call — and re-running is a no-op for those markers.
+   On success print each result's `kind`, `marker` and `status`. Never echo, log, or quote
    a credential.
 
 9. **Print the handoff.** Print, as the final user-facing output, the single line

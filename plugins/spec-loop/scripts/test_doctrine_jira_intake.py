@@ -71,11 +71,14 @@ class TestTheJiraWriteIsBoundedToComments(unittest.TestCase):
         self.text = re.sub(r"\s+", " ", raw)
 
     def test_the_write_is_bounded_to_adding_a_comment(self):
-        self.assertIn("comments only, never transitions or field edits",
-                      self.text)
-        for forbidden in ("never a created or closed issue",
-                          "never a sub-task",
-                          "never an edit or deletion of any comment"):
+        self.assertIn(
+            "comments only, never transitions or field edits", self.text)
+        forbidden_phrases = (
+            "never a created or closed issue",
+            "never a sub-task",
+            "never an edit or deletion of any comment",
+        )
+        for forbidden in forbidden_phrases:
             with self.subTest(forbidden=forbidden):
                 self.assertIn(forbidden, self.text)
 
@@ -94,8 +97,8 @@ class TestTheJiraWriteIsBoundedToComments(unittest.TestCase):
         self.assertIn("AskUserQuestion naming the exact count", self.text)
         # The recommended-default option label is normalized: the prose
         # spells it with an em dash.
-        self.assertIn("No - leave the card untouched",
-                      self.text.replace("—", "-"))
+        normalized = self.text.replace("—", "-")
+        self.assertIn("No - leave the card untouched", normalized)
 
     def test_the_dedupe_gate_is_the_cards_own_comment_list(self):
         self.assertIn("card's own full comment list", self.text)

@@ -249,8 +249,8 @@ def _http_post(url, email, token, payload):
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    req = urllib.request.Request(url, data=data, headers=headers,
-                                 method="POST")
+    req = urllib.request.Request(
+        url, data=data, headers=headers, method="POST")
     try:
         with _OPENER.open(req, timeout=30) as resp:
             return resp.read()
@@ -643,14 +643,22 @@ COMMENT_MARKER_RE = re.compile(
 _COMMENT_ENTRY_KEYS = ("kind", "marker", "body")
 
 
+def _entry_field_errors(entry, where):
+    """Error strings for any of _COMMENT_ENTRY_KEYS on `entry` that is
+    missing or not a non-empty string. Extracted out of
+    _errors_for_comment_entry to keep that function's own cognitive
+    complexity down. (PURE)"""
+    return ["%s.%s must be a non-empty string" % (where, field)
+            for field in _COMMENT_ENTRY_KEYS
+            if not isinstance(entry.get(field), str) or not entry.get(field)]
+
+
 def _errors_for_comment_entry(entry, index):
     """Error strings for ONE comment entry of the posting plan. (PURE)"""
     where = "comments[%d]" % index
     if not isinstance(entry, dict):
         return ["%s must be an object" % where]
-    errors = ["%s.%s must be a non-empty string" % (where, field)
-              for field in _COMMENT_ENTRY_KEYS
-              if not isinstance(entry.get(field), str) or not entry.get(field)]
+    errors = _entry_field_errors(entry, where)
     if errors:
         return errors
     if not COMMENT_MARKER_RE.fullmatch(entry["marker"]):
@@ -725,16 +733,46 @@ def post_comment(base_url, creds, key, body):
     return comment_id
 
 
+def _partial_batch_error(key, posted, exc):
+    """Build the JiraError raised when a batch POST fails part-way through.
+
+    The batch itself is NOT atomic -- only each individual comment is
+    (see execute_comment_plan) -- so a failure after N comments have
+    already landed must say so: the card has already been mutated even
+    though the whole operation is being reported as failed. Names every
+    already-posted marker so the operator can tell exactly what
+    happened; re-running is a no-op for those markers because the
+    dedupe gate is the card's own comment list, read back over the
+    network."""
+    if not posted:
+        return JiraError(str(exc))
+    markers = ", ".join(item["marker"] for item in posted)
+    return JiraError(
+        "%s; %d comment(s) already posted to %s before the failure: "
+        "%s. Re-running is a no-op for them."
+        % (exc, len(posted), key, markers))
+
+
 def execute_comment_plan(base_url, creds, key, pending):
     """POST each pending comment in order and return one result each.
 
-    Fail closed and atomic per comment: every entry was shape-validated
+    Fail closed and atomic PER COMMENT: every entry was shape-validated
     before any request was issued, and the FIRST failure propagates
     immediately, so no later comment is posted. One comment is written
-    whole by one POST or not at all -- there is no partial body."""
+    whole by one POST or not at all -- there is no partial body.
+
+    The BATCH is not atomic, though: a failure after some comments have
+    already posted still leaves those comments on the card. That partial
+    mutation is reported rather than swallowed -- see
+    _partial_batch_error -- because this is the plugin's first mutating
+    external call, and an undisclosed partial write is the one failure
+    mode that most needs surfacing."""
     posted = []
     for item in pending:
-        comment_id = post_comment(base_url, creds, key, item["body"])
+        try:
+            comment_id = post_comment(base_url, creds, key, item["body"])
+        except JiraError as exc:
+            raise _partial_batch_error(key, posted, exc) from exc
         posted.append({
             "kind": item["kind"], "marker": item["marker"],
             "status": "posted", "comment_id": comment_id})
