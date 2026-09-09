@@ -148,3 +148,4 @@ Rendered from the run's events; append-only, and nothing parses it back.
 [r1] DEFERRED: Task 3 re-pins a hand-maintained count in a comment that has now gone stale once (fourteen -> fifteen) and will rot again the next time TARGET_FILES grows; the plan itself notes no test enforces it. … — AT: 2026-09-09T08:09:54Z
 [r1] QUALITY-GATE: FAIL — AT: 2026-09-09T08:09:54Z
 [run] INTEGRATION-CHECK: green — One slice merged; integration tree sha equals the r1 sidecar tests.tree_sha, so the controller-measured full-suite evidence transfers without a re-run. — AT: 2026-09-09T08:10:09Z
+[run] DECISION: Pushed spec-loop-run/20260908-jira-intake and opened PR #3 against main. — AT: 2026-09-09T11:33:28Z

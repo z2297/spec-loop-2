@@ -170,3 +170,18 @@ Rendered from EscalationRecords; answers are written back into the matching entr
 - Answer: CLOSED BY THE CONTROLLER - no retry needed. The crash hit at verify:1 on a StructuredOutput retry cap AFTER all 3 tasks had committed (second occurrence of this same crash shape this run; j3 hit it too). No work was lost. All three remediation items are controller-verified applied at f441f7e: _http_get now maps a bare TimeoutError to JiraError and leaks neither the token nor the email; the error …
 - Answered-at: 2026-09-09T08:09:54Z
 
+## [run] Publish choice for run 20260908-jira-intake   (status: ANSWERED)
+<!-- escalation-id: run:publish-choice -->
+<!-- escalation-identity: 164e065663d227ac -->
+- Trigger: ambiguity
+- Opened: (not recorded)
+- Context: All four slices merged into spec-loop-run/20260908-jira-intake at 42b8c30. Full CI green. Nothing pushed. The loop never pushes before the human publish choice.
+- The decision: How should this run be published?
+- Options:
+  1. Push the branch and open a PR — (RECOMMENDED DEFAULT) Publishes to the public z2297/spec-loop-2 remote for review before any merge to main.
+  2. Merge onto main --no-ff locally — No push; main moves locally.
+  3. Leave it local — Branch stays as-is; nothing pushed or merged.
+- If unanswered: leave the run local and unpublished
+- Answer: Push the branch and open a PR against main. Human-answered at the Phase 5 publish prompt. A second question about recalibrating the .NET-tuned quality gate was answered leave-it-and-decide-later, so no .spec-loop/quality-gate.json overlay was added and no follow-up run was created.
+- Answered-at: 2026-09-09T11:32:45Z
+
