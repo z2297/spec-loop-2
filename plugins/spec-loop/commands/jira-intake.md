@@ -179,17 +179,24 @@ the tool set and this section exact.
    ```
    It re-reads the card's full comment list ONCE, before the first write of the run — not before
    each individual comment — so a comment already on the card when that read happened is skipped
-   rather than duplicated, and a re-run of this whole command is a genuine no-op. A duplicate
-   marker appearing twice inside one batch is refused outright before the first request. Exit 1
-   prints `{"ok": false, "errors": [...]}` on stdout and exit 2 prints `error: ...` on stderr —
-   surface either verbatim and stop. **A mid-sequence failure is fail-closed per comment but NOT transactional.** Each comment is
-   written whole by one POST or not at all, and the first failure stops the run so no later
-   comment is posted — but comments earlier in the same batch may already be live on the card,
-   and nothing rolls them back. The exit-1 error names every marker already posted before the
-   failure; an undisclosed partial mutation is the one failure mode that most needs surfacing
-   on this plugin's first mutating external call. **The correct recovery is to re-run this command**,
-   which the marker dedupe makes safe: the already-live comments come back as `already-posted` and
-   only the remaining ones are offered. Do not post the remaining comments by hand.
+   rather than duplicated, and re-running the POSTING step with the same rendered comments file is
+   a genuine no-op. A duplicate marker appearing twice inside one batch is refused outright before
+   the first request. Exit 1 prints `{"ok": false, "errors": [...]}` on stdout and exit 2 prints
+   `error: ...` on stderr — surface either verbatim and stop. **A mid-sequence failure is
+   fail-closed per comment but NOT transactional.** Each comment is written whole by one POST or
+   not at all, and the first failure stops the run so no later comment is posted — but comments
+   earlier in the same batch may already be live on the card, and nothing rolls them back. The
+   exit-1 error names every marker already posted before the failure; an undisclosed partial
+   mutation is the one failure mode that most needs surfacing on this plugin's first mutating
+   external call.
+   **The correct recovery is to re-run the POSTING step with the same rendered comments file** —
+   the same `<tmp>/comments.json`, re-armed with `--post` — which the marker dedupe makes safe:
+   the already-live comments come back as `already-posted` and only the remaining ones are
+   written. **Do NOT re-run the refinement** (and so do not re-run this whole slash command to
+   recover): a regenerated refinement produces new markers that will not dedupe against what is
+   already on the card, because `comment_marker` hashes the payload text and a single character
+   of drift yields a different marker and a second near-identical comment. Do not post the
+   remaining comments by hand.
    On success print each result's `kind`, `marker` and `status`. Never echo, log, or quote
    a credential.
 
