@@ -63,7 +63,9 @@ runs slices as background agents when Workflow is unavailable), `git`,
 
 See `plugins/spec-loop/README.md` for the full manual: flags, risk tiers, the
 review pipeline, quality-gate and knowledge-graph configuration, the dashboard,
-and `/spec-loop:peer-review`. Migrating from v1? Read
+and `/spec-loop:peer-review`. `/spec-loop:jira-intake` turns a single Jira card
+into a refined, gitignored intake artifact and prints the loop handoff — it
+never starts the loop and never writes to Jira. Migrating from v1? Read
 `plugins/spec-loop/references/migration-from-v1.md`.
 
 ## Repo layout

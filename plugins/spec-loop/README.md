@@ -37,7 +37,9 @@ Other commands: `/spec-loop:review-pr` (one consolidated review of any diff),
 `/spec-loop:peer-review` (read-only review of a real PR against business
 requirements), `/spec-loop:quality-gate` and `/spec-loop:knowledge-graph`
 (config), `/spec-loop:dashboard` (terminal) and `/spec-loop:dashboard-serve`
-(web, Docker-preferred singleton on port 8787).
+(web, Docker-preferred singleton on port 8787), `/spec-loop:jira-intake` (read
+one Jira card, refine it with you, render the comments it would post, and print
+the loop handoff).
 
 ## The pipeline
 
@@ -153,8 +155,8 @@ sidecar closed rather than reading as clean.
 
 ## Components
 
-- **Commands (7)**: spec-loop, review-pr, peer-review, quality-gate,
-  knowledge-graph, dashboard, dashboard-serve.
+- **Commands (8)**: spec-loop, review-pr, peer-review, quality-gate,
+  knowledge-graph, dashboard, dashboard-serve, jira-intake.
 - **Workflow (1)**: slice-wave.
 - **Agents (13)**: slice-planner, plan-critic, guardian, skeptic,
   implementer, pr-reviewer, finding-verifier, re-reviewer, simplifier,
