@@ -21,6 +21,7 @@ import json
 import sys
 import unittest
 import urllib.error
+from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
@@ -55,6 +56,16 @@ class TestIssueKeyValidation(unittest.TestCase):
     def test_an_empty_key_is_rejected(self):
         with self.assertRaises(jc.JiraUsageError):
             jc.validate_issue_key("")
+
+    def test_a_trailing_newline_is_rejected(self):
+        # re.match with a bare '$' anchor accepts one trailing newline;
+        # fullmatch is required to reject it.
+        with self.assertRaises(jc.JiraUsageError):
+            jc.validate_issue_key("ABC-123\n")
+
+    def test_an_embedded_newline_is_rejected(self):
+        with self.assertRaises(jc.JiraUsageError):
+            jc.validate_issue_key("ABC-123\nrm -rf /")
 
     def test_the_rejection_message_names_the_expected_pattern(self):
         with self.assertRaises(jc.JiraUsageError) as ctx:
@@ -101,6 +112,14 @@ class TestBaseUrlValidation(unittest.TestCase):
     def test_an_empty_base_url_is_rejected(self):
         with self.assertRaises(jc.JiraUsageError):
             jc.validate_base_url("")
+
+    def test_the_host_allow_list_regex_rejects_a_trailing_newline(self):
+        # re.match with a bare '$' anchor accepts one trailing newline;
+        # fullmatch is required to reject it. urlsplit() itself strips
+        # embedded whitespace/control characters from a URL before
+        # ALLOWED_HOST_RE ever sees the hostname, so this is asserted
+        # directly against the regex rather than through validate_base_url.
+        self.assertIsNone(jc.ALLOWED_HOST_RE.fullmatch("acme.atlassian.net\n"))
 
     def test_a_malformed_port_raises_jira_usage_error_not_value_error(self):
         # parts.port is computed lazily by urllib.parse and raises a bare
@@ -197,23 +216,26 @@ class TestHttpGetIsReadOnly(unittest.TestCase):
     def test_the_request_method_is_get(self):
         opener = self._fake_opener()
         with mock.patch.object(jc, "_OPENER", opener):
-            jc._http_get("https://acme.atlassian.net/rest/api/3/field",
-                         "fred@example.com", "tok")
+            jc._http_get(
+                "https://acme.atlassian.net/rest/api/3/field",
+                "fred@example.com", "tok")
         req = opener.open.call_args.args[0]
         self.assertEqual(req.get_method(), "GET")
 
     def test_the_request_carries_no_body(self):
         opener = self._fake_opener()
         with mock.patch.object(jc, "_OPENER", opener):
-            jc._http_get("https://acme.atlassian.net/rest/api/3/field",
-                         "fred@example.com", "tok")
+            jc._http_get(
+                "https://acme.atlassian.net/rest/api/3/field",
+                "fred@example.com", "tok")
         self.assertIsNone(opener.open.call_args.args[0].data)
 
     def test_the_authorization_header_is_basic(self):
         opener = self._fake_opener()
         with mock.patch.object(jc, "_OPENER", opener):
-            jc._http_get("https://acme.atlassian.net/rest/api/3/field",
-                         "fred@example.com", "tok")
+            jc._http_get(
+                "https://acme.atlassian.net/rest/api/3/field",
+                "fred@example.com", "tok")
         req = opener.open.call_args.args[0]
         self.assertTrue(req.get_header("Authorization").startswith("Basic "))
 
@@ -250,8 +272,9 @@ class TestRedirectsAreRefused(unittest.TestCase):
             "https://evil.example.com/"))
 
     def test_the_module_opener_installs_the_no_redirect_handler(self):
-        self.assertTrue(any(isinstance(h, jc._NoRedirect)
-                            for h in jc._OPENER.handlers))
+        installed = any(
+            isinstance(h, jc._NoRedirect) for h in jc._OPENER.handlers)
+        self.assertTrue(installed)
 
 
 class TestParseJson(unittest.TestCase):
@@ -300,10 +323,12 @@ class TestSecretsNeverLeak(unittest.TestCase):
             "Unauthorized")
         opener = mock.MagicMock()
         opener.open.side_effect = err
-        with mock.patch.object(jc, "_OPENER", opener):
-            with self.assertRaises(jc.JiraError) as ctx:
-                jc._http_get("https://acme.atlassian.net/rest/api/3/issue/ABC-1",
-                             self.EMAIL, self.TOKEN)
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(jc, "_OPENER", opener))
+            ctx = stack.enter_context(self.assertRaises(jc.JiraError))
+            jc._http_get(
+                "https://acme.atlassian.net/rest/api/3/issue/ABC-1",
+                self.EMAIL, self.TOKEN)
         self._assert_clean(str(ctx.exception))
 
     def test_secrets_absent_from_a_network_error_message(self):
@@ -357,16 +382,16 @@ class TestAdfToText(unittest.TestCase):
         self.assertEqual(jc.adf_to_text(adf(para("one"), para("two"))), "one\n\ntwo")
 
     def test_a_heading_renders_with_hash_markers(self):
-        self.assertEqual(jc.adf_to_text(adf(heading(2, "Acceptance Criteria"))),
-                         "## Acceptance Criteria")
+        rendered = jc.adf_to_text(adf(heading(2, "Acceptance Criteria")))
+        self.assertEqual(rendered, "## Acceptance Criteria")
 
     def test_bullets_render_as_dash_lines(self):
         self.assertEqual(jc.adf_to_text(adf(bullets("a", "b"))), "- a\n- b")
 
     def test_ordered_list_items_are_numbered(self):
-        node = {"type": "orderedList",
-                "content": [{"type": "listItem", "content": [para("a")]},
-                            {"type": "listItem", "content": [para("b")]}]}
+        items = [{"type": "listItem", "content": [para("a")]},
+                 {"type": "listItem", "content": [para("b")]}]
+        node = {"type": "orderedList", "content": items}
         self.assertEqual(jc.adf_to_text(adf(node)), "1. a\n2. b")
 
     def test_a_hard_break_becomes_a_newline(self):
@@ -455,8 +480,8 @@ class TestFindAcFieldId(unittest.TestCase):
                 jc.find_ac_field_id("https://acme.atlassian.net", "e", "t"))
 
     def test_a_403_on_the_catalogue_degrades_to_none_rather_than_failing(self):
-        with mock.patch.object(jc, "_http_get",
-                               side_effect=jc.JiraError("HTTP 403")):
+        forbidden = jc.JiraError("HTTP 403")
+        with mock.patch.object(jc, "_http_get", side_effect=forbidden):
             self.assertIsNone(
                 jc.find_ac_field_id("https://acme.atlassian.net", "e", "t"))
 
@@ -565,8 +590,9 @@ def raw_comment(cid, text, author="Mia Krystof"):
 
 def comment_page(start, total, comments, max_results=100):
     """A PageOfComments payload -- note the key is `comments`, not `values`."""
-    return json.dumps({"startAt": start, "maxResults": max_results,
-                       "total": total, "comments": comments}).encode("utf-8")
+    payload = {"startAt": start, "maxResults": max_results,
+               "total": total, "comments": comments}
+    return json.dumps(payload).encode("utf-8")
 
 
 class TestFetchComments(unittest.TestCase):
@@ -635,8 +661,28 @@ class TestFetchComments(unittest.TestCase):
         self.assertEqual(got[0]["author"], "")
 
     def test_a_page_missing_the_comments_key_raises(self):
-        payload = json.dumps({"startAt": 0, "maxResults": 100, "total": 1,
-                              "values": []}).encode("utf-8")
+        body = {"startAt": 0, "maxResults": 100, "total": 1, "values": []}
+        payload = json.dumps(body).encode("utf-8")
+        with mock.patch.object(jc, "_http_get", return_value=payload):
+            with self.assertRaises(jc.JiraError):
+                jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
+
+    def test_a_page_missing_total_raises_rather_than_truncating(self):
+        # int(page.get("total") or 0) used to collapse a missing `total` to
+        # 0, making a single non-empty page look complete and silently
+        # truncating the sweep -- this must fail closed instead.
+        body = {"startAt": 0, "maxResults": 100,
+                "comments": [raw_comment(1, "a")]}
+        payload = json.dumps(body).encode("utf-8")
+        with mock.patch.object(jc, "_http_get", return_value=payload) as get:
+            with self.assertRaises(jc.JiraError):
+                jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
+        self.assertEqual(get.call_count, 1)
+
+    def test_a_non_numeric_total_raises_a_jira_error(self):
+        body = {"startAt": 0, "maxResults": 100, "total": "not-a-number",
+                "comments": [raw_comment(1, "a")]}
+        payload = json.dumps(body).encode("utf-8")
         with mock.patch.object(jc, "_http_get", return_value=payload):
             with self.assertRaises(jc.JiraError):
                 jc.fetch_comments("https://acme.atlassian.net", "e", "t", "ABC-1")
@@ -680,31 +726,35 @@ class TestResolveIssue(unittest.TestCase):
            "JIRA_API_TOKEN": "tok"}
 
     def _resolve(self, issue=None, comments=None, ac_field_id=None):
-        with mock.patch.dict(jc.os.environ, self.ENV, clear=True), \
-             mock.patch.object(jc, "find_ac_field_id", return_value=ac_field_id), \
-             mock.patch.object(jc, "fetch_issue",
-                               return_value=issue if issue else issue_bean()), \
-             mock.patch.object(jc, "fetch_comments", return_value=comments or []):
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, self.ENV, clear=True))
+            stack.enter_context(mock.patch.object(
+                jc, "find_ac_field_id", return_value=ac_field_id))
+            stack.enter_context(mock.patch.object(
+                jc, "fetch_issue", return_value=issue if issue else issue_bean()))
+            stack.enter_context(mock.patch.object(
+                jc, "fetch_comments", return_value=comments or []))
             return jc.resolve_issue("ABC-123")
 
     def test_the_full_record_is_assembled(self):
-        rec = self._resolve(comments=[{"id": "1", "author": "Mia",
-                                       "created": "c", "updated": "u",
-                                       "body": "hi"}])
+        comment = {"id": "1", "author": "Mia", "created": "c",
+                  "updated": "u", "body": "hi"}
+        rec = self._resolve(comments=[comment])
         self.assertEqual(rec["key"], "ABC-123")
         self.assertEqual(rec["summary"], "Add a widget")
         self.assertEqual(rec["status"], "In Progress")
         self.assertEqual(rec["issue_type"], "Story")
         self.assertEqual(rec["description"], "Some background.")
-        self.assertEqual(rec["web_url"],
-                         "https://acme.atlassian.net/browse/ABC-123")
+        self.assertEqual(
+            rec["web_url"], "https://acme.atlassian.net/browse/ABC-123")
         self.assertEqual(len(rec["comments"]), 1)
 
     def test_the_server_returned_key_wins_over_the_requested_one(self):
         rec = self._resolve(issue=dict(issue_bean(), key="MOVED-9"))
         self.assertEqual(rec["key"], "MOVED-9")
-        self.assertEqual(rec["web_url"],
-                         "https://acme.atlassian.net/browse/MOVED-9")
+        self.assertEqual(
+            rec["web_url"], "https://acme.atlassian.net/browse/MOVED-9")
 
     def test_a_missing_status_is_a_half_resolve(self):
         with self.assertRaises(jc.JiraError):
@@ -719,50 +769,60 @@ class TestResolveIssue(unittest.TestCase):
 
 
 class TestMain(unittest.TestCase):
+    """The two refusal shapes match dag.py / run_state.py's established
+    idiom: a contract failure (exit 1) prints JSON to STDOUT; a usage
+    failure (exit 2) prints plain 'error: %s' text to STDERR."""
+
     RECORD = {"key": "ABC-123", "web_url": "https://acme.atlassian.net/browse/ABC-123",
               "summary": "s", "description": "", "acceptance_criteria": "",
               "acceptance_criteria_source": "", "status": "Open",
               "issue_type": "Task", "comments": []}
 
     def _run(self, argv, **patches):
-        out, err = [], []
-        with mock.patch.object(jc.sys, "stdout") as so, \
-             mock.patch.object(jc.sys, "stderr") as se, \
-             mock.patch.object(jc, "resolve_issue", **patches):
+        with ExitStack() as stack:
+            so = stack.enter_context(mock.patch.object(jc.sys, "stdout"))
+            se = stack.enter_context(mock.patch.object(jc.sys, "stderr"))
+            stack.enter_context(mock.patch.object(jc, "resolve_issue", **patches))
             rc = jc.main(argv)
             out = "".join(c.args[0] for c in so.write.call_args_list if c.args)
             err = "".join(c.args[0] for c in se.write.call_args_list if c.args)
         return rc, out, err
 
     def test_success_prints_one_json_object_and_exits_zero(self):
-        rc, out, _ = self._run(["resolve", "--key", "ABC-123"],
-                               return_value=self.RECORD)
+        rc, out, _ = self._run(
+            ["resolve", "--key", "ABC-123"], return_value=self.RECORD)
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(out), self.RECORD)
 
-    def test_a_usage_error_exits_two_with_the_refusal_shape(self):
-        rc, _, err = self._run(["resolve", "--key", "ABC-123"],
-                               side_effect=jc.JiraUsageError("no creds"))
+    def test_a_usage_error_exits_two_as_plain_text_on_stderr(self):
+        rc, out, err = self._run(
+            ["resolve", "--key", "ABC-123"],
+            side_effect=jc.JiraUsageError("no creds"))
         self.assertEqual(rc, 2)
-        self.assertEqual(json.loads(err), {"ok": False, "errors": ["no creds"]})
+        self.assertEqual(out, "")
+        self.assertEqual(err, "error: no creds\n")
 
-    def test_a_contract_error_exits_one(self):
-        rc, _, err = self._run(["resolve", "--key", "ABC-123"],
-                               side_effect=jc.JiraError("HTTP 500"))
+    def test_a_contract_error_exits_one_as_json_on_stdout(self):
+        rc, out, err = self._run(
+            ["resolve", "--key", "ABC-123"],
+            side_effect=jc.JiraError("HTTP 500"))
         self.assertEqual(rc, 1)
-        self.assertEqual(json.loads(err), {"ok": False, "errors": ["HTTP 500"]})
+        self.assertEqual(err, "")
+        self.assertEqual(json.loads(out), {"ok": False, "errors": ["HTTP 500"]})
 
     def test_secrets_never_reach_stdout_or_stderr(self):
         token, email = "s3cr3t-api-token-value", "fred@example.com"
-        composed = base64.b64encode(f"{email}:{token}".encode("utf-8")).decode("ascii")
+        composed = base64.b64encode(
+            f"{email}:{token}".encode("utf-8")).decode("ascii")
         env = {"JIRA_BASE_URL": "https://acme.atlassian.net",
                "JIRA_EMAIL": email, "JIRA_API_TOKEN": token}
         opener = mock.MagicMock()
         opener.open.side_effect = urllib.error.URLError("connection refused")
-        with mock.patch.dict(jc.os.environ, env, clear=True), \
-             mock.patch.object(jc, "_OPENER", opener), \
-             mock.patch.object(jc.sys, "stdout") as so, \
-             mock.patch.object(jc.sys, "stderr") as se:
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.dict(jc.os.environ, env, clear=True))
+            stack.enter_context(mock.patch.object(jc, "_OPENER", opener))
+            so = stack.enter_context(mock.patch.object(jc.sys, "stdout"))
+            se = stack.enter_context(mock.patch.object(jc.sys, "stderr"))
             rc = jc.main(["resolve", "--key", "ABC-123"])
             out = "".join(c.args[0] for c in so.write.call_args_list if c.args)
             err = "".join(c.args[0] for c in se.write.call_args_list if c.args)
@@ -783,9 +843,11 @@ class TestReadOnlyContract(unittest.TestCase):
     def test_the_module_never_calls_datetime_now(self):
         self.assertNotIn("datetime", self.SOURCE.replace("# ", ""))
 
+    MUTATING_VERBS = ('"POST"', '"PUT"', '"PATCH"', '"DELETE"',
+                      "'POST'", "'PUT'", "'PATCH'", "'DELETE'")
+
     def test_no_mutating_http_method_appears_in_the_source(self):
-        for verb in ('"POST"', '"PUT"', '"PATCH"', '"DELETE"',
-                     "'POST'", "'PUT'", "'PATCH'", "'DELETE'"):
+        for verb in self.MUTATING_VERBS:
             self.assertNotIn(verb, self.SOURCE, verb)
 
     def test_the_only_request_construction_sets_method_get(self):
@@ -796,12 +858,11 @@ class TestReadOnlyContract(unittest.TestCase):
         self.assertEqual(self.SOURCE.count("_OPENER.open("), 1)
 
     def test_the_entry_shim_is_exactly_two_lines(self):
-        lines = [ln for ln in self.SOURCE.splitlines()
-                 if ln.startswith("if __name__")]
-        self.assertEqual(len(lines), 1)
-        idx = self.SOURCE.splitlines().index(lines[0])
-        self.assertEqual(self.SOURCE.splitlines()[idx + 1].strip(),
-                         "sys.exit(main())")
+        all_lines = self.SOURCE.splitlines()
+        shim_lines = [ln for ln in all_lines if ln.startswith("if __name__")]
+        self.assertEqual(len(shim_lines), 1)
+        idx = all_lines.index(shim_lines[0])
+        self.assertEqual(all_lines[idx + 1].strip(), "sys.exit(main())")
 
 if __name__ == "__main__":
     unittest.main()

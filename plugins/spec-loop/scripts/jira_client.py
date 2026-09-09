@@ -87,7 +87,7 @@ def validate_issue_key(key):
     """Validate an UNTRUSTED Jira issue key before it reaches a URL segment.
     Rejects lowercase, path separators, a leading '-' (argument injection) and
     anything else outside ISSUE_KEY_RE."""
-    if not ISSUE_KEY_RE.match(key or ""):
+    if not ISSUE_KEY_RE.fullmatch(key or ""):
         raise JiraUsageError(
             f"invalid Jira issue key {key!r}: must match {ISSUE_KEY_RE.pattern} "
             "(an uppercase project key, a hyphen, then digits -- e.g. A-1 or PROJ-42)"
@@ -136,7 +136,7 @@ def validate_base_url(raw):
         and not parts.username
         and not parts.password
         and not parts.port
-        and ALLOWED_HOST_RE.match(parts.hostname or "")
+        and ALLOWED_HOST_RE.fullmatch(parts.hostname or "")
     )
     if not ok:
         raise JiraUsageError(
@@ -197,12 +197,11 @@ def _http_get(url, email, token):
     Errors reference only the URL -- the credentials ride in a header, so
     neither the token, the email, nor the composed base64 pair can appear in an
     exception message."""
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": _auth_header(email, token),
-                 "Accept": "application/json"},
-        method="GET",
-    )
+    headers = {
+        "Authorization": _auth_header(email, token),
+        "Accept": "application/json",
+    }
+    req = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with _OPENER.open(req, timeout=30) as resp:
             return resp.read()
@@ -463,6 +462,9 @@ MAX_COMMENT_PAGES = 100
 _MISSING_COMMENTS_MSG = (
     "Jira comment page is missing the 'comments' list; cannot read the "
     "full comment history")
+_MISSING_TOTAL_MSG = (
+    "Jira comment page is missing a numeric 'total'; cannot tell whether "
+    "the full comment history has been read")
 
 
 def _normalize_comment(raw):
@@ -477,6 +479,36 @@ def _normalize_comment(raw):
         "updated": raw.get("updated") or "",
         "body": adf_to_text(raw.get("body")),
     }
+
+
+def _page_total(page):
+    """Extract one comment page's reported `total` as an int, fail-closed. A
+    missing or non-numeric `total` must NOT be treated as 0 -- int(None or 0)
+    collapsing to 0 would make the very first non-empty page look complete
+    and silently truncate the sweep, defeating comment-based dedupe on a
+    chatty card. Treated the same way as the missing-`comments` shape
+    failure: raise rather than guess."""
+    try:
+        return int(page.get("total"))
+    except (TypeError, ValueError):
+        raise JiraError(_MISSING_TOTAL_MSG) from None
+
+
+def _process_comment_page(page, comments):
+    """Normalize one comment page's comments onto `comments` (in place) and
+    report (added_count, sweep_complete). The sweep is complete when the page
+    came back empty (guards against a `total` that lies) or the accumulated
+    count has reached the page's reported `total`. Raises JiraError for a
+    page missing the `comments` list, or via _page_total for a missing or
+    non-numeric `total`. Extracted out of fetch_comments to keep its own
+    cognitive complexity down."""
+    page_comments = page.get("comments") if isinstance(page, dict) else None
+    if not isinstance(page_comments, list):
+        raise JiraError(_MISSING_COMMENTS_MSG)
+    comments.extend(_normalize_comment(c) for c in page_comments)
+    if not page_comments:
+        return 0, True
+    return len(page_comments), len(comments) >= _page_total(page)
 
 
 def fetch_comments(base_url, email, token, key):
@@ -496,7 +528,10 @@ def fetch_comments(base_url, email, token, key):
     `comments` list (the REST v3 shape; NOT `values`, which belongs to the
     unrelated POST /rest/api/3/comment/list endpoint) raises rather than
     silently degrading to "no comments" -- swallowing a shape change here
-    would silently defeat dedupe on a chatty card."""
+    would silently defeat dedupe on a chatty card. A page whose `total` is
+    missing or non-numeric raises the same way (_page_total): treating a
+    missing `total` as 0 would make the first non-empty page look complete
+    and silently truncate the sweep to one page."""
     validate_issue_key(key)
     comments = []
     start = 0
@@ -507,13 +542,10 @@ def fetch_comments(base_url, email, token, key):
         url = f"{base}?{query}"
         page = _parse_json(
             _http_get(url, email, token).decode("utf-8"), "comment page")
-        page_comments = page.get("comments") if isinstance(page, dict) else None
-        if not isinstance(page_comments, list):
-            raise JiraError(_MISSING_COMMENTS_MSG)
-        comments.extend(_normalize_comment(c) for c in page_comments)
-        if not page_comments or len(comments) >= int(page.get("total") or 0):
+        added, complete = _process_comment_page(page, comments)
+        if complete:
             return comments
-        start += len(page_comments)
+        start += added
     raise JiraError(
         f"comment pagination did not terminate after {MAX_COMMENT_PAGES} "
         f"pages for {key}; refusing a possibly-truncated comment history")
@@ -578,8 +610,8 @@ def build_parser():
     sub = parser.add_subparsers(dest="command", required=True)
     resolve = sub.add_parser(
         "resolve", help="Resolve one issue key to a normalized JSON record.")
-    resolve.add_argument("--key", required=True,
-                         help="Jira issue key, e.g. ABC-123.")
+    resolve.add_argument(
+        "--key", required=True, help="Jira issue key, e.g. ABC-123.")
     return parser
 
 
@@ -587,15 +619,22 @@ def main(argv=None):
     """Parse args, resolve, print one JSON object. Exit 0 ok, 1 contract
     failure, 2 usage / unreadable input. JiraUsageError is caught BEFORE
     JiraError: it subclasses JiraError, so the reverse order would collapse
-    exit 2 into exit 1."""
+    exit 2 into exit 1.
+
+    The two refusal shapes match dag.py:775-782 / run_state.py:1289-1295's
+    established idiom, so downstream tooling can tell them apart by stream:
+    a contract failure (exit 1) prints the {"ok": false, "errors": [...]}
+    JSON to STDOUT; a usage failure (exit 2) prints plain 'error: %s' text
+    to STDERR."""
     args = build_parser().parse_args(argv)
     try:
         record = resolve_issue(args.key)
     except JiraUsageError as exc:
-        print(json.dumps({"ok": False, "errors": [str(exc)]}), file=sys.stderr)
+        print("error: %s" % exc, file=sys.stderr)
         return 2
     except JiraError as exc:
-        print(json.dumps({"ok": False, "errors": [str(exc)]}), file=sys.stderr)
+        print(json.dumps({"ok": False, "errors": [str(exc)]},
+                         ensure_ascii=False, indent=2))
         return 1
     print(json.dumps(record, ensure_ascii=False, indent=2))
     return 0
