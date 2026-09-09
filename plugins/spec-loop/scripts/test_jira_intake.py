@@ -5,7 +5,12 @@ Usage:
     python3 -m unittest test_jira_intake
 """
 
+import contextlib
+import io
+import json
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -271,6 +276,75 @@ class TestArtifactRendering(unittest.TestCase):
         with self.assertRaises(intake.IntakeError):
             intake.render_artifact(make_record(), {"description": "x"},
                                    "2026-09-09T00:00:00Z")
+
+
+class TestRenderCli(unittest.TestCase):
+    """The command shells this CLI; its exit codes and stream choice must
+    match jira_client.py so the command handles one idiom, not two."""
+
+    def setUp(self):
+        self.dirpath = tempfile.mkdtemp(prefix="jira-intake-test-")
+        self.record_path = Path(self.dirpath) / "record.json"
+        self.refinement_path = Path(self.dirpath) / "refinement.json"
+        self.record_path.write_text(json.dumps(make_record()), encoding="utf-8")
+        self.refinement_path.write_text(json.dumps(make_refinement()),
+                                        encoding="utf-8")
+
+    def tearDown(self):
+        shutil.rmtree(self.dirpath, ignore_errors=True)
+
+    def run_cli(self, argv):
+        """Run main() capturing stdout/stderr; returns (code, out, err)."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = intake.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def base_argv(self):
+        """The happy-path argv for `render`."""
+        return ["render", "--record", str(self.record_path),
+                "--refinement", str(self.refinement_path),
+                "--ts", "2026-09-09T00:00:00Z"]
+
+    def test_a_good_render_exits_zero_with_one_json_object(self):
+        code, out, _ = self.run_cli(self.base_argv())
+        payload = json.loads(out)
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["posted"])
+        self.assertEqual(payload["artifact_path"],
+                         ".spec-loop-jira/ABC-123/intake.md")
+        self.assertIn("## 1. Refined description", payload["artifact"])
+        self.assertEqual(payload["comments"][0]["kind"], "understanding")
+
+    def test_an_invalid_refinement_is_a_contract_failure_on_stdout(self):
+        self.refinement_path.write_text(json.dumps({"description": "x"}),
+                                        encoding="utf-8")
+        code, out, err = self.run_cli(self.base_argv())
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(out)["ok"])
+        self.assertEqual(err, "")
+
+    def test_a_bad_issue_key_is_a_usage_failure_on_stderr(self):
+        bad = make_record(key="../etc")
+        self.record_path.write_text(json.dumps(bad), encoding="utf-8")
+        code, out, err = self.run_cli(self.base_argv())
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertTrue(err.startswith("error: "))
+
+    def test_an_unreadable_input_file_is_a_usage_failure(self):
+        argv = self.base_argv()
+        argv[2] = str(Path(self.dirpath) / "absent.json")
+        code, _, err = self.run_cli(argv)
+        self.assertEqual(code, 2)
+        self.assertIn("error: ", err)
+
+    def test_malformed_json_input_is_a_usage_failure(self):
+        self.record_path.write_text("{not json", encoding="utf-8")
+        code, _, err = self.run_cli(self.base_argv())
+        self.assertEqual(code, 2)
+        self.assertIn("error: ", err)
 
 
 if __name__ == "__main__":

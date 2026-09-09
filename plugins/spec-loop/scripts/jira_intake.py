@@ -44,8 +44,12 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 import re
+import sys
+from pathlib import Path
 
 
 class IntakeError(Exception):
@@ -363,3 +367,70 @@ def render_artifact(record, refinement, ts):
     lines += (["- %s" % f for f in refinement["injection_findings"]]
               or ["- none observed"])
     return "\n".join(lines) + "\n"
+
+
+def _load_json(path, what):
+    """Read one JSON file, mapping any read/parse failure to usage error."""
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise IntakeUsageError("error: cannot read the %s file %s: %s"
+                               % (what, path, exc)) from exc
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        raise IntakeUsageError("error: the %s file %s is not valid JSON: %s"
+                               % (what, path, exc)) from exc
+
+
+def build_parser():
+    """The argparse parser: one `render` subcommand."""
+    parser = argparse.ArgumentParser(
+        description="Render the Jira intake artifact and the comment bodies "
+                    "it would post. Posts nothing.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    render = subparsers.add_parser(
+        "render", help="render the intake artifact and comment bodies")
+    render.add_argument("--record", required=True,
+                        help="path to jira_client.py resolve output (JSON)")
+    render.add_argument("--refinement", required=True,
+                        help="path to the refinement JSON")
+    render.add_argument("--ts", required=True,
+                        help="ISO-8601 timestamp supplied by the caller")
+    render.add_argument("--artifact-root", default=ARTIFACT_ROOT,
+                        help="relative artifact root (default: %s)" % ARTIFACT_ROOT)
+    return parser
+
+
+def _render_payload(args):
+    """Build the success payload for `render`. Writes nothing."""
+    record = _load_json(args.record, "record")
+    refinement = _load_json(args.refinement, "refinement")
+    key = validate_issue_key(record.get("key"))
+    return {"ok": True,
+            "issue_key": key,
+            "artifact_path": artifact_path(key, args.artifact_root),
+            "artifact": render_artifact(record, refinement, args.ts),
+            "comments": build_comment_bodies(record, refinement, args.ts),
+            "ranked_gaps": rank_gaps(refinement["gaps"]),
+            "posted": False}
+
+
+def main(argv=None):
+    """Entry point: 0 = ok, 1 = contract failure, 2 = usage."""
+    args = build_parser().parse_args(argv)
+    try:
+        payload = _render_payload(args)
+    except IntakeUsageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except IntakeError as exc:
+        print(json.dumps({"ok": False, "errors": [str(exc)]},
+                         ensure_ascii=False, indent=2))
+        return 1
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())
