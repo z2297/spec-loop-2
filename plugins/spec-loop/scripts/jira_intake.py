@@ -202,11 +202,15 @@ def _duplicate_gap_id_errors(gaps):
     (PURE)
 
     answers is keyed by gap id, so a repeated id makes an answer
-    unattributable: both gaps resolve to the same entry."""
+    unattributable: both gaps resolve to the same entry. A gap with no
+    usable id is already reported by _errors_for_gap, so it is skipped here
+    rather than folded to a shared None sentinel."""
     seen = set()
     errors = []
     for gap in gaps:
         gap_id = gap.get("id") if isinstance(gap, dict) else None
+        if not isinstance(gap_id, str) or not gap_id:
+            continue
         if gap_id in seen:
             errors.append("gaps have duplicate id: %s" % gap_id)
         seen.add(gap_id)

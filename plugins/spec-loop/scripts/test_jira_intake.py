@@ -114,6 +114,18 @@ class TestRefinementValidation(unittest.TestCase):
         errors = intake.validate_refinement(bad)
         self.assertTrue(any("G9" in e for e in errors))
 
+    def test_id_less_gaps_do_not_report_a_none_duplicate(self):
+        """_errors_for_gap already reports the missing id; folding both
+        malformed gaps to a None sentinel invented a second, wrong error."""
+        refinement = make_refinement(
+            gaps=[{"question": "q", "impact": "high", "blocking": True},
+                  "not-an-object"],
+            answers={})
+        errors = intake.validate_refinement(refinement)
+        self.assertNotIn("gaps have duplicate id: None", errors)
+        self.assertIn("gaps[0].id must be a non-empty string", errors)
+        self.assertIn("gaps[1] must be an object", errors)
+
 
 class TestGapRanking(unittest.TestCase):
     """The ranking decides the order of the single AskUserQuestion round, so
