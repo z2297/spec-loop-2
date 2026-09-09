@@ -555,10 +555,10 @@ def resolve_issue(key):
     resolved_key = issue.get("key") or key
     description = adf_to_text(fields.get("description"))
     criteria, source = resolve_acceptance_criteria(issue, ac_field_id, description)
+    encoded_key = urllib.parse.quote(validate_issue_key(resolved_key), safe="")
     return _normalized({
         "key": resolved_key,
-        "web_url": f"{base_url}/browse/"
-                   f"{urllib.parse.quote(validate_issue_key(resolved_key), safe='')}",
+        "web_url": f"{base_url}/browse/{encoded_key}",
         "summary": fields.get("summary") or "",
         "description": description,
         "acceptance_criteria": criteria,

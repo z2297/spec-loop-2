@@ -486,8 +486,9 @@ class TestFetchIssue(unittest.TestCase):
     def test_the_ac_field_id_is_appended_to_the_field_set(self):
         payload = json.dumps(issue_bean()).encode("utf-8")
         with mock.patch.object(jc, "_http_get", return_value=payload) as get:
-            jc.fetch_issue("https://acme.atlassian.net", ("e", "t"), "ABC-123",
-                           "customfield_10039")
+            jc.fetch_issue(
+                "https://acme.atlassian.net", ("e", "t"), "ABC-123",
+                "customfield_10039")
         self.assertIn("customfield_10039", get.call_args.args[0])
 
     def test_an_invalid_key_is_rejected_before_any_request(self):
