@@ -273,3 +273,99 @@ def adf_to_text(node):
         return node
     blocks = [_adf_block(child, 0) for child in node.get("content") or []]
     return "\n\n".join(blocks).strip()
+
+
+ISSUE_FIELDS = ("summary", "description", "status", "issuetype")
+AC_FIELD_NAME = "acceptance criteria"
+AC_HEADING_RE = re.compile(
+    r"^\s{0,3}#{1,6}\s*acceptance\s+criteria\s*:?\s*$", re.IGNORECASE)
+ANY_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s")
+
+
+def _issue_url(base_url, key):
+    """Compose the REST v3 issue URL for one key. The key has already been
+    validated against ISSUE_KEY_RE by the caller, and is percent-encoded here
+    anyway: defence in depth, per the run constraint that an untrusted id is
+    encoded regardless before it reaches a URL segment."""
+    return f"{base_url}/rest/api/3/issue/{urllib.parse.quote(key, safe='')}"
+
+
+def find_ac_field_id(base_url, email, token):
+    """Locate the id of the custom field whose catalogue display name casefolds
+    to AC_FIELD_NAME, via GET /rest/api/3/field. Returns None when no such
+    field exists, when the payload is not the documented flat array, or when
+    the call fails.
+
+    This is the ONE best-effort call in the module -- every other GET is
+    fail-closed. A 403 here is common on locked-down sites (the field
+    catalogue is an admin-adjacent read), the acceptance criteria have a
+    defined description fallback, and the winner is recorded in the record's
+    acceptance_criteria_source, so degrading to None is not a half-resolve."""
+    try:
+        raw = _http_get(f"{base_url}/rest/api/3/field", email, token)
+        catalogue = _parse_json(raw.decode("utf-8"), "field catalogue")
+    except JiraError:
+        return None
+    if not isinstance(catalogue, list):
+        return None
+    for entry in catalogue:
+        # A non-object entry is malformed; skip it rather than raising, since
+        # this whole lookup degrades to None instead of failing the resolve.
+        if not isinstance(entry, dict):
+            continue
+        if (entry.get("name") or "").strip().casefold() == AC_FIELD_NAME:
+            return entry.get("id") or None
+    return None
+
+
+def fetch_issue(base_url, email, token, key, ac_field_id):
+    """GET the raw IssueBean for one issue key, requesting ISSUE_FIELDS plus
+    the acceptance-criteria custom field when one was located. The key is
+    validated BEFORE any request is issued, so a malformed key never reaches
+    the network. Fail-closed: an HTTP error or a malformed body raises."""
+    validate_issue_key(key)
+    fields = list(ISSUE_FIELDS) + ([ac_field_id] if ac_field_id else [])
+    query = urllib.parse.urlencode({"fields": ",".join(fields)})
+    url = f"{_issue_url(base_url, key)}?{query}"
+    return _parse_json(_http_get(url, email, token).decode("utf-8"), "issue")
+
+
+def acceptance_criteria_from_description(text):
+    """Extract the section under an 'Acceptance Criteria' heading from ALREADY
+    RENDERED description text. The heading match is case-insensitive and
+    tolerates a trailing colon; the section runs to the next heading of any
+    level, or to the end of the text. Returns '' when no such heading is
+    present."""
+    lines = (text or "").splitlines()
+    collected = []
+    inside = False
+    for line in lines:
+        if inside:
+            if ANY_HEADING_RE.match(line):
+                break
+            collected.append(line)
+        elif AC_HEADING_RE.match(line):
+            inside = True
+    return "\n".join(collected).strip()
+
+
+def resolve_acceptance_criteria(issue, ac_field_id, description_text):
+    """Resolve the acceptance criteria in the fixed two-step order and report
+    which source won: the custom field named in the catalogue when it exists
+    and renders non-empty ('field'), else the description's 'Acceptance
+    Criteria' section ('description'), else ('', ''). Recording the source is
+    what makes the best-effort catalogue lookup safe -- a reader can always
+    tell where the text came from."""
+    if ac_field_id:
+        raw = (issue.get("fields") or {}).get(ac_field_id)
+        # Only an ADF document or a plain string is renderable. A field of
+        # some other shape (a multi-select array, a number) is not acceptance
+        # criteria text, so it degrades to the description fallback rather
+        # than crashing the resolve.
+        rendered = adf_to_text(raw).strip() if isinstance(raw, (str, dict)) else ""
+        if rendered:
+            return (rendered, "field")
+    from_description = acceptance_criteria_from_description(description_text)
+    if from_description:
+        return (from_description, "description")
+    return ("", "")

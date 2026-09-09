@@ -381,5 +381,152 @@ class TestAdfToText(unittest.TestCase):
         self.assertIn("x", jc.adf_to_text(adf(node)))
 
 
+def issue_bean(**fields):
+    """A minimal Jira IssueBean fixture; kwargs override the `fields` object."""
+    base = {"summary": "Add a widget",
+            "description": adf(para("Some background.")),
+            "status": {"name": "In Progress"},
+            "issuetype": {"name": "Story"}}
+    base.update(fields)
+    return {"key": "ABC-123", "id": "10001", "fields": base}
+
+
+class TestIssueUrl(unittest.TestCase):
+    def test_the_key_is_appended_to_the_v3_issue_path(self):
+        self.assertEqual(
+            jc._issue_url("https://acme.atlassian.net", "ABC-123"),
+            "https://acme.atlassian.net/rest/api/3/issue/ABC-123")
+
+    def test_the_key_is_percent_encoded(self):
+        self.assertEqual(
+            jc._issue_url("https://acme.atlassian.net", "A B"),
+            "https://acme.atlassian.net/rest/api/3/issue/A%20B")
+
+
+class TestFindAcFieldId(unittest.TestCase):
+    CATALOGUE = json.dumps([
+        {"id": "summary", "name": "Summary", "custom": False},
+        {"id": "customfield_10039", "name": "Acceptance Criteria", "custom": True},
+    ]).encode("utf-8")
+
+    def test_it_finds_the_field_by_display_name(self):
+        with mock.patch.object(jc, "_http_get", return_value=self.CATALOGUE):
+            self.assertEqual(
+                jc.find_ac_field_id("https://acme.atlassian.net", "e", "t"),
+                "customfield_10039")
+
+    def test_the_name_match_is_case_insensitive(self):
+        payload = json.dumps(
+            [{"id": "customfield_1", "name": "ACCEPTANCE criteria"}]).encode("utf-8")
+        with mock.patch.object(jc, "_http_get", return_value=payload):
+            self.assertEqual(
+                jc.find_ac_field_id("https://acme.atlassian.net", "e", "t"),
+                "customfield_1")
+
+    def test_an_absent_field_returns_none(self):
+        payload = json.dumps([{"id": "summary", "name": "Summary"}]).encode("utf-8")
+        with mock.patch.object(jc, "_http_get", return_value=payload):
+            self.assertIsNone(
+                jc.find_ac_field_id("https://acme.atlassian.net", "e", "t"))
+
+    def test_a_403_on_the_catalogue_degrades_to_none_rather_than_failing(self):
+        with mock.patch.object(jc, "_http_get",
+                               side_effect=jc.JiraError("HTTP 403")):
+            self.assertIsNone(
+                jc.find_ac_field_id("https://acme.atlassian.net", "e", "t"))
+
+    def test_a_non_list_catalogue_degrades_to_none(self):
+        with mock.patch.object(jc, "_http_get", return_value=b'{"oops": 1}'):
+            self.assertIsNone(
+                jc.find_ac_field_id("https://acme.atlassian.net", "e", "t"))
+
+    def test_a_catalogue_entry_that_is_not_an_object_is_skipped(self):
+        payload = json.dumps(
+            ["junk", {"id": "customfield_2", "name": "Acceptance Criteria"}]
+        ).encode("utf-8")
+        with mock.patch.object(jc, "_http_get", return_value=payload):
+            self.assertEqual(
+                jc.find_ac_field_id("https://acme.atlassian.net", "e", "t"),
+                "customfield_2")
+
+
+class TestFetchIssue(unittest.TestCase):
+    def test_it_requests_the_default_field_set(self):
+        payload = json.dumps(issue_bean()).encode("utf-8")
+        with mock.patch.object(jc, "_http_get", return_value=payload) as get:
+            jc.fetch_issue("https://acme.atlassian.net", "e", "t", "ABC-123", None)
+        url = get.call_args.args[0]
+        self.assertIn("fields=summary%2Cdescription%2Cstatus%2Cissuetype", url)
+
+    def test_the_ac_field_id_is_appended_to_the_field_set(self):
+        payload = json.dumps(issue_bean()).encode("utf-8")
+        with mock.patch.object(jc, "_http_get", return_value=payload) as get:
+            jc.fetch_issue("https://acme.atlassian.net", "e", "t", "ABC-123",
+                           "customfield_10039")
+        self.assertIn("customfield_10039", get.call_args.args[0])
+
+    def test_an_invalid_key_is_rejected_before_any_request(self):
+        with mock.patch.object(jc, "_http_get") as get:
+            with self.assertRaises(jc.JiraUsageError):
+                jc.fetch_issue("https://acme.atlassian.net", "e", "t", "../x", None)
+        get.assert_not_called()
+
+    def test_a_malformed_payload_raises(self):
+        with mock.patch.object(jc, "_http_get", return_value=b"nope"):
+            with self.assertRaises(jc.JiraError):
+                jc.fetch_issue("https://acme.atlassian.net", "e", "t", "ABC-1", None)
+
+
+class TestAcceptanceCriteria(unittest.TestCase):
+    DESC = ("Some background.\n\n"
+            "## Acceptance Criteria\n\n"
+            "- one\n- two\n\n"
+            "## Notes\n\nignore me")
+
+    def test_the_description_section_is_extracted(self):
+        self.assertEqual(
+            jc.acceptance_criteria_from_description(self.DESC), "- one\n- two")
+
+    def test_the_heading_match_is_case_insensitive_and_colon_tolerant(self):
+        text = "### acceptance criteria:\n\n- x"
+        self.assertEqual(jc.acceptance_criteria_from_description(text), "- x")
+
+    def test_an_absent_section_yields_empty(self):
+        self.assertEqual(
+            jc.acceptance_criteria_from_description("just prose"), "")
+
+    def test_a_trailing_section_runs_to_the_end_of_the_text(self):
+        text = "## Acceptance Criteria\n\n- last"
+        self.assertEqual(jc.acceptance_criteria_from_description(text), "- last")
+
+    def test_the_custom_field_wins_over_the_description(self):
+        issue = issue_bean(customfield_10039=adf(para("from the field")))
+        text, source = jc.resolve_acceptance_criteria(
+            issue, "customfield_10039", self.DESC)
+        self.assertEqual(text, "from the field")
+        self.assertEqual(source, "field")
+
+    def test_a_plain_string_custom_field_is_accepted(self):
+        issue = issue_bean(customfield_10039="plain AC text")
+        text, source = jc.resolve_acceptance_criteria(issue, "customfield_10039", "")
+        self.assertEqual((text, source), ("plain AC text", "field"))
+
+    def test_an_empty_custom_field_falls_back_to_the_description(self):
+        issue = issue_bean(customfield_10039=None)
+        text, source = jc.resolve_acceptance_criteria(
+            issue, "customfield_10039", self.DESC)
+        self.assertEqual((text, source), ("- one\n- two", "description"))
+
+    def test_an_unrenderable_field_shape_falls_back_to_the_description(self):
+        issue = issue_bean(customfield_10039=[{"value": "multi-select"}])
+        text, source = jc.resolve_acceptance_criteria(
+            issue, "customfield_10039", self.DESC)
+        self.assertEqual((text, source), ("- one\n- two", "description"))
+
+    def test_no_field_and_no_section_yields_empty_and_no_source(self):
+        text, source = jc.resolve_acceptance_criteria(issue_bean(), None, "prose")
+        self.assertEqual((text, source), ("", ""))
+
+
 if __name__ == "__main__":
     unittest.main()
