@@ -64,7 +64,10 @@ Do not act. Return an `EscalationRecord` and let the controller batch it:
    objections) are folded into the plan and logged — they do **not** surface.
 5. **Unfixable quality-gate block** — the quality gate's metrics still exceed the configured
    thresholds after the fix loop's behavior-preserving refactors. Thresholds are never weakened
-   to avoid this.
+   to avoid this; a residual the human accepts is recorded as an accepted violation — by
+   escalation id, through `redispatch.py accept-violations`, visible in the sidecar's
+   `quality.accepted`, the `quality-gate` event's `accepted` count and a `decision` event —
+   never as a threshold change and never as prose alone.
 6. **Refactor scope** (`refactor-scope`) — the plan a slice just produced declares a rewrite of
    existing code larger than the run's configured ceiling (`ctx.refactor_radius`). This is the one
    trigger raised by the workflow's own arithmetic on planner-declared numbers rather than by an
@@ -117,6 +120,13 @@ on the text, never on a pinned format.
   N+1's escalation.
 - **A prior answer is related but not squarely on point** → still surface, but quote the prior
   answer in the record's `recommended: true` option so the human confirms rather than re-derives.
+- **Same-run precedent:** an acceptance already recorded in THIS run for the same slice,
+  trigger and violation fingerprints is applied mechanically — `redispatch.py accept-violations`
+  → `redispatch.py args` → the wave's `accepted_violations` — never re-adjudicated in prose.
+  `run_state.py open-escalations` marks such a record `repeat_of` the round it repeats, and the
+  wave reframes a third round of one trigger as `non-terminating:` with the three actions a
+  controller can take (accept mechanically, drop, leave ESCALATED). Run 20260908's j1 paid three
+  prose rulings for one acceptance.
 - **Guard:** precedent only resolves what a human has *already* adjudicated. It never downgrades
   a new material assumption, a safety flag, or a decision whose context has materially changed.
   When in doubt, surface with the precedent as the default.
@@ -195,3 +205,8 @@ exactly the stage that raised it.
   instead of emitting events and records.
 - Skipping `verification-before-completion` because this gate said proceed; that gate is separate
   and never skipped.
+- Accepting a quality-gate residual in prose alone — an answer the wave cannot read — so the next
+  dispatch fails the same gate; record it with `redispatch.py accept-violations`.
+- Hand-writing a DONE sidecar to close a slice the wave keeps escalating; the mechanical close is
+  the recorded acceptance plus a `verify` re-entry, and a DONE the wave never verified is the one
+  record this loop must never carry.

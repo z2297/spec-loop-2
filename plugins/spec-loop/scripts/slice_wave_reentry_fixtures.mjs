@@ -46,3 +46,24 @@ export const TASK_RETRY_DONE = {
   status: "DONE", touched_files: [], concerns: [], deviations: [],
   commits: { base: "0000000", head: "c0ffee0" },
 };
+
+// ── Accepted-violation fixtures (run 20260908, slice j1) ─────────────────
+// The four violations j1 escalated on three times: three whole-file
+// class_lines breaches (no function) and one stdlib-forced parameter_count.
+// Shapes follow quality_gate.py's summary.failures entries.
+const cl = (file, value) => ({ metric: "class_lines", value, threshold: 300, file, pass: false });
+export const J1_VIOLATIONS = [
+  cl("plugins/spec-loop/scripts/jira_client.py", 536),
+  cl("plugins/spec-loop/scripts/test_jira_client.py", 700),
+  cl("scripts/measure_coverage.py", 537),
+  { metric: "parameter_count", value: 6, threshold: 5, file: "plugins/spec-loop/scripts/jira_client.py", function: "redirect_request", pass: false },
+];
+export const NESTING_VIOLATION = { metric: "nesting_depth", value: 4, threshold: 3, file: "plugins/spec-loop/scripts/jira_client.py", function: "_http_get", pass: false };
+export const J1_ACCEPTED = J1_VIOLATIONS.map((v) => ({ metric: v.metric, file: v.file, function: v.function || null }));
+export const verifyFailing = (violations) => ({
+  suite: { command: "true", passed: true, summary: "ok" },
+  quality: { summary_pass: false, violations, detail: violations.length + " failures" },
+  head_sha: "f79156b", tree_sha: "treej1",
+});
+export const VERIFY_FAIL_J1 = verifyFailing(J1_VIOLATIONS);
+export const VERIFY_NULL_GATE = { ...verifyFailing(J1_VIOLATIONS), quality: { summary_pass: null, violations: [], detail: "gate crashed" } };

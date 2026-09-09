@@ -1390,6 +1390,94 @@ class TestPersistSlice(RunStateTestCase):
             "expected %r among %r" % (needle, errors))
 
 
+class TestAnsweredRecordsAreNotReopened(RunStateTestCase):
+    """Run 20260908: persisting j1's DONE sidecar, whose embedded record still
+    read status OPEN, re-emitted escalation-opened for an id the log had
+    already answered — the slice report rendered OPEN on a DONE slice and
+    open-escalations asked the question again."""
+
+    def seed_answered(self, record_id="s1:review-block", answer="bound them"):
+        answered = {"id": record_id, "answer": answer, "answered_at": LATER}
+        rs.append_event(self.run_dir, rs.build_event(TS, "s1", "escalation-opened", escalation(id=record_id)))
+        rs.append_event(self.run_dir, rs.build_event(LATER, "s1", "escalation-answered", answered))
+
+    def test_a_done_sidecar_carrying_an_answered_open_record_does_not_reopen_it(self):
+        self.seed_answered()
+        rs.persist_slice(self.run_dir, sidecar("DONE", escalations=[escalation()]), wave=2, ts=LATER)
+        opened = [e for e in self.events() if e["type"] == "escalation-opened"]
+        self.assertEqual(len(opened), 1)
+        self.assertEqual(rs.open_escalations(self.run_dir), [])
+        stored = json.loads(self.read("slice-s1-status.json"))["escalations"][0]
+        self.assertEqual(stored["status"], "ANSWERED")
+        self.assertEqual(stored["answer"], "bound them")
+        self.assertNotIn("OPEN", self.read("slice-s1-report.md"))
+        self.assertIn("ANSWERED", self.read("slice-s1-report.md"))
+
+    def test_an_answered_id_absent_from_the_log_is_still_opened(self):
+        rs.persist_slice(self.run_dir, sidecar("ESCALATED"), wave=1, ts=TS)
+        self.assertEqual([e["type"] for e in self.events()].count("escalation-opened"), 1)
+        self.assertEqual(len(rs.open_escalations(self.run_dir)), 1)
+
+    def test_a_record_the_wave_already_settled_is_not_answered_twice(self):
+        self.seed_answered()
+        body = sidecar("DONE", escalations=[escalation(status="ANSWERED", answer="bound them", answered_at=LATER)])
+        rs.persist_slice(self.run_dir, body, wave=2, ts=LATER)
+        types = [e["type"] for e in self.events()]
+        self.assertEqual(types.count("escalation-opened"), 1)
+        self.assertEqual(types.count("escalation-answered"), 1)
+
+
+GATE_FP = {"metric": "class_lines", "file": "a.py", "function": None, "value": 536, "threshold": 300}
+OTHER_FP = {"metric": "nesting_depth", "file": "a.py", "function": "f", "value": 4, "threshold": 3}
+
+
+def gate_record(record_id, violations):
+    over = dict(id=record_id, trigger="quality-gate-block", title="verification failed")
+    return escalation(context="suite: ok; quality: FAIL", violations=violations, **over)
+
+
+class TestRepeatEscalationsAreMarked(RunStateTestCase):
+    def open_after_answering(self, first, second):
+        answered = {"id": first["id"], "answer": "accept", "answered_at": LATER}
+        rs.append_event(self.run_dir, rs.build_event(TS, "s1", "escalation-opened", first))
+        rs.append_event(self.run_dir, rs.build_event(LATER, "s1", "escalation-answered", answered))
+        rs.append_event(self.run_dir, rs.build_event(LATER, "s1", "escalation-opened", second))
+        return rs.open_escalations(self.run_dir)
+
+    def test_an_identical_violation_set_names_the_answered_round_it_repeats(self):
+        first = gate_record("s1:quality-gate-block", [GATE_FP])
+        second = gate_record("s1:quality-gate-block:2", [dict(GATE_FP, value=900)])
+        records = self.open_after_answering(first, second)
+        self.assertEqual(records[0]["repeat_of"], "s1:quality-gate-block")
+
+    def test_a_different_violation_set_is_not_a_repeat(self):
+        first = gate_record("s1:quality-gate-block", [GATE_FP])
+        second = gate_record("s1:quality-gate-block:2", [GATE_FP, OTHER_FP])
+        records = self.open_after_answering(first, second)
+        self.assertNotIn("repeat_of", records[0])
+
+    def test_records_without_violations_repeat_on_identical_context_and_question(self):
+        records = self.open_after_answering(escalation(), escalation(id="s1:review-block:2"))
+        self.assertEqual(records[0]["repeat_of"], "s1:review-block")
+
+
+class TestAdditiveQualityAndViolationFields(unittest.TestCase):
+    def test_an_accepted_list_on_the_quality_block_is_valid(self):
+        body = sidecar("DONE", quality={"status": "FAIL", "detail": "debt", "accepted": [GATE_FP]})
+        self.assertEqual(rs.validate_sidecar(body), [])
+
+    def test_a_non_list_accepted_field_is_refused(self):
+        body = sidecar("DONE", quality={"status": "FAIL", "detail": "debt", "accepted": "class_lines"})
+        self.assertTrue(any("accepted" in e for e in rs.validate_sidecar(body)))
+
+    def test_a_violations_list_on_an_escalation_is_valid(self):
+        self.assertEqual(rs.validate_escalation(gate_record("s1:quality-gate-block", [GATE_FP]), "e"), [])
+
+    def test_a_non_list_violations_field_is_refused(self):
+        errors = rs.validate_escalation(gate_record("s1:quality-gate-block", "four"), "e")
+        self.assertTrue(any("violations" in e for e in errors))
+
+
 class TestOpenEscalations(RunStateTestCase):
     def open_one(self, escalation_id, ts=TS, **over):
         scope = escalation_id.split(":")[0]

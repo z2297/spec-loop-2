@@ -86,7 +86,10 @@ prose about the slice.
   "quality": { "status": "PASS | FAIL | SKIPPED", "detail": "...",
                "head_sha": "<sha>", "tree_sha": "<sha>",             // the tree it measured
                "measured_at": "gate | gate:remeasure | verify:<N>",  // the role that measured it
-               "violations": 0 },   // ALWAYS the last measurement taken, on every exit path;
+               "violations": 0,     // OPEN (unaccepted) violations at the last measurement
+               "accepted": [ /* OPTIONAL: matched accepted fingerprints, each with value/threshold */ ] },
+                                    // ALWAYS the last measurement taken, on every exit path.
+                                    // FAIL + accepted is the shape of human-accepted debt:
                                     // the status enum is not widened
   "split": { "children": [{ "goal": "...", "files": [], "subsystems": [],
                             "internal_deps": [] }] },   // SPLIT only; ≥2 children (a 1-child
@@ -114,6 +117,10 @@ prose about the slice.
   "context": "<what the loop was doing and why it cannot decide>",
   "question": "<the precise question>",
   "options": [{ "label": "...", "detail": "...", "recommended": true }],
+  "violations": [{ "metric": "class_lines", "file": "...", "function": null,
+                   "value": 536, "threshold": 300 }],   // OPTIONAL, quality-gate-block only:
+                                                        // the OPEN (unaccepted) violations, so
+                                                        // an acceptance is made BY ID
   "if_unanswered": "pause this slice; continue all independent slices",
   "status": "OPEN | ANSWERED",
   "opened": "<ISO-8601 UTC>",
@@ -174,6 +181,20 @@ FINDING-shaped items with ids `order-<N>` that bypass the blocking bar. The wave
 `verify`; fix orders → `fix`; "review it again" → `review`; task-blocked ambiguity → `plan`.
 A slice with an entry never benefits from the workflow journal (its first prompt differs),
 so `resumeFromRunId` is passed only when the tool reports `resume.advised`.
+
+**Accepted violations.** The wave arg `accepted_violations: {"<slice-id>": [{metric, file,
+function|null}]}` lists the gate violations a human accepted for a slice. It is CUMULATIVE like
+`answers` (rebuilt from `decision` events of `kind: "accepted-violations"` by `redispatch.py
+args`), unlike the single-dispatch `agent_cap_overrides`. Matching is by fingerprint — metric,
+normalized path, function or null — never by measured value and never by wildcard (`*` entries
+are discarded and announced): a metric-wide acceptance would also accept a NEW breach the fix
+introduced. A gate whose every violation is accepted stops blocking (the slice can finish DONE)
+while the sidecar's `quality.status` stays FAIL and `quality.accepted[]` lists what was accepted;
+a `summary_pass: null` gate is never acceptable. A fingerprint matching no measured violation is
+announced once as a `decision` (drift). `run_state.py open-escalations` adds `repeat_of:
+"<id>"` to a record that repeats an already-answered one of the same slice and trigger (same
+violation set, or same context and question), and the wave reframes the third round of one
+trigger as `non-terminating:` (MAX_ESC_ROUNDS = 2) with controller-only options.
 
 ## `events.jsonl` — the machine channel
 
@@ -289,7 +310,8 @@ best-effort):
   `id`; `escalation-answered` pairs by that `id` (never by scope alone — one
   slice can open several).
 
-- **`quality-gate`** payload: `{summary, status, violations, head_sha, tree_sha, stage}`,
+- **`quality-gate`** payload: `{summary, status, violations, accepted, head_sha, tree_sha, stage}`
+  (`violations` = open, `accepted` = matched accepted fingerprints),
   emitted on EVERY measurement — stage R (`stage: "gate"`), the re-measure before a
   fix-loop escalation (`gate:remeasure`) and each verify attempt (`verify:<N>`) — so a
   reader can tell which tree a count describes. Run 20260908's payload was `{status,

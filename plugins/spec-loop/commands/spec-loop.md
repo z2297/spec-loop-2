@@ -168,6 +168,20 @@ deadlock is itself an escalation):
    has no such lever: its resource is the wave budget the host supplies, and no args
    field in this contract changes the stage floor.
 
+   A `quality-gate-block` record carries `violations[]` — the OPEN, unaccepted gate violations as
+   `{metric, file, function, value, threshold}` — and has a lever: when the human (or a precedent
+   you cite) accepts them as pre-existing debt, record it BY ID, `python3
+   "${CLAUDE_PLUGIN_ROOT}/scripts/redispatch.py" accept-violations --run-dir <dir> --ts <now>
+   --slice <id> --from-escalation <esc-id> --all --answer "<ruling>"`, which appends one
+   `decision` event (`kind: accepted-violations`) and the `escalation-answered` event together.
+   `redispatch.py args` then hands the wave a cumulative `accepted_violations` map; matched
+   violations stop blocking the gate while the sidecar still says FAIL and lists them under
+   `quality.accepted`. Never accept in prose alone (the wave cannot read it), never weaken a
+   threshold to get past it, and never hand-write a DONE sidecar: a record whose title opens
+   `non-terminating:` means the same trigger has fired after two answered rounds, and its only
+   legal moves are the three it lists. `open-escalations` marks a record that repeats an
+   answered one as `repeat_of`.
+
    A `refactor-scope` record is the one trigger the wave raises from its own arithmetic
    rather than from an agent's judgment: the plan stage compared the planner's declared
    rewrite numbers against `ctx.refactor_radius` and stopped the slice before any

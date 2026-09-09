@@ -24,6 +24,13 @@ export const meta = {
 //     latestAnswer reads it back): plan-raised triggers by the planner,
 //     review-block and quality-gate-block by the fixer, a task-blocked
 //     ambiguity by the task retry
+//   - accepted violations: args.accepted_violations["<sliceId>"] lists
+//     {metric, file, function|null} fingerprints a human accepted; a gate
+//     whose every violation is accepted stops blocking (gateAcceptable) while
+//     the sidecar still says FAIL and lists them under quality.accepted.
+//     Cumulative like answers; no wildcards; never a threshold change
+//   - escalation rounds: the third round of one trigger on one slice is
+//     reframed non-terminating (MAX_ESC_ROUNDS) with controller-only options
 //   - re-entry: slices[].entry {stage: plan|review|fix|verify, head, ...}
 //     resumes an ESCALATED slice at that stage against the branch head the
 //     sidecar recorded, instead of replaying the whole pipeline from the
@@ -40,6 +47,7 @@ const CTX = A.ctx // {run_dir, plugin_root, base_ref, test_command, conventions_
 
 const CAPS = { 1: 10, 2: 18, 3: 32 }
 const MAX_FIX_ROUNDS = 2
+const MAX_ESC_ROUNDS = 2 // answered rounds of one trigger on one slice before the record is reframed non-terminating
 const BUDGET_STAGE_FLOOR = 60_000 // skip-and-escalate below this remaining budget
 
 // Per-slice agent-cap raises authorised by the human, keyed by slice id. This map
@@ -47,6 +55,15 @@ const BUDGET_STAGE_FLOOR = 60_000 // skip-and-escalate below this remaining budg
 // writes it after a human answers a budget-exhausted cap record, and no default in
 // CAPS moves. See agentCap below.
 const CAP_OVERRIDES = A.agent_cap_overrides || {}
+
+// Accepted quality-gate violations, keyed by slice id: [{metric, file, function|null}].
+// CUMULATIVE like answers — rebuilt from events by redispatch.py args — unlike the
+// single-dispatch cap override: an acceptance that expired with one dispatch would
+// fail the same gate on the next. Matched by fingerprint, never by value and never
+// by wildcard: a metric-wide acceptance would also accept a NEW breach the fix
+// introduced. Run 20260908's slice j1 escalated three times on four violations
+// the controller had already accepted, because nothing here could read that.
+const ACCEPTED = A.accepted_violations || {}
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -219,6 +236,51 @@ function qualityStatus(q) {
   return q.summary_pass === true ? 'PASS' : 'FAIL'
 }
 
+// ── Accepted violations: fingerprints, matching, and the acceptable verdict ──
+
+const normPath = (f) => String(f).replace(/\\/g, '/').replace(/^\.\//, '')
+const normFingerprint = (v) => ({ metric: String(v.metric), file: normPath(v.file), function: v.function == null ? null : String(v.function) })
+const fpKey = (fp) => [fp.metric, fp.file, fp.function === null ? '' : fp.function].join('\u001f')
+const describeFp = (fp) => `${fp.metric} ${fp.file}${fp.function ? `:${fp.function}` : ''}`
+const withNumbers = (v) => ({ ...normFingerprint(v), value: v.value, threshold: v.threshold })
+const nonEmpty = (x) => typeof x === 'string' && x.length > 0
+const noWildcard = (x) => x == null || !String(x).includes('*')
+
+// {metric, file} non-empty strings, function a string or null, no '*' anywhere.
+function usableFingerprint(fp) {
+  if (!fp || typeof fp !== 'object') return false
+  if (!nonEmpty(fp.metric) || !nonEmpty(fp.file)) return false
+  return noWildcard(fp.metric) && noWildcard(fp.file) && noWildcard(fp.function)
+}
+
+function acceptedFingerprints(sliceId) {
+  const raw = ACCEPTED[sliceId]
+  if (!Array.isArray(raw)) return []
+  return raw.filter(usableFingerprint).map(normFingerprint)
+}
+
+// The gate's violations split against the slice's accepted fingerprints:
+// `open` still block, `matched` are accepted, `unmatched` are accepted
+// fingerprints no measured violation carries (drift: renamed, moved, fixed). (PURE)
+function splitViolations(q, accepted) {
+  const keys = new Set(accepted.map(fpKey))
+  const violations = ((q && q.violations) || []).filter(v => !!v && typeof v === 'object')
+  const matched = violations.filter(v => keys.has(fpKey(normFingerprint(v))))
+  const open = violations.filter(v => !keys.has(fpKey(normFingerprint(v))))
+  const seen = new Set(matched.map(v => fpKey(normFingerprint(v))))
+  return { open, matched, unmatched: accepted.filter(fp => !seen.has(fpKey(fp))) }
+}
+
+// A gate return the slice may FINISH on: a real PASS, or a measured FAIL whose
+// every violation is accepted. A gate that produced no JSON (summary_pass null)
+// is never acceptable — there is nothing to match against. (PURE)
+function gateAcceptable(q, accepted) {
+  if (!q || typeof q.summary_pass !== 'boolean') return false
+  const s = splitViolations(q, accepted)
+  if (s.open.length) return false
+  return q.summary_pass === true || s.matched.length > 0
+}
+
 // The ONE writer of state.quality and of the quality-gate event. Every
 // measurement — stage R's gate, the re-measure before a fix-loop escalation,
 // each verify attempt — lands here, so the sidecar's quality block is always
@@ -234,19 +296,29 @@ function qualityDetail(v, violations) {
 // One verifier return (or a null one) reduced to the fields the sidecar keeps.
 // The head falls back to the slice's own so a failed dispatch still names the
 // tree it was asked about. (PURE)
-function measurementOf(v, fallbackHead) {
+function measurementOf(v, state) {
   const q = v ? v.quality : null
-  const violations = ((q && q.violations) || []).length
-  const head_sha = (v && v.head_sha) || fallbackHead || null
-  return { status: qualityStatus(q), detail: qualityDetail(v, violations), head_sha, tree_sha: v ? v.tree_sha : null, violations }
+  const s = splitViolations(q, state.accepted)
+  const head_sha = (v && v.head_sha) || state.commits.head || null
+  return { status: qualityStatus(q), detail: qualityDetail(v, s.open.length), head_sha, tree_sha: v ? v.tree_sha : null, violations: s.open.length, accepted: s.matched.map(withNumbers), unmatched: s.unmatched }
+}
+
+// Announced once per dispatch: an acceptance that matches nothing accepts
+// nothing, and silence would hide the drift until the gate fails again.
+function recordUnmatchedAcceptances(slice, state, unmatched) {
+  if (!unmatched.length || state.unmatchedAnnounced) return
+  state.unmatchedAnnounced = true
+  state.events.push({ scope: slice.id, type: 'decision', payload: { summary: `accepted fingerprint(s) matched no measured violation: ${unmatched.map(describeFp).join(', ')} (stale, renamed, or already refactored)`, rationale: 'an acceptance that matches nothing accepts nothing; it is announced so the drift is diagnosable', reversibility: 'n/a' } })
 }
 
 const shortSha = (sha) => String(sha || 'unknown').slice(0, 7)
 
 function stampQuality(slice, state, v, role) {
-  const m = measurementOf(v, state.commits.head)
-  state.quality = { ...m, measured_at: role }
-  state.events.push({ scope: slice.id, type: 'quality-gate', payload: { summary: `measured at ${role} on ${shortSha(m.head_sha)}: ${m.violations} violation(s)`, status: m.status, violations: m.violations, head_sha: m.head_sha, tree_sha: m.tree_sha, stage: role } })
+  const m = measurementOf(v, state)
+  const accepted = m.accepted.length ? { accepted: m.accepted } : {}
+  state.quality = { status: m.status, detail: m.detail, head_sha: m.head_sha, tree_sha: m.tree_sha, measured_at: role, violations: m.violations, ...accepted }
+  state.events.push({ scope: slice.id, type: 'quality-gate', payload: { summary: `measured at ${role} on ${shortSha(m.head_sha)}: ${m.violations} violation(s), ${m.accepted.length} accepted`, status: m.status, violations: m.violations, accepted: m.accepted.length, head_sha: m.head_sha, tree_sha: m.tree_sha, stage: role } })
+  recordUnmatchedAcceptances(slice, state, m.unmatched)
 }
 
 // Tests + quality + head from one verifier return, recorded BEFORE the result
@@ -608,19 +680,54 @@ function escId(sliceId, trigger) {
   return round === 1 ? base : `${base}:${round}`
 }
 
-// `content` is `{title, context, question, options}`, grouped into one
-// parameter object because those four always travel together (one prompt's
-// worth of copy), whereas `slice` and `trigger` each drive a different part
-// of the id.
+// `content` is `{title, context, question, options, violations?}`, grouped into
+// one parameter object because those travel together (one prompt's worth of
+// copy), whereas `slice` and `trigger` each drive a different part of the id.
+// `violations` rides only on quality-gate-block records: the open, unaccepted
+// fingerprints, so the controller accepts BY ESCALATION ID (redispatch.py
+// accept-violations) instead of transcribing prose.
 function esc(slice, trigger, content) {
-  const { title, context, question, options } = content
-  return {
+  const { title, context, question, options, violations } = content
+  const record = {
     id: escId(slice.id, trigger),
     trigger, title, context, question,
     options: options && options.length ? options : [{ label: 'Proceed with the recommended default', detail: context, recommended: true }],
     if_unanswered: 'pause this slice; continue all independent slices',
     status: 'OPEN',
+    ...(Array.isArray(violations) ? { violations } : {}),
   }
+  const round = escRound(slice.id, trigger)
+  return settleAnswered(round > MAX_ESC_ROUNDS ? nonTerminating(record, trigger, round) : record)
+}
+
+// By construction escId mints an id no answer holds; a truncated answers map
+// (an earlier round's key dropped) can still produce one that does. Returning
+// it ANSWERED keeps persist-slice from re-opening a settled question.
+function settleAnswered(record) {
+  const answer = (A.answers || {})[record.id]
+  return answer ? { ...record, status: 'ANSWERED', answer } : record
+}
+
+// The third round of one trigger on one slice: run 20260908's j1 raised
+// quality-gate-block three times on the same four accepted violations and
+// would have gone on forever. The id still advances (so an answer can land),
+// but the ask changes to the three things a controller can actually do.
+function nonTerminating(record, trigger, round) {
+  return {
+    ...record,
+    title: `non-terminating: same ${trigger} after ${round - 1} answered rounds — ${record.title}`,
+    context: `${record.context}\n\nThis slice has raised ${trigger} ${round - 1} time(s) and each was answered, and the same trigger fired again: re-dispatching with another prose answer is provably non-terminating for this trigger.`,
+    options: nonTerminatingOptions(trigger),
+  }
+}
+
+function nonTerminatingOptions(trigger) {
+  const gate = trigger === 'quality-gate-block'
+  return [
+    { label: 'Accept the residual and close the slice mechanically', detail: `${controllerActs}${gate ? 'record the acceptance by escalation id (redispatch.py accept-violations --from-escalation <this id> --all), rebuild the args (redispatch.py args) and re-dispatch with slice.entry {stage: "verify", head} — the accepted fingerprints then stop blocking the gate' : 'answer this id with the explicit acceptance and re-dispatch with slice.entry {stage: "verify", head}; a residual the loop cannot close mechanically leaves the slice ESCALATED'}.`, recommended: gate },
+    { label: 'Drop the slice', detail: `${controllerActs}exclude the slice from the re-dispatched wave and record the drop. The loop drops nothing by itself.`, recommended: !gate },
+    { label: 'Leave the slice ESCALATED', detail: `${controllerActs}take no further work from it and never hand-write a DONE sidecar to close it — a DONE without the wave's own verification is the one record this loop must never carry.` },
+  ]
 }
 
 function escalated(slice, state, record) {
@@ -897,6 +1004,8 @@ function initSliceState(slice) {
     // Controller orders and the residual carried in by a re-entry (empty on a
     // plain dispatch); see seedEntryState.
     orders: [], entryResidual: [],
+    // The slice's usable accepted-violation fingerprints (see ACCEPTED).
+    accepted: acceptedFingerprints(slice.id),
     review: { confirmed: 0, refuted: 0, evidence_failed: 0, fix_rounds: 0, residual: [], open: [] },
     tests: null, quality: { status: 'SKIPPED', detail: 'not reached' },
     // Package tags for the files that exist right now: the review round's
@@ -1363,9 +1472,11 @@ function buildReviewSummary(reviewParts) {
   return review
 }
 
-function buildGateViolations(gateStatus, gate) {
-  if (gateStatus !== 'FAIL' || !gate) return []
-  return (gate.quality.violations || []).map((v, i) => ({ id: `qg-${i}`, severity: 'P1', category: 'quality-gate', file: v.file || '-', line: 0, claim: `${v.metric} ${v.value} > threshold ${v.threshold} in ${v.function || v.file}`, evidence: { quote: JSON.stringify(v) }, remedy: 'behavior-preserving refactor (extract method, guard clauses, parameter object)', confidence: 'high', outside_diff: false }))
+// The OPEN (unaccepted) gate violations as P1 findings for the fix loop; each
+// carries its fingerprint so an escalation can list it for acceptance by id.
+function buildGateViolations(gate, state) {
+  if (!gate) return []
+  return splitViolations(gate.quality, state.accepted).open.map((v, i) => ({ id: `qg-${i}`, severity: 'P1', category: 'quality-gate', file: v.file || '-', line: 0, claim: `${v.metric} ${v.value} > threshold ${v.threshold} in ${v.function || v.file}`, evidence: { quote: JSON.stringify(v) }, remedy: 'behavior-preserving refactor (extract method, guard clauses, parameter object)', confidence: 'high', outside_diff: false, violation: withNumbers(v) }))
 }
 
 // The gate-only verifier dispatch, shared by stage R and the pre-escalation
@@ -1387,7 +1498,7 @@ async function stageReviewGate(slice, state, plan) {
     () => dispatchGate(slice, state, 'gate'),
   ])
   const review = buildReviewSummary(reviewParts)
-  const gateViolations = buildGateViolations(qualityStatus(gate && gate.quality), gate)
+  const gateViolations = buildGateViolations(gate, state)
   stampQuality(slice, state, gate, 'gate')
   state.reviewersCount = reviewers.length
   return { review, gateViolations }
@@ -1398,7 +1509,7 @@ async function stageReviewGate(slice, state, plan) {
 async function stageGateOnly(slice, state) {
   guard(slice, state)
   const gate = await dispatchGate(slice, state, 'gate')
-  const gateViolations = buildGateViolations(qualityStatus(gate && gate.quality), gate)
+  const gateViolations = buildGateViolations(gate, state)
   stampQuality(slice, state, gate, 'gate')
   state.reviewersCount = 0
   return { review: { findings: [], summary: 're-entry at fix: no fresh review; the open set is the controller\'s orders plus the measured gate violations' }, gateViolations }
@@ -1436,7 +1547,9 @@ function recordSkippedRemeasure(slice, state, e) {
 async function fixLoopEscalation(slice, state, ctx) {
   state.review.open = ctx.open
   await remeasureGate(slice, state)
-  return { stop: escalated(slice, state, esc(slice, ctx.trigger, ctx.content)) }
+  const violations = ctx.open.filter(f => f.category === 'quality-gate' && f.violation).map(f => f.violation)
+  const content = ctx.trigger === 'quality-gate-block' ? { ...ctx.content, violations } : ctx.content
+  return { stop: escalated(slice, state, esc(slice, ctx.trigger, content)) }
 }
 
 // One fix-loop round: optional batched verification (tier 3), a fix dispatch,
@@ -1527,8 +1640,14 @@ async function maybePolish(slice, state) {
 
 // Stage Z helpers — verification-outcome predicates and terminal builders.
 
-function verifyPassed(v) {
-  return !!(v && v.suite.passed && qualityStatus(v.quality) === 'PASS')
+function verifyAcceptable(v, state) {
+  return !!(v && v.suite.passed && gateAcceptable(v.quality, state.accepted))
+}
+
+function verifyDetail(v, state) {
+  const s = splitViolations(v.quality, state.accepted)
+  const tail = v.quality.detail ? ` — ${v.quality.detail}` : ''
+  return `suite: ${v.suite.summary}; quality: ${qualityStatus(v.quality)} (summary_pass=${String(v.quality.summary_pass)}, ${s.open.length} open, ${s.matched.length} accepted${tail})`
 }
 
 function verifySuiteFailed(v) {
@@ -1537,10 +1656,10 @@ function verifySuiteFailed(v) {
 
 function verificationFailedEscalation(slice, state, v) {
   const trigger = verifySuiteFailed(v) ? 'review-block' : 'quality-gate-block'
-  const detail = v
-    ? `suite: ${v.suite.summary}; quality: ${qualityStatus(v.quality)} (summary_pass=${String(v.quality.summary_pass)}${v.quality.detail ? ` — ${v.quality.detail}` : ''})`
-    : 'verifier dispatch failed terminally'
-  return escalated(slice, state, esc(slice, trigger, { title: 'verification failed', context: detail, question: 'Verification cannot pass automatically. Guide, accept, or drop?', options: reentryOptions(trigger) }))
+  const detail = v ? verifyDetail(v, state) : 'verifier dispatch failed terminally'
+  const gateBlock = !!v && trigger === 'quality-gate-block'
+  const violations = gateBlock ? splitViolations(v.quality, state.accepted).open.map(withNumbers) : undefined
+  return escalated(slice, state, esc(slice, trigger, { title: 'verification failed', context: detail, question: 'Verification cannot pass automatically. Guide, accept, or drop?', options: reentryOptions(trigger), violations }))
 }
 
 async function runDebugFix(slice, state, plan, v) {
@@ -1555,7 +1674,7 @@ async function stageVerify(slice, state, plan) {
     const v = await dispatch(slice, state, `verify:${attempt + 1}`, verifyPrompt(slice, state),
       { agentType: 'spec-loop:verifier', schema: VERIFY_RESULT, model: 'haiku', effort: 'low' })
     recordVerification(slice, state, v, `verify:${attempt + 1}`)
-    if (verifyPassed(v)) return doneResult(slice, state, 'DONE')
+    if (verifyAcceptable(v, state)) return doneResult(slice, state, 'DONE')
     if (attempt === 0 && verifySuiteFailed(v)) { await runDebugFix(slice, state, plan, v); continue }
     return verificationFailedEscalation(slice, state, v)
   }
@@ -1685,10 +1804,32 @@ function recordCapOverride(slice, state) {
   state.events.push({ scope: slice.id, type: 'agent-cap-override', payload: { tier: state.review_tier, default_cap: base, effective_cap: cap } })
 }
 
+// Every supplied acceptance is announced at slice start — the usable set, each
+// discarded entry, and keys naming no slice of the wave — so an acceptance is
+// never inferable only from a gate that stopped blocking.
+function recordAcceptances(slice, state) {
+  const raw = ACCEPTED[slice.id]
+  if (Array.isArray(raw)) announceAcceptances(slice, state, raw)
+  recordUnmatchedAcceptanceKeys(slice, state)
+}
+
+function announceAcceptances(slice, state, raw) {
+  state.events.push({ scope: slice.id, type: 'decision', payload: { summary: `${state.accepted.length} accepted violation fingerprint(s) supplied for ${slice.id}: ${state.accepted.map(describeFp).join(', ') || 'none usable'}`, rationale: 'controller-recorded acceptances (redispatch.py accept-violations); matched violations stop blocking the gate and are listed under quality.accepted', reversibility: 'moderate' } })
+  raw.filter(fp => !usableFingerprint(fp)).forEach(fp => state.events.push({ scope: slice.id, type: 'decision', payload: { summary: `accepted violation fingerprint ${JSON.stringify(fp)} discarded: a fingerprint is {metric, file, function|null} with no wildcard`, rationale: 'a metric-wide or wildcard acceptance would also accept a NEW breach the fix introduced', reversibility: 'n/a' } }))
+}
+
+function recordUnmatchedAcceptanceKeys(slice, state) {
+  const ids = A.slices.map(s => s.id)
+  const unmatched = Object.keys(ACCEPTED).filter(k => !ids.includes(k))
+  if (!unmatched.length || slice.id !== ids[0]) return
+  state.events.push({ scope: slice.id, type: 'decision', payload: { summary: `accepted violation keys naming no slice of this wave, accepting nothing: ${unmatched.join(', ')}`, rationale: 'the map is keyed by slice id; a key matching none of the dispatched slices reaches no gate', reversibility: 'n/a' } })
+}
+
 async function runSlice(slice) {
   const state = initSliceState(slice)
   recordCapOverride(slice, state)
   recordUnmatchedOverrides(slice, state)
+  recordAcceptances(slice, state)
   try {
     return await runStages(slice, state)
   } catch (e) {
