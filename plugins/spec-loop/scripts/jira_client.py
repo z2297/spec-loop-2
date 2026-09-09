@@ -357,6 +357,40 @@ def adf_to_text(node):
     return "\n\n".join(blocks).strip()
 
 
+ADF_VERSION = 1
+
+
+def _adf_text_paragraph(line):
+    """One ADF paragraph node for one line of plain text.
+
+    An empty line becomes a paragraph with NO `content` key: an ADF
+    `text` node whose `text` is the empty string is invalid and makes
+    Jira reject the whole document."""
+    if not line:
+        return {"type": "paragraph"}
+    return {"type": "paragraph",
+            "content": [{"type": "text", "text": line}]}
+
+
+def text_to_adf(text):
+    """Wrap plain text in a minimal Atlassian Document Format document,
+    one paragraph per line.
+
+    Verified against Atlassian's REST v3 addComment operation (fetched
+    2026-09-09): POST /rest/api/3/issue/{issueIdOrKey}/comment takes
+    `body` as an ADF DOCUMENT OBJECT ({"type": "doc", "version": 1,
+    "content": [...]}), never a plain string; a string body fails only
+    against real Jira, which CI cannot catch.
+
+    Deliberately minimal -- no marks, no lists, no headings. The bodies
+    rendered by jira_intake.render_comment are plain text whose first
+    line carries the visible dedupe marker, and that marker must survive
+    verbatim into adf_to_text on read-back."""
+    lines = (text or "").split("\n")
+    return {"type": "doc", "version": ADF_VERSION,
+            "content": [_adf_text_paragraph(line) for line in lines]}
+
+
 ISSUE_FIELDS = ("summary", "description", "status", "issuetype")
 AC_FIELD_NAME = "acceptance criteria"
 AC_HEADING_RE = re.compile(

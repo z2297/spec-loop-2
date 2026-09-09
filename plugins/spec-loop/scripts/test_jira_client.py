@@ -431,6 +431,62 @@ class TestAdfToText(unittest.TestCase):
         self.assertIn("x", jc.adf_to_text(adf(node)))
 
 
+class TestTextToAdf(unittest.TestCase):
+    """Verified against Atlassian's REST v3 addComment operation
+    (fetched 2026-09-09): `body` is an ADF DOCUMENT OBJECT, never a
+    plain string. Getting this wrong only fails against real Jira,
+    which CI cannot catch, so the shape is pinned here."""
+
+    def test_the_envelope_is_a_versioned_doc(self):
+        doc = jc.text_to_adf("hello")
+        self.assertEqual(doc["type"], "doc")
+        self.assertEqual(doc["version"], 1)
+
+    def test_one_paragraph_per_line(self):
+        doc = jc.text_to_adf("one\ntwo")
+        self.assertEqual(len(doc["content"]), 2)
+        self.assertEqual(
+            doc["content"][0],
+            {"type": "paragraph",
+             "content": [{"type": "text", "text": "one"}]})
+
+    def test_a_blank_line_is_a_paragraph_with_no_content_key(self):
+        # An ADF text node with an empty `text` string is invalid and
+        # Jira rejects the whole document, so a blank line must not be
+        # represented as an empty text node.
+        doc = jc.text_to_adf("a\n\nb")
+        self.assertEqual(doc["content"][1], {"type": "paragraph"})
+
+    def test_no_text_node_is_ever_empty(self):
+        doc = jc.text_to_adf("a\n\n\nb")
+        for block in doc["content"]:
+            for node in block.get("content") or []:
+                self.assertTrue(node["text"])
+
+    def test_empty_text_yields_a_single_empty_paragraph(self):
+        self.assertEqual(
+            jc.text_to_adf(""), {"type": "doc", "version": 1,
+                                 "content": [{"type": "paragraph"}]})
+
+    def test_none_is_treated_as_empty(self):
+        self.assertEqual(len(jc.text_to_adf(None)["content"]), 1)
+
+    def test_the_document_is_json_serializable(self):
+        json.dumps(jc.text_to_adf("a\nb"))
+
+    def test_markup_characters_are_carried_verbatim(self):
+        doc = jc.text_to_adf("[spec-loop-intake:decision:abc123abc123]")
+        self.assertEqual(
+            doc["content"][0]["content"][0]["text"],
+            "[spec-loop-intake:decision:abc123abc123]")
+
+    def test_a_body_round_trips_back_through_the_reader(self):
+        body = "heading [spec-loop-intake:decision:0123456789ab]\nline two"
+        self.assertIn(
+            "[spec-loop-intake:decision:0123456789ab]",
+            jc.adf_to_text(jc.text_to_adf(body)))
+
+
 def issue_bean(**fields):
     """A minimal Jira IssueBean fixture; kwargs override the `fields` object."""
     base = {"summary": "Add a widget",
