@@ -88,7 +88,7 @@ ESCALATIONS_MD = "escalations.md"
 # declines to fire is invisible narrowing.
 ESCALATION_EVENTS = ("escalation-opened", "escalation-answered")
 DECISION_EVENTS = ("decision", "deferred", "council-verdict", "quality-gate",
-                   "integration-check", "phase5-gate", "refactor-radius")
+                   "integration-check", "phase5-gate", "refactor-radius", "re-entry")
 
 DECISIONS_HEADER = ("# Decisions log\n\n"
                     "Rendered from the run's events; append-only, and nothing "
@@ -229,27 +229,39 @@ def validate_escalation(record, label):
         return ["%s must be a JSON object" % label]
     errors = []
     if not _nonempty_str(record.get("id")):
-        errors.append("%s: id must be a non-empty string "
-                      "(\"<slice-id>:<trigger>[:<round>]\")" % label)
+        errors.append("%s: id must be a non-empty string (\"<slice-id>:<trigger>[:<round>]\")" % label)
     if record.get("trigger") not in ESCALATION_TRIGGERS:
-        errors.append("%s: trigger must be one of %s (found %r)"
-                      % (label, "/".join(ESCALATION_TRIGGERS), record.get("trigger")))
+        triggers = "/".join(ESCALATION_TRIGGERS)
+        errors.append("%s: trigger must be one of %s (found %r)" % (label, triggers, record.get("trigger")))
     if not _nonempty_str(record.get("title")):
         errors.append("%s: title must be a non-empty string" % label)
     if not _nonempty_str(record.get("question")):
         errors.append("%s: question must be a non-empty string" % label)
     if "status" in record and record.get("status") not in ESCALATION_STATUSES:
-        errors.append("%s: status must be OPEN or ANSWERED (found %r)"
-                      % (label, record.get("status")))
-    options = record.get("options")
+        errors.append("%s: status must be OPEN or ANSWERED (found %r)" % (label, record.get("status")))
+    errors += _violations_errors(record, label)
+    errors += _option_errors(record.get("options"), label)
+    return errors
+
+
+def _violations_errors(record, label):
+    """The OPTIONAL violations[] of a quality-gate-block record must be a list (PURE)."""
+    if "violations" not in record or isinstance(record.get("violations"), list):
+        return []
+    return ["%s: violations must be a list of {metric, file, function} objects "
+        "(the open, unaccepted gate violations)" % label]
+
+
+def _option_errors(options, label):
+    """options must be a non-empty list of labelled objects (PURE)."""
     if not isinstance(options, list) or not options:
-        errors.append("%s: options must be a non-empty list" % label)
-    else:
-        for position, option in enumerate(options):
-            if not isinstance(option, dict):
-                errors.append("%s: option %d must be a JSON object" % (label, position + 1))
-            elif not _nonempty_str(option.get("label")):
-                errors.append("%s: option %d has no label" % (label, position + 1))
+        return ["%s: options must be a non-empty list" % label]
+    errors = []
+    for position, option in enumerate(options):
+        if not isinstance(option, dict):
+            errors.append("%s: option %d must be a JSON object" % (label, position + 1))
+        elif not _nonempty_str(option.get("label")):
+            errors.append("%s: option %d has no label" % (label, position + 1))
     return errors
 
 
@@ -404,6 +416,9 @@ def _critique_and_quality_errors(body):
     quality = body.get("quality")
     if isinstance(quality, dict) and quality.get("status") not in QUALITY_STATUSES:
         errors.append("quality.status must be one of %s (found %r)" % ("/".join(QUALITY_STATUSES), quality.get("status")))
+    if isinstance(quality, dict) and "accepted" in quality and not isinstance(quality["accepted"], list):
+        found = type(quality["accepted"]).__name__
+        errors.append("quality.accepted must be a list of {metric, file, function} objects (found %s)" % found)
     return errors
 
 
@@ -1060,21 +1075,62 @@ def open_escalations(run_dir):
         if not _nonempty_str(escalation_id):
             continue
         if event.get("type") == "escalation-opened":
-            state[escalation_id] = {
-                "record": payload,
-                "answered": payload.get("status") == "ANSWERED",
-            }
+            state[escalation_id] = {"record": payload, "answered": payload.get("status") == "ANSWERED"}
         elif event.get("type") == "escalation-answered" and escalation_id in state:
             state[escalation_id]["answered"] = True
 
+    return _open_records(state)
+
+
+def _open_records(state):
+    """The still-open records of an id->{record, answered} map, each marked
+    `repeat_of` when it repeats an answered one (PURE)."""
+    answered = [entry["record"] for entry in state.values() if entry["answered"]]
     records = []
     for entry in state.values():
         if entry["answered"]:
             continue
-        record = dict(entry["record"])
-        record["status"] = "OPEN"
+        record = dict(entry["record"], status="OPEN")
+        repeat = _repeat_of(record, answered)
+        if repeat:
+            record["repeat_of"] = repeat
         records.append(record)
     return records
+
+
+def _violation_fingerprint(violation):
+    """(metric, file, function) — the value-free identity of one gate violation (PURE)."""
+    function = violation.get("function")
+    return (str(violation.get("metric")), str(violation.get("file")),
+            "" if function is None else str(function))
+
+
+def _repeat_key(record):
+    """What makes two escalations the SAME question: the set of open violation
+    fingerprints when the record carries them (a quality-gate-block whose
+    context differs only in suite counts still repeats), else the collapsed
+    context and question (PURE)."""
+    violations = record.get("violations")
+    if isinstance(violations, list) and violations:
+        fingerprints = [_violation_fingerprint(v) for v in violations if isinstance(v, dict)]
+        return ("violations", tuple(sorted(fingerprints)))
+    context = " ".join(str(record.get("context") or "").split())
+    question = " ".join(str(record.get("question") or "").split())
+    return ("text", context, question)
+
+
+def _repeat_of(record, answered):
+    """The id of an already-answered record of the same scope and trigger that
+    this open record repeats, or None (PURE). Run 20260908's j1 re-raised the
+    same four violations three times; the controller re-adjudicated each in
+    prose because nothing said "you have answered this"."""
+    scope = str(record.get("id") or "").split(":")[0]
+    key = _repeat_key(record)
+    for prior in answered:
+        same_scope = str(prior.get("id") or "").split(":")[0] == scope
+        if same_scope and prior.get("trigger") == record.get("trigger") and _repeat_key(prior) == key:
+            return prior.get("id")
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -1117,30 +1173,66 @@ def _derived_gate_events(body):
     return events
 
 
-def _escalation_events(body, ts, already_opened):
+def answered_escalations(events):
+    """{id: escalation-answered payload} over a run's events, last write wins (PURE)."""
+    answers = {}
+    for event in events:
+        payload = event.get("payload")
+        if event.get("type") != "escalation-answered" or not isinstance(payload, dict):
+            continue
+        if _nonempty_str(payload.get("id")):
+            answers[payload["id"]] = payload
+    return answers
+
+
+def _settle_answered_records(body, answers):
+    """Embedded records whose id the log has already answered come back
+    ANSWERED, carrying the recorded answer (PURE; returns a new body).
+
+    A re-dispatched slice's result can still embed the record an earlier
+    dispatch raised, with the status it had when the wave built it. The log is
+    written after that snapshot, so it is the truth about answers: run
+    20260908's DONE j1 sidecar rendered "OPEN" for a question answered hours
+    earlier because nothing reconciled the two.
+    """
+    records = body.get("escalations")
+    if not isinstance(records, list) or not answers:
+        return body
+    return dict(body, escalations=[_settle_record(record, answers) for record in records])
+
+
+def _settle_record(record, answers):
+    """One embedded record, rewritten ANSWERED when the log holds its answer (PURE)."""
+    answer = answers.get(record.get("id")) if isinstance(record, dict) else None
+    if not answer or record.get("status") == "ANSWERED":
+        return record
+    return dict(record, status="ANSWERED", answer=answer.get("answer"), answered_at=answer.get("answered_at"))
+
+
+def _escalation_events(body, ts, already_opened, answered_ids=frozenset()):
     """escalation-opened/answered for the sidecar's embedded EscalationRecords.
 
     Always derived, whichever channel supplied the rest: a workflow reports
     escalations in `escalations[]`, not as events, so skipping these when a rich
     `events[]` is present would leave escalations.md and `open-escalations`
     empty — the human would never see the question. Records already carried as
-    `escalation-opened` in the returned array are skipped here by id.
+    `escalation-opened` in the returned array are skipped here by id, and so is
+    any id the log has already ANSWERED: re-opening it asked the human the same
+    question twice (run 20260908, j1:quality-gate-block:2).
     """
     events = []
     for record in body.get("escalations") or []:
-        if record.get("id") in already_opened:
+        if record.get("id") in already_opened or record.get("id") in answered_ids:
             continue
         events.append(("escalation-opened", record))
         if record.get("status") == "ANSWERED" and record.get("answer"):
-            events.append(("escalation-answered", {
-                "id": record.get("id"),
-                "answer": record.get("answer"),
-                "answered_at": record.get("answered_at") or ts,
-            }))
+            answered_at = record.get("answered_at") or ts
+            payload = {"id": record.get("id"), "answer": record.get("answer"), "answered_at": answered_at}
+            events.append(("escalation-answered", payload))
     return events
 
 
-def _slice_events(body, ts, slice_id):
+def _slice_events(body, ts, slice_id, answered_ids=frozenset()):
     """Every (scope, type, payload) one persisted SliceResult contributes.
 
     The workflow's returned `events[]` wins when present: it carries the rich
@@ -1154,12 +1246,10 @@ def _slice_events(body, ts, slice_id):
     emitted as an event on either path: the sidecar is its single home.
     """
     returned = _returned_events(body, slice_id)
-    events = returned or [(slice_id, event_type, payload)
-                          for event_type, payload in _derived_gate_events(body)]
-    already_opened = {payload.get("id") for scope, event_type, payload in returned
-                      if event_type == "escalation-opened"}
-    events += [(slice_id, event_type, payload)
-               for event_type, payload in _escalation_events(body, ts, already_opened)]
+    scoped = lambda pairs: [(slice_id, event_type, payload) for event_type, payload in pairs]  # noqa: E731
+    events = returned or scoped(_derived_gate_events(body))
+    opened = [payload.get("id") for scope, event_type, payload in returned if event_type == "escalation-opened"]
+    events += scoped(_escalation_events(body, ts, set(opened), answered_ids))
     return events
 
 
@@ -1173,7 +1263,8 @@ def persist_slice(run_dir, body, wave, ts):
     if errors:
         raise SidecarInvalid(errors)
 
-    body = dict(body)
+    answers = answered_escalations(read_events(run_dir))
+    body = _settle_answered_records(dict(body), answers)
     if wave is not None:
         body["wave"] = wave  # the controller knows which wave collected this
     slice_id = body["id"]
@@ -1182,7 +1273,7 @@ def persist_slice(run_dir, body, wave, ts):
     _atomic_write(sidecar_path, json.dumps(body, ensure_ascii=False, indent=2) + "\n")
 
     emitted = []
-    for scope, event_type, payload in _slice_events(body, ts, slice_id):
+    for scope, event_type, payload in _slice_events(body, ts, slice_id, frozenset(answers)):
         append_event(run_dir, build_event(ts, scope, event_type, payload))
         emitted.append(event_type)
 

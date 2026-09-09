@@ -68,11 +68,14 @@ jobs:
         # Scope: deterministic control flow only. The real Workflow-host seam
         # is NOT covered here — see the test file's own honest-limit header.
         run: |
-          # Four modules now: the fourth covers a partially usable radius ceiling, split out because
-          # slice_wave_radius.test.mjs sits at the 300-line class_lines ceiling.
+          # Six modules now: the fourth covers a partially usable radius ceiling, the fifth the
+          # measurement/re-entry path and the sixth accepted violations, each split out because its sibling sits at the 300-line
+          # class_lines ceiling.
           out=$(node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs \
                             plugins/spec-loop/scripts/slice_wave_radius.test.mjs \
                             plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs \
+                            plugins/spec-loop/scripts/slice_wave_reentry.test.mjs \
+                            plugins/spec-loop/scripts/slice_wave_accepted.test.mjs \
                             plugins/spec-loop/scripts/slice_wave_replan.test.mjs 2>&1)
           rc=$?
           echo "$out"
@@ -80,8 +83,8 @@ jobs:
             echo "FAIL: wave harness exited non-zero (rc=$rc)"; exit "$rc"
           fi
           ran=$(printf '%s\n' "$out" | sed -n 's/^# tests \([0-9][0-9]*\).*/\1/p')
-          if [ "${ran:-0}" -lt 71 ]; then
-            echo "FAIL: only ${ran:-0} wave harness tests ran (expected >= 71)"; exit 1
+          if [ "${ran:-0}" -lt 100 ]; then
+            echo "FAIL: only ${ran:-0} wave harness tests ran (expected >= 100)"; exit 1
           fi
 
       - name: Install Claude Code CLI

@@ -80,9 +80,17 @@ prose about the slice.
                 "over_scope": { "flag": false, "reason": null } },  // OPTIONAL; absent ≠ flag:false
   "tasks_completed": 4,
   "review": { "confirmed": 1, "refuted": 2, "evidence_failed": 0,
-              "fix_rounds": 1, "residual": ["P2: ..."] },
-  "tests": { "command": "...", "result": "...", "scope": "full", "tree_sha": "<sha>" },
-  "quality": { "status": "PASS | FAIL | SKIPPED", "detail": "..." },
+              "fix_rounds": 1, "residual": ["P2: ..."],
+              "open": [ /* FINDINGs still open at an ESCALATED return; [] on DONE */ ] },
+  "tests": { "command": "...", "result": "...", "passed": true, "scope": "full", "tree_sha": "<sha>" },
+  "quality": { "status": "PASS | FAIL | SKIPPED", "detail": "...",
+               "head_sha": "<sha>", "tree_sha": "<sha>",             // the tree it measured
+               "measured_at": "gate | gate:remeasure | verify:<N>",  // the role that measured it
+               "violations": 0,     // OPEN (unaccepted) violations at the last measurement
+               "accepted": [ /* OPTIONAL: matched accepted fingerprints, each with value/threshold */ ] },
+                                    // ALWAYS the last measurement taken, on every exit path.
+                                    // FAIL + accepted is the shape of human-accepted debt:
+                                    // the status enum is not widened
   "split": { "children": [{ "goal": "...", "files": [], "subsystems": [],
                             "internal_deps": [] }] },   // SPLIT only; ≥2 children (a 1-child
                                                         // split is not a split); 1-based sibling indices
@@ -109,6 +117,10 @@ prose about the slice.
   "context": "<what the loop was doing and why it cannot decide>",
   "question": "<the precise question>",
   "options": [{ "label": "...", "detail": "...", "recommended": true }],
+  "violations": [{ "metric": "class_lines", "file": "...", "function": null,
+                   "value": 536, "threshold": 300 }],   // OPTIONAL, quality-gate-block only:
+                                                        // the OPEN (unaccepted) violations, so
+                                                        // an acceptance is made BY ID
   "if_unanswered": "pause this slice; continue all independent slices",
   "status": "OPEN | ANSWERED",
   "opened": "<ISO-8601 UTC>",
@@ -135,6 +147,55 @@ plan prompt — because the only useful answer is a human trade-off between ship
 refactor with the feature and splitting it out. An absent or unmeasured ratio never raises
 it: not-measured proceeds and is recorded as null.
 
+## Re-entry — `slices[].entry` on a re-dispatch
+
+A re-dispatch of an ESCALATED slice used to replay the whole pipeline: plan → critique →
+tasks from the slice GOAL, with the answer injected into whichever prompt read its trigger.
+Run 20260908-jira-intake showed the cost — the planner found the goal already delivered on
+the branch, escalated "already implemented", and the controller's fix orders reached no
+agent. The controller now hands the wave an `entry` per escalated slice, built from that
+slice's sidecar by `redispatch.py args`:
+
+```jsonc
+{ "stage": "plan | review | fix | verify",   // the FIRST stage this dispatch runs
+  "head": "<sha>",                           // sidecar commits.head (required)
+  "fix_rounds": 1, "review_tier": 2,         // optional carry-overs from the sidecar
+  "tasks_completed": 4, "critique": { },     // optional carry-overs
+  "residual": ["P2: ..."],                   // optional; carried into review.residual
+  "orders": ["<claim>" | FINDING] }          // optional (review/fix): appended to the open set
+```
+
+| stage | plan/critique/tasks | review ∥ gate | fix loop | verify |
+|---|---|---|---|---|
+| (no entry) | run (or replay) | run | run | run |
+| `plan` | run; the planner is told what `base..head` already delivers and may return zero tasks (critique is skipped on an empty plan) | run | run | run |
+| `review` | skipped | fresh review of `base..head` under the next `round<N>` tag | run (+ orders) | run |
+| `fix` | skipped | gate only, no fresh review | run (orders + measured gate violations) | run |
+| `verify` | skipped | skipped | skipped | run |
+
+An entry whose `stage` is not one of the four or whose `head` is missing returns an
+`internal-error` escalation titled `unusable slice.entry` with ZERO dispatches — a mistyped
+entry silently running the full pipeline is the trap this exists to close. Orders become
+FINDING-shaped items with ids `order-<N>` that bypass the blocking bar. The wave emits one
+`re-entry` event per entered slice. Choose the stage from the human's answer: acceptance →
+`verify`; fix orders → `fix`; "review it again" → `review`; task-blocked ambiguity → `plan`.
+A slice with an entry never benefits from the workflow journal (its first prompt differs),
+so `resumeFromRunId` is passed only when the tool reports `resume.advised`.
+
+**Accepted violations.** The wave arg `accepted_violations: {"<slice-id>": [{metric, file,
+function|null}]}` lists the gate violations a human accepted for a slice. It is CUMULATIVE like
+`answers` (rebuilt from `decision` events of `kind: "accepted-violations"` by `redispatch.py
+args`), unlike the single-dispatch `agent_cap_overrides`. Matching is by fingerprint — metric,
+normalized path, function or null — never by measured value and never by wildcard (`*` entries
+are discarded and announced): a metric-wide acceptance would also accept a NEW breach the fix
+introduced. A gate whose every violation is accepted stops blocking (the slice can finish DONE)
+while the sidecar's `quality.status` stays FAIL and `quality.accepted[]` lists what was accepted;
+a `summary_pass: null` gate is never acceptable. A fingerprint matching no measured violation is
+announced once as a `decision` (drift). `run_state.py open-escalations` adds `repeat_of:
+"<id>"` to a record that repeats an already-answered one of the same slice and trigger (same
+violation set, or same context and question), and the wave reframes the third round of one
+trigger as `non-terminating:` (MAX_ESC_ROUNDS = 2) with controller-only options.
+
 ## `events.jsonl` — the machine channel
 
 Append-only, one JSON object per line, written only by the controller
@@ -151,7 +212,7 @@ Event types (extensible; consumers ignore unknown types): `run-created`,
 `escalation-answered`, `wave-dispatched`, `wave-collected`, `slice-merged`,
 `integration-check`, `split-ingested`, `quality-gate`, `review-summary`,
 `agent-dispatch`, `phase5-gate`, `publish-choice`, `agent-cap-override`,
-`refactor-radius`.
+`refactor-radius`, `re-entry`.
 
 Pinned payload facts (consumers rely on these; everything else is
 best-effort):
@@ -248,6 +309,18 @@ best-effort):
 - **`escalation-opened`** payload is the full EscalationRecord, including its
   `id`; `escalation-answered` pairs by that `id` (never by scope alone — one
   slice can open several).
+
+- **`quality-gate`** payload: `{summary, status, violations, accepted, head_sha, tree_sha, stage}`
+  (`violations` = open, `accepted` = matched accepted fingerprints),
+  emitted on EVERY measurement — stage R (`stage: "gate"`), the re-measure before a
+  fix-loop escalation (`gate:remeasure`) and each verify attempt (`verify:<N>`) — so a
+  reader can tell which tree a count describes. Run 20260908's payload was `{status,
+  violations}` with no sha, which is why six stale blocks were undetectable from events.
+  `run_metrics.first_pass_rate` reads the first event per scope and is unchanged; the
+  measurement and failure counts grow with the extra events.
+- **`re-entry`** payload: `{summary, stage, head, fix_rounds, orders[]}`, emitted once per
+  dispatch of a slice that carried `slices[].entry` (see Re-entry above). Rendered into
+  `decisions-log.md`.
 
 `run_metrics.py` reads events.jsonl as its primary channel. `decisions-log.md`
 and `escalations.md` are rendered from the same objects for humans; they have

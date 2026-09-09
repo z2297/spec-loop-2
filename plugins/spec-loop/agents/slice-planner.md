@@ -54,7 +54,10 @@ boundaries. That map is where decomposition gets locked in; prefer focused files
 codebase's existing shape rather than restructuring it.
 
 Then the tasks. **Maximum 10** — a slice that needs more is a slice that should have been
-`SPLIT`. Each task carries:
+`SPLIT`. A prompt marked RE-ENTRY names commits the branch already carries: read that diff
+first, plan only the remaining work, and return `PLANNED` with an empty task list when the
+goal is fully delivered — zero tasks is a legal return there, never a reason to invent work.
+Each task carries:
 
 - **Files** — exact `Create:` / `Modify: path:lines` / `Test:` paths. No globs, no "the
   relevant module".

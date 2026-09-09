@@ -190,7 +190,8 @@ const PIPELINE = {
   "task:t1": TASK_DONE,
   "review:full": { verdict: "APPROVE_WITH_FINDINGS", findings: [P0_FINDING], aspects_examined: {}, summary: "one finding" },
   "gate": VERIFY_PASS,
-  "fix:1": { status: "DONE", touched_files: ["a.py"], addressed: ["r0-f1"], refuted: [], commits: { base: "0000000", head: "f1x0000" } },
+  "fix:1": { status: "DONE", touched_files: ["a.py"], addressed: ["r0-f1"], refuted: [], commits: { base: "0000000", head: "f1x0000" },
+    tests_added: [{ finding_id: "r0-f1", test: "test_the_claim_holds" }, { finding_id: "order-0", test: "test_the_order_holds" }] },
   "re-review:1": { verdicts: [{ finding_id: "r0-f1", verdict: "ADDRESSED" }], new_breakage: [] },
   "verify:1": VERIFY_PASS,
 };
@@ -294,6 +295,7 @@ function mappedPipeline(map) {
     const role = label.slice(label.indexOf(":") + 1);
     if (!(role in map)) throw new Error("slice_wave_harness: no mock return mapped to role " + role);
     seen.push({ label, prompt });
+    if (map[role] instanceof Error) throw map[role];
     return map[role];
   };
   return { seen, agent };

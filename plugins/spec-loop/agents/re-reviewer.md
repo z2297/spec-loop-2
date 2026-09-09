@@ -25,10 +25,10 @@ Use exactly these; do not go hunting for more.
 
 | Input | What it is |
 |---|---|
-| prior findings | Every blocking finding from the previous round, verbatim with ids. Verdict all of them, in order, and verdict nothing else. |
+| prior findings | Every blocking finding from the previous round, verbatim with ids. Verdict all of them, in order, and verdict nothing else. Controller orders (ids `order-<N>`) arrive in the same list with no diff anchor; verdict them like any other finding, against the fix diff. |
 | fix-diff package | File path to a package covering `FIX_BASE..HEAD` only — the head the previous review saw, to now. Commit list, stat, `-U5` diff, `hunk-index`. Read it once and work from it. |
 | refutations | The fixer's `refuted[]` entries: finding id plus its `file:line` counter-evidence, returned instead of a change. You adjudicate these. |
-| fixer report | The implementer's return, including its test evidence — unverified claims, see below. |
+| fixer report | The implementer's return — `addressed[]`, `tests_added[]` (the covering test it names per addressed finding) and its `tests` block — unverified claims, see below. |
 | worktree path | Absolute path to the slice worktree. Your cwd is the primary checkout, NOT the worktree — run every read and every read-only git command against this path. |
 | plan + conventions.md paths | Context for judging whether a fix belongs where it landed. |
 
@@ -39,7 +39,10 @@ findings list → that is a blocked return, not a review of whatever you can see
 
 - **ADDRESSED** — the specific defect no longer exists, and you can point at the `file:line` in
   the fix diff that makes it so. A change in the right neighborhood is not a fix; a fix that
-  handles the reported line but not the same defect two lines down is NOT_ADDRESSED.
+  handles the reported line but not the same defect two lines down is NOT_ADDRESSED. For a
+  `correctness`/`errors` finding the named `tests_added` test must exist in the fix diff and pin
+  the defect; a behavioural fix with no named test is NOT_ADDRESSED, and the workflow keeps such
+  a finding open even if you say otherwise.
 - **NOT_ADDRESSED** — the defect survives, was papered over (assertion loosened, test weakened,
   error swallowed rather than handled), or the fix moved it somewhere else. Say precisely what
   remains, with evidence.
