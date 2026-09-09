@@ -191,3 +191,85 @@ def _parse_json(raw, what):
         raise JiraError(
             f"Jira returned a {what} response that is not valid JSON ({exc})"
         ) from exc
+
+
+_ADF_MAX_DEPTH = 50
+_ADF_INLINE_TYPES = ("text", "hardBreak", "mention", "inlineCard")
+
+
+def _adf_inline(node, depth):
+    """Render a node's inline children into one string: 'text' nodes render
+    their text, 'hardBreak' becomes a newline, 'mention' renders
+    '@<attrs.text>' (attrs.text already carries the '@' from Jira, so it is
+    used as-is when present), and 'inlineCard' renders attrs.url. Any other
+    child falls back to _adf_block, so an inline node with an unexpected
+    nested block still contributes its rendered text instead of vanishing."""
+    if depth > _ADF_MAX_DEPTH:
+        return ""
+    parts = []
+    for child in node.get("content") or []:
+        ctype = child.get("type")
+        if ctype == "text":
+            parts.append(child.get("text", ""))
+        elif ctype == "hardBreak":
+            parts.append("\n")
+        elif ctype == "mention":
+            text = (child.get("attrs") or {}).get("text", "")
+            parts.append(text if text.startswith("@") else f"@{text}")
+        elif ctype == "inlineCard":
+            parts.append((child.get("attrs") or {}).get("url", ""))
+        else:
+            parts.append(_adf_block(child, depth + 1))
+    return "".join(parts)
+
+
+def _adf_block(node, depth):
+    """Render one ADF block node to plain text, guarded against pathological
+    nesting: at depth > 50 this returns '' and stops recursing rather than
+    blowing the stack. 'heading' renders '#' * level + ' ' + text;
+    'bulletList' / 'orderedList' items render '- ' / '1. '-prefixed lines
+    joined by a single newline; 'listItem' joins its own blocks with a single
+    newline; 'codeBlock' renders fenced with triple backticks; anything else
+    (including an unrecognized future node type) either renders as inline
+    text, when every child is an inline node type, or as a blank-line-joined
+    sequence of child blocks otherwise -- so an unknown node type still
+    renders its children instead of disappearing."""
+    if depth > _ADF_MAX_DEPTH:
+        return ""
+    ntype = node.get("type")
+    if ntype == "heading":
+        level = (node.get("attrs") or {}).get("level", 1)
+        return "#" * level + " " + _adf_inline(node, depth)
+    if ntype == "codeBlock":
+        return "```\n" + _adf_inline(node, depth) + "\n```"
+    if ntype == "listItem":
+        blocks = [_adf_block(child, depth + 1) for child in node.get("content") or []]
+        return "\n".join(blocks)
+    if ntype == "bulletList":
+        items = [_adf_block(child, depth + 1) for child in node.get("content") or []]
+        return "\n".join(f"- {item}" for item in items)
+    if ntype == "orderedList":
+        items = [_adf_block(child, depth + 1) for child in node.get("content") or []]
+        return "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))
+    if ntype == "paragraph":
+        return _adf_inline(node, depth)
+    children = node.get("content") or []
+    if children and all(c.get("type") in _ADF_INLINE_TYPES for c in children):
+        return _adf_inline(node, depth)
+    rendered = [_adf_block(child, depth + 1) for child in children]
+    return "\n\n".join(rendered)
+
+
+def adf_to_text(node):
+    """Render an Atlassian Document Format document (or None, or a plain
+    string -- both occur in the wild in Jira description/comment bodies) to
+    plain, review-readable text. This renderer is LOSSY BY DESIGN: it
+    produces text for humans to read, not a document that round-trips back
+    into ADF. Blocks are joined with a blank line and the result is
+    stripped of trailing whitespace."""
+    if not node:
+        return ""
+    if isinstance(node, str):
+        return node
+    blocks = [_adf_block(child, 0) for child in node.get("content") or []]
+    return "\n\n".join(blocks).strip()

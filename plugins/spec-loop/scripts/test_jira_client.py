@@ -295,5 +295,91 @@ class TestSecretsNeverLeak(unittest.TestCase):
                 jc._http_get("https://acme.atlassian.net/x", self.EMAIL, self.TOKEN)
         self._assert_clean(str(ctx.exception))
 
+
+def adf(*content):
+    """Wrap block nodes in a minimal ADF document (hand-built fixture helper)."""
+    return {"type": "doc", "version": 1, "content": list(content)}
+
+
+def para(text):
+    """A single-text-node ADF paragraph."""
+    return {"type": "paragraph", "content": [{"type": "text", "text": text}]}
+
+
+def heading(level, text):
+    """An ADF heading of the given level."""
+    return {"type": "heading", "attrs": {"level": level},
+            "content": [{"type": "text", "text": text}]}
+
+
+def bullets(*items):
+    """An ADF bulletList of single-paragraph list items."""
+    return {"type": "bulletList",
+            "content": [{"type": "listItem", "content": [para(t)]} for t in items]}
+
+
+class TestAdfToText(unittest.TestCase):
+    def test_none_renders_as_empty(self):
+        self.assertEqual(jc.adf_to_text(None), "")
+
+    def test_a_plain_string_passes_through(self):
+        self.assertEqual(jc.adf_to_text("already text"), "already text")
+
+    def test_a_single_paragraph(self):
+        self.assertEqual(jc.adf_to_text(adf(para("hello world"))), "hello world")
+
+    def test_two_paragraphs_are_blank_line_separated(self):
+        self.assertEqual(jc.adf_to_text(adf(para("one"), para("two"))), "one\n\ntwo")
+
+    def test_a_heading_renders_with_hash_markers(self):
+        self.assertEqual(jc.adf_to_text(adf(heading(2, "Acceptance Criteria"))),
+                         "## Acceptance Criteria")
+
+    def test_bullets_render_as_dash_lines(self):
+        self.assertEqual(jc.adf_to_text(adf(bullets("a", "b"))), "- a\n- b")
+
+    def test_ordered_list_items_are_numbered(self):
+        node = {"type": "orderedList",
+                "content": [{"type": "listItem", "content": [para("a")]},
+                            {"type": "listItem", "content": [para("b")]}]}
+        self.assertEqual(jc.adf_to_text(adf(node)), "1. a\n2. b")
+
+    def test_a_hard_break_becomes_a_newline(self):
+        node = {"type": "paragraph", "content": [
+            {"type": "text", "text": "a"},
+            {"type": "hardBreak"},
+            {"type": "text", "text": "b"}]}
+        self.assertEqual(jc.adf_to_text(adf(node)), "a\nb")
+
+    def test_a_code_block_is_fenced(self):
+        node = {"type": "codeBlock", "attrs": {"language": "python"},
+                "content": [{"type": "text", "text": "x = 1"}]}
+        self.assertEqual(jc.adf_to_text(adf(node)), "```\nx = 1\n```")
+
+    def test_a_mention_renders_with_an_at_sign(self):
+        node = {"type": "paragraph", "content": [
+            {"type": "mention", "attrs": {"text": "@Mia", "id": "5b1"}}]}
+        self.assertEqual(jc.adf_to_text(adf(node)), "@Mia")
+
+    def test_an_inline_card_renders_its_url(self):
+        node = {"type": "paragraph", "content": [
+            {"type": "inlineCard", "attrs": {"url": "https://example.com/x"}}]}
+        self.assertEqual(jc.adf_to_text(adf(node)), "https://example.com/x")
+
+    def test_an_unknown_node_type_still_renders_its_children(self):
+        node = {"type": "someFutureNode", "content": [
+            {"type": "text", "text": "kept"}]}
+        self.assertEqual(jc.adf_to_text(adf(node)), "kept")
+
+    def test_an_empty_document_renders_as_empty(self):
+        self.assertEqual(jc.adf_to_text(adf()), "")
+
+    def test_a_deeply_nested_structure_does_not_recurse_forever(self):
+        node = para("x")
+        for _ in range(30):
+            node = {"type": "blockquote", "content": [node]}
+        self.assertIn("x", jc.adf_to_text(adf(node)))
+
+
 if __name__ == "__main__":
     unittest.main()
