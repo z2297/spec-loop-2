@@ -668,6 +668,30 @@ def _errors_for_comment_entry(entry, index):
     return []
 
 
+def _duplicate_marker_errors(comments):
+    """Error strings for any marker that appears on more than one entry of
+    the SAME batch. (PURE)
+
+    plan_comments dedupes each entry against the CARD's comment list; it
+    cannot see an entry's siblings, so two identical entries in one batch
+    would both plan as not-already-posted and both POST, and
+    _comment_results' by_marker map would then collapse the two writes
+    onto one comment id. Refusing the batch here means the duplicate is
+    caught before the first request is issued, so nothing partial is left
+    on the card."""
+    first_seen = {}
+    errors = []
+    for index, item in enumerate(comments):
+        marker = item["marker"]
+        if marker not in first_seen:
+            first_seen[marker] = index
+            continue
+        errors.append(
+            "comments[%d].marker duplicates comments[%d].marker (%s)"
+            % (index, first_seen[marker], marker))
+    return errors
+
+
 def validate_comment_entries(comments):
     """Error strings for the comment entries to post; [] means valid.
     (PURE)
@@ -678,13 +702,22 @@ def validate_comment_entries(comments):
     the body is what the POST writes: the body carrying the marker is
     exactly what makes the marker written by, and only by, the call
     that performs the write. An entry whose body lost its marker would
-    post a comment no re-run could ever dedupe, so it is refused."""
+    post a comment no re-run could ever dedupe, so it is refused.
+
+    A marker repeated ACROSS entries of one batch is refused too. The
+    card-list dedupe in plan_comments compares each entry to the card and
+    never to its siblings, so an in-batch duplicate would post the same
+    comment twice on a live card. Refusing the whole batch here, before
+    any credential is read or any request is issued, is the only point at
+    which that is still a no-op."""
     if not isinstance(comments, list) or not comments:
         return ["comments must be a non-empty list of comment entries"]
     errors = []
     for index, item in enumerate(comments):
         errors += _errors_for_comment_entry(item, index)
-    return errors
+    if errors:
+        return errors
+    return _duplicate_marker_errors(comments)
 
 
 def plan_comments(comments, existing_bodies):
@@ -695,7 +728,10 @@ def plan_comments(comments, existing_bodies):
     list read back over the network is the dedupe gate, never a local
     file, so a fresh clone cannot double-post. A marker already visible
     in any existing body means the comment is already there, and the
-    result says so explicitly rather than reporting a silent success."""
+    result says so explicitly rather than reporting a silent success.
+    In-batch duplicates are not this function's job --
+    validate_comment_entries refuses them before the lane ever gets
+    here."""
     haystack = "\n".join(existing_bodies)
     return [{"kind": item["kind"], "marker": item["marker"],
              "already_posted": item["marker"] in haystack}

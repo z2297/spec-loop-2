@@ -936,6 +936,25 @@ class TestCommentEntryValidation(unittest.TestCase):
             "2026-09-09T00:00:00Z")
         self.assertEqual(jc.validate_comment_entries(built), [])
 
+    def test_the_same_marker_twice_in_one_batch_is_refused(self):
+        errors = jc.validate_comment_entries([entry(), entry()])
+        self.assertTrue(any("duplicates" in e for e in errors), errors)
+        self.assertTrue(any("comments[1]" in e for e in errors), errors)
+
+    def test_a_duplicate_is_refused_even_with_differing_kinds(self):
+        # The marker is the dedupe key; a differing `kind` must not
+        # smuggle a second copy of the same marker past the gate.
+        duplicate = entry(kind="understanding")
+        self.assertNotEqual(
+            jc.validate_comment_entries([entry(), duplicate]), [])
+
+    def test_distinct_markers_in_one_batch_stay_valid(self):
+        other = "[spec-loop-intake:open-question:aaaaaaaaaaaa]"
+        second = entry(
+            kind="open-question", marker=other, body="q %s" % other)
+        self.assertEqual(
+            jc.validate_comment_entries([entry(), second]), [])
+
 
 class TestPlanComments(unittest.TestCase):
     """The dedupe gate is the card's own comment list, read back over the
@@ -1154,6 +1173,62 @@ class TestRunCommentLane(unittest.TestCase):
                 jc.run_comment_lane("ABC-1", self.entries, True)
         get.assert_not_called()
         post.assert_not_called()
+
+
+class TestADuplicateBatchIsRefusedBeforeAnyPost(unittest.TestCase):
+    """The blocking j3 defect: two identical entries in ONE batch used to
+    pass validation, plan as not-already-posted (plan_comments only
+    dedupes against the CARD), issue two POSTs, and then collapse into a
+    single id in _comment_results. The batch is now refused before the
+    first request."""
+
+    TS = "2026-09-09T00:00:00Z"
+
+    def _entry(self, kind, payload):
+        """One entry built by the REAL producer, so this test cannot
+        drift from the marker/body shape jira_intake actually emits."""
+        import jira_intake as intake
+        return {
+            "kind": kind, "gap_id": "-",
+            "marker": intake.comment_marker("ABC-1", kind, payload),
+            "body": intake.render_comment(
+                "ABC-1", kind, payload, self.TS)}
+
+    def _identical_pair(self):
+        item = self._entry("understanding", "same payload")
+        return [dict(item), dict(item)]
+
+    def test_validation_rejects_the_duplicate_pair(self):
+        errors = jc.validate_comment_entries(self._identical_pair())
+        self.assertNotEqual(errors, [])
+
+    def test_the_armed_lane_issues_zero_posts_for_a_duplicate_pair(self):
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, ENV, clear=True))
+            get = stack.enter_context(mock.patch.object(jc, "_http_get"))
+            post = stack.enter_context(mock.patch.object(jc, "_http_post"))
+            with self.assertRaises(jc.JiraError):
+                jc.run_comment_lane("ABC-1", self._identical_pair(), True)
+        post.assert_not_called()
+        get.assert_not_called()
+
+    def test_a_distinct_pair_still_posts_each_exactly_once(self):
+        entries = [self._entry("understanding", "one"),
+                   self._entry("decision", "two")]
+        responses = [b'{"id": "1"}', b'{"id": "2"}']
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, ENV, clear=True))
+            stack.enter_context(mock.patch.object(
+                jc, "_http_get", return_value=card_with([])))
+            post = stack.enter_context(mock.patch.object(
+                jc, "_http_post", side_effect=responses))
+            payload = jc.run_comment_lane("ABC-1", entries, True)
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(payload["posted_count"], 2)
+        self.assertEqual(
+            [r["comment_id"] for r in payload["results"]], ["1", "2"])
 
 
 class TestNormalizedRecord(unittest.TestCase):
