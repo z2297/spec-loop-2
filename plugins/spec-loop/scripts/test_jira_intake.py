@@ -164,6 +164,40 @@ def make_record(**over):
     return base
 
 
+class TestRecordValidation(unittest.TestCase):
+    """The record file is authored by the calling model, not handed straight
+    from jira_client.py, so it gets the same hand-rolled validation the
+    refinement already gets. Untrusted shape, not just untrusted text."""
+
+    def test_a_well_formed_record_has_no_errors(self):
+        self.assertEqual(intake.validate_record(make_record()), [])
+
+    def test_a_non_dict_record_is_an_error(self):
+        for bad in ([1, 2], "ABC-123", None, 7):
+            with self.subTest(bad=bad):
+                self.assertEqual(intake.validate_record(bad),
+                                 ["record must be a JSON object"])
+
+    def test_each_missing_required_field_is_named(self):
+        for field in intake.RECORD_KEYS:
+            with self.subTest(field=field):
+                record = make_record()
+                del record[field]
+                self.assertEqual(intake.validate_record(record),
+                                 ["record is missing required key: %s" % field])
+
+    def test_rendering_refuses_a_malformed_record(self):
+        for bad in ([1, 2], {"key": "ABC-123"}):
+            with self.subTest(bad=bad), self.assertRaises(intake.IntakeError):
+                intake.render_artifact(bad, make_refinement(),
+                                       "2026-09-09T00:00:00Z")
+
+    def test_building_comments_refuses_a_malformed_record(self):
+        with self.assertRaises(intake.IntakeError):
+            intake.build_comment_bodies([1, 2], make_refinement(),
+                                        "2026-09-09T00:00:00Z")
+
+
 class TestCommentMarker(unittest.TestCase):
     """j3 dedupes by reading this marker back off the card, so it must be
     stable across runs and must NOT contain the timestamp."""

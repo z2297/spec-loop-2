@@ -103,6 +103,8 @@ IMPACT_ORDER = {"high": 0, "medium": 1, "low": 2}
 LOGGED_AS_VALUES = ("decision", "open-question")
 REFINEMENT_KEYS = ("description", "acceptance_criteria", "risks", "gaps",
                    "injection_findings", "answers")
+RECORD_KEYS = ("key", "web_url", "summary", "description", "acceptance_criteria",
+               "acceptance_criteria_source", "status", "issue_type", "comments")
 
 
 def _errors_for_gap(gap, index):
@@ -219,6 +221,30 @@ def validate_refinement(refinement):
     return errors
 
 
+def validate_record(record):
+    """Return a list of human-readable error strings; [] means valid. (PURE)
+
+    The record file is authored by the calling model rather than piped
+    straight from jira_client.py, so its shape is a contract to check, not
+    an assumption. Field ORDER follows RECORD_KEYS so the message is stable."""
+    if not isinstance(record, dict):
+        return ["record must be a JSON object"]
+    return ["record is missing required key: %s" % key
+            for key in RECORD_KEYS if key not in record]
+
+
+def _require_valid_record(record):
+    """Raise IntakeError unless the record satisfies validate_record.
+
+    Fail closed at the same choke point the refinement is checked at, so a
+    malformed record produces the documented refusal shape instead of a
+    traceback."""
+    errors = validate_record(record)
+    if errors:
+        raise IntakeError(
+            "refusing to render from an invalid record: " + "; ".join(errors))
+
+
 def _gap_sort_key(gap):
     """Total, deterministic ordering key for one gap. (PURE)"""
     return (0 if gap.get("blocking") else 1,
@@ -299,6 +325,7 @@ def build_comment_bodies(record, refinement, ts):
 
     Refuses a partial render: an invalid refinement raises rather than
     emitting some comments, mirroring jira_client.py's no-half-resolve rule."""
+    _require_valid_record(record)
     errors = validate_refinement(refinement)
     if errors:
         raise IntakeError(
@@ -436,6 +463,7 @@ def _render_payload(args):
     """Build the success payload for `render`. Writes nothing."""
     record = _load_json(args.record, "record")
     refinement = _load_json(args.refinement, "refinement")
+    _require_valid_record(record)
     key = validate_issue_key(record.get("key"))
     return {"ok": True,
             "issue_key": key,
