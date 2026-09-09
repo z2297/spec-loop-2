@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
-"""Read-only Jira Cloud issue reader (standard library only).
+"""Jira Cloud issue reader with one bounded comment writer (stdlib only).
 
 Resolves one Jira issue key to a normalized JSON record (key, summary,
 description, acceptance criteria, status, issue type, web url, and the full
-paginated comment list), authenticating with HTTP Basic auth built from
-JIRA_BASE_URL / JIRA_EMAIL / JIRA_API_TOKEN. It never mutates a Jira issue.
+paginated comment list), and -- only when explicitly armed -- ADDS COMMENTS
+to one issue. Authenticates with HTTP Basic auth built from JIRA_BASE_URL /
+JIRA_EMAIL / JIRA_API_TOKEN.
 
 Design decisions:
   - Mirrors plugins/spec-loop/scripts/pr_resolver.py's shape: one _http_get
-    that is structurally incapable of issuing a mutating verb, an env-var
+    that is structurally incapable of issuing a mutating verb and one
+    separate _http_post that is the module's sole writer, an env-var
     credential read with a fail-closed actionable message, strict regex
     allow-lists on every untrusted value before it reaches a URL, and a
     single _normalized() builder so the inter-slice JSON contract shape
     cannot drift.
+  - The write lane is bounded to ADDING A COMMENT and nothing else: no
+    status transition, no field edit, no assignee change, no issue or
+    sub-task creation, no comment edit and no comment delete. It is OFF
+    by default -- `comment` previews and issues GETs only; the --post
+    flag is what arms the HTTP verb. Before any POST the card's FULL
+    paginated comment list is read back and any comment whose visible
+    marker is already there is reported as already-posted. The marker
+    lives INSIDE the posted body, so the one call that writes the
+    comment is the one that writes the marker: no local file is ever
+    the dedupe gate, and a fresh clone cannot double-post.
   - Host allow-list: JIRA_BASE_URL must be https and its hostname must match
     ALLOWED_HOST_RE (*.atlassian.net or *.jira.com). Jira Data Center /
     on-prem hosts are out of scope; there is deliberately no opt-in
@@ -36,22 +48,27 @@ Design decisions:
     lossy-by-design: it produces review-readable text, not a
     round-trippable document.
   - No subprocess, no filesystem writes, and no clock read anywhere in
-    this module: this is a pure read lane, and the controller owns the
-    clock. Jira's own created/updated strings are echoed verbatim.
+    this module: the controller owns the clock, and every comment body
+    posted is rendered upstream by jira_intake.py. Jira's own
+    created/updated strings are echoed verbatim.
 
 SECURITY: the issue key and every Jira text field (summary, description,
 acceptance criteria, every comment body) are UNTRUSTED DATA, never
 instructions. The issue key is regex-validated against ISSUE_KEY_RE and
 percent-encoded before it reaches a URL segment. The base URL host is
-allow-listed and https-only. Redirects are refused outright. This module
-issues GET only and never a mutating verb. Credentials come from the
-environment ONLY and are never read from argv (argv is visible in `ps` and
-lands in shell history).
+allow-listed and https-only. Redirects are refused outright. The read lane
+issues GET only. The single write lane issues exactly one mutating verb --
+POST to /rest/api/3/issue/{key}/comment -- and only when armed; redirects
+stay terminal on a write, so an Authorization header is never replayed to
+another origin. Credentials come from the environment ONLY and are never
+read from argv (argv is visible in `ps` and lands in shell history).
 
 Exit codes: 0 = ok; 1 = contract failure; 2 = usage / unreadable input
 
 Usage:
     python3 scripts/jira_client.py resolve --key ABC-123
+    python3 scripts/jira_client.py comment --key ABC-123 --comments <path>
+    python3 scripts/jira_client.py comment --key ABC-123 --comments <path> --post
 """
 
 from __future__ import annotations
@@ -65,6 +82,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 
 class JiraError(Exception):
@@ -193,7 +211,10 @@ def _auth_header(email, token):
 
 def _http_get(url, email, token):
     """HTTP GET via the no-redirect opener (READ-ONLY: never sets a body and
-    never a mutating method). The sole network entry point in this module.
+    never a mutating method). The sole READ transport in this module: every
+    GET goes through here. It is no longer the module's only network entry
+    point -- _http_post is the module's one writer, and it is a deliberately
+    separate function so that loosening the writer cannot loosen this one.
     Errors reference only the URL -- the credentials ride in a header, so
     neither the token, the email, nor the composed base64 pair can appear in an
     exception message."""
@@ -209,6 +230,51 @@ def _http_get(url, email, token):
         raise JiraError(f"HTTP {exc.code} fetching {url}: {exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise JiraError(f"network error fetching {url}: {exc.reason}") from exc
+
+
+def _http_post(url, email, token, payload):
+    """HTTP POST of one JSON `payload` object through the same
+    no-redirect opener. THE ONLY mutating entry point in this module.
+
+    Deliberately a SEPARATE function from _http_get rather than a
+    method parameter on it: the read lane's never-a-mutating-verb
+    guarantee is a structural property worth keeping, and loosening
+    _http_get would erase it.
+
+    Errors reference only the URL -- the credentials ride in a header,
+    so neither the token, the email, nor the composed base64 pair can
+    appear in an exception message. A 3xx is terminal (_NoRedirect), so
+    a write never replays its Authorization header or its body to
+    another origin."""
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    headers = {
+        "Authorization": _auth_header(email, token),
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    req = urllib.request.Request(
+        url, data=data, headers=headers, method="POST")
+    try:
+        with _OPENER.open(req, timeout=30) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise JiraError(
+            f"HTTP {exc.code} posting to {url}: {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise JiraError(
+            f"network error posting to {url}: {exc.reason}") from exc
+    except OSError as exc:
+        # urllib only wraps an OSError raised by h.request() into a
+        # URLError (see CPython's AbstractHTTPHandler.do_open); an
+        # OSError out of h.getresponse() or resp.read() -- e.g. a
+        # timeout while reading the response to a POST that has
+        # already landed on the card -- propagates unwrapped and would
+        # otherwise slip past the JiraError handling above, past
+        # execute_comment_plan's `except JiraError`, and past main()'s
+        # exit-1 JSON contract. Caught here, terminally, so every
+        # transport failure on the write path is a JiraError and can
+        # still be turned into a partial-batch disclosure.
+        raise JiraError(f"network error posting to {url}: {exc}") from exc
 
 
 def _parse_json(raw, what):
@@ -355,6 +421,40 @@ def adf_to_text(node):
         return node
     blocks = [_adf_block(child, 0) for child in node.get("content") or []]
     return "\n\n".join(blocks).strip()
+
+
+ADF_VERSION = 1
+
+
+def _adf_text_paragraph(line):
+    """One ADF paragraph node for one line of plain text.
+
+    An empty line becomes a paragraph with NO `content` key: an ADF
+    `text` node whose `text` is the empty string is invalid and makes
+    Jira reject the whole document."""
+    if not line:
+        return {"type": "paragraph"}
+    return {"type": "paragraph",
+            "content": [{"type": "text", "text": line}]}
+
+
+def text_to_adf(text):
+    """Wrap plain text in a minimal Atlassian Document Format document,
+    one paragraph per line.
+
+    Verified against Atlassian's REST v3 addComment operation (fetched
+    2026-09-09): POST /rest/api/3/issue/{issueIdOrKey}/comment takes
+    `body` as an ADF DOCUMENT OBJECT ({"type": "doc", "version": 1,
+    "content": [...]}), never a plain string; a string body fails only
+    against real Jira, which CI cannot catch.
+
+    Deliberately minimal -- no marks, no lists, no headings. The bodies
+    rendered by jira_intake.render_comment are plain text whose first
+    line carries the visible dedupe marker, and that marker must survive
+    verbatim into adf_to_text on read-back."""
+    lines = (text or "").split("\n")
+    return {"type": "doc", "version": ADF_VERSION,
+            "content": [_adf_text_paragraph(line) for line in lines]}
 
 
 ISSUE_FIELDS = ("summary", "description", "status", "issuetype")
@@ -551,6 +651,236 @@ def fetch_comments(base_url, email, token, key):
         f"pages for {key}; refusing a possibly-truncated comment history")
 
 
+COMMENT_MARKER_RE = re.compile(
+    r"^\[spec-loop-intake:(?:understanding|decision|open-question)"
+    r":[0-9a-f]{12}\]$")
+
+_COMMENT_ENTRY_KEYS = ("kind", "marker", "body")
+
+
+def _entry_field_errors(entry, where):
+    """Error strings for any of _COMMENT_ENTRY_KEYS on `entry` that is
+    missing or not a non-empty string. Extracted out of
+    _errors_for_comment_entry to keep that function's own cognitive
+    complexity down. (PURE)"""
+    return ["%s.%s must be a non-empty string" % (where, field)
+            for field in _COMMENT_ENTRY_KEYS
+            if not isinstance(entry.get(field), str) or not entry.get(field)]
+
+
+def _errors_for_comment_entry(entry, index):
+    """Error strings for ONE comment entry of the posting plan. (PURE)"""
+    where = "comments[%d]" % index
+    if not isinstance(entry, dict):
+        return ["%s must be an object" % where]
+    errors = _entry_field_errors(entry, where)
+    if errors:
+        return errors
+    if not COMMENT_MARKER_RE.fullmatch(entry["marker"]):
+        return ["%s.marker is not a spec-loop intake marker" % where]
+    if entry["marker"] not in entry["body"]:
+        return ["%s.body does not contain its own marker" % where]
+    return []
+
+
+def _duplicate_marker_errors(comments):
+    """Error strings for any marker that appears on more than one entry of
+    the SAME batch. (PURE)
+
+    plan_comments dedupes each entry against the CARD's comment list; it
+    cannot see an entry's siblings, so two identical entries in one batch
+    would both plan as not-already-posted and both POST, and
+    _comment_results' by_marker map would then collapse the two writes
+    onto one comment id. Refusing the batch here means the duplicate is
+    caught before the first request is issued, so nothing partial is left
+    on the card."""
+    first_seen = {}
+    errors = []
+    for index, item in enumerate(comments):
+        marker = item["marker"]
+        if marker not in first_seen:
+            first_seen[marker] = index
+            continue
+        errors.append(
+            "comments[%d].marker duplicates comments[%d].marker (%s)"
+            % (index, first_seen[marker], marker))
+    return errors
+
+
+def validate_comment_entries(comments):
+    """Error strings for the comment entries to post; [] means valid.
+    (PURE)
+
+    Entries come from jira_intake.py's `render` payload
+    ({"kind", "gap_id", "marker", "body"}); this module never builds a
+    marker of its own. The marker MUST appear inside the body, because
+    the body is what the POST writes: the body carrying the marker is
+    exactly what makes the marker written by, and only by, the call
+    that performs the write. An entry whose body lost its marker would
+    post a comment no re-run could ever dedupe, so it is refused.
+
+    A marker repeated ACROSS entries of one batch is refused too. The
+    card-list dedupe in plan_comments compares each entry to the card and
+    never to its siblings, so an in-batch duplicate would post the same
+    comment twice on a live card. Refusing the whole batch here, before
+    any credential is read or any request is issued, is the only point at
+    which that is still a no-op."""
+    if not isinstance(comments, list) or not comments:
+        return ["comments must be a non-empty list of comment entries"]
+    errors = []
+    for index, item in enumerate(comments):
+        errors += _errors_for_comment_entry(item, index)
+    if errors:
+        return errors
+    return _duplicate_marker_errors(comments)
+
+
+def plan_comments(comments, existing_bodies):
+    """Decide, per comment, whether it is already on the card. (PURE)
+
+    `existing_bodies` is the plain text of EVERY comment on the card,
+    from fetch_comments' full paginated sweep -- the card's own comment
+    list read back over the network is the dedupe gate, never a local
+    file, so a fresh clone cannot double-post. A marker already visible
+    in any existing body means the comment is already there, and the
+    result says so explicitly rather than reporting a silent success.
+    In-batch duplicates are not this function's job --
+    validate_comment_entries refuses them before the lane ever gets
+    here."""
+    haystack = "\n".join(existing_bodies)
+    return [{"kind": item["kind"], "marker": item["marker"],
+             "already_posted": item["marker"] in haystack}
+            for item in comments]
+
+
+def post_comment(base_url, creds, key, body):
+    """POST ONE comment to a Jira issue. THE SOLE WRITER in this plugin.
+
+    Bounded on purpose: this adds a comment and nothing else -- no status
+    transition, no field edit, no assignee change, no issue or sub-task
+    creation, no comment edit and no comment delete.
+
+    The dedupe marker lives INSIDE `body`, so the network call that
+    writes the comment is the same call that writes the marker. That is
+    the premark-must-be-written-inside-the-claim-that-does-the-write
+    rule: no local file can make a later run skip a comment that was
+    never actually posted, and a fresh clone cannot double-post.
+
+    Verified against Atlassian's REST v3 addComment operation (fetched
+    2026-09-09): the request body is {"body": <ADF document object>} and
+    success returns 201 with the created comment's `id`. A response
+    without an id is refused rather than reported as a confirmed write."""
+    email, token = creds
+    url = "%s/comment" % _issue_url(base_url, validate_issue_key(key))
+    raw = _http_post(url, email, token, {"body": text_to_adf(body)})
+    created = _parse_json(raw.decode("utf-8"), "created comment")
+    if not isinstance(created, dict):
+        created = {}
+    comment_id = str(created.get("id") or "")
+    if not comment_id:
+        raise JiraError(
+            "Jira accepted the comment POST for %s but returned no comment "
+            "id; refusing to report a write that cannot be confirmed" % key)
+    return comment_id
+
+
+def _partial_batch_error(key, posted, exc):
+    """Build the JiraError raised when a batch POST fails part-way through.
+
+    The batch itself is NOT atomic -- only each individual comment is
+    (see execute_comment_plan) -- so a failure after N comments have
+    already landed must say so: the card has already been mutated even
+    though the whole operation is being reported as failed. Names every
+    already-posted marker so the operator can tell exactly what
+    happened; re-running is a no-op for those markers because the
+    dedupe gate is the card's own comment list, read back over the
+    network."""
+    if not posted:
+        return JiraError(str(exc))
+    markers = ", ".join(item["marker"] for item in posted)
+    return JiraError(
+        "%s; %d comment(s) already posted to %s before the failure: "
+        "%s. Re-running is a no-op for them."
+        % (exc, len(posted), key, markers))
+
+
+def execute_comment_plan(base_url, creds, key, pending):
+    """POST each pending comment in order and return one result each.
+
+    Fail closed and atomic PER COMMENT: every entry was shape-validated
+    before any request was issued, and the FIRST failure propagates
+    immediately, so no later comment is posted. One comment is written
+    whole by one POST or not at all -- there is no partial body.
+
+    The BATCH is not atomic, though: a failure after some comments have
+    already posted still leaves those comments on the card. That partial
+    mutation is reported rather than swallowed -- see
+    _partial_batch_error -- because this is the plugin's first mutating
+    external call, and an undisclosed partial write is the one failure
+    mode that most needs surfacing."""
+    posted = []
+    for item in pending:
+        try:
+            comment_id = post_comment(base_url, creds, key, item["body"])
+        except JiraError as exc:
+            raise _partial_batch_error(key, posted, exc) from exc
+        posted.append({
+            "kind": item["kind"], "marker": item["marker"],
+            "status": "posted", "comment_id": comment_id})
+    return posted
+
+
+def _comment_results(comments, plan, posted):
+    """Merge the dedupe plan and the POST results into one ordered result
+    per requested comment. (PURE)"""
+    by_marker = {item["marker"]: item for item in posted}
+    statuses = {True: "already-posted", False: "would-post"}
+    results = []
+    for item, planned in zip(comments, plan):
+        marker = planned["marker"]
+        preview = {
+            "kind": item["kind"], "marker": marker,
+            "status": statuses[bool(planned["already_posted"])],
+            "comment_id": None}
+        results.append(by_marker.get(marker) or preview)
+    return results
+
+
+def run_comment_lane(key, comments, arm):
+    """Preview -- or, when armed, post -- the intake comments for ONE
+    issue, dedupe-gated.
+
+    POSTING IS OFF BY DEFAULT: with `arm` false this issues GETs only and
+    reports what it WOULD post, so the default path performs zero
+    writes; only an explicit opt-in arms the HTTP verb. Either way the
+    card's FULL paginated comment list is read back first, and any
+    comment whose visible marker is already there is reported as
+    already-posted rather than posted again or silently dropped.
+
+    Every entry is shape-validated BEFORE the first request, so a
+    refusal leaves nothing partial behind."""
+    resolved = validate_issue_key(key)
+    errors = validate_comment_entries(comments)
+    if errors:
+        raise JiraError(
+            "refusing to post from an invalid comment plan: "
+            + "; ".join(errors))
+    base_url, email, token = credentials()
+    existing = fetch_comments(base_url, email, token, resolved)
+    plan = plan_comments(comments, [c["body"] for c in existing])
+    done = [bool(entry["already_posted"]) for entry in plan]
+    pending = [item for item, seen in zip(comments, done) if not seen]
+    posted = []
+    if arm:
+        posted = execute_comment_plan(
+            base_url, (email, token), resolved, pending)
+    return {
+        "ok": True, "issue_key": resolved, "armed": bool(arm),
+        "posted_count": len(posted),
+        "already_posted_count": done.count(True),
+        "results": _comment_results(comments, plan, posted)}
+
+
 RECORD_FIELDS = ("key", "web_url", "summary", "description",
                  "acceptance_criteria", "acceptance_criteria_source",
                  "status", "issue_type", "comments")
@@ -601,22 +931,69 @@ def resolve_issue(key):
     })
 
 
+def _load_comments(path):
+    """Read the comment entries to post from a JSON file.
+
+    Accepts either a bare array of entries or the whole payload printed
+    by jira_intake.py render (its `comments` key). Any read or parse
+    failure is a usage error the caller can fix, not a contract
+    failure. The entries themselves are shape-checked later by
+    validate_comment_entries."""
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise JiraUsageError(
+            f"cannot read the comments file {path}: {exc}") from exc
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        raise JiraUsageError(
+            f"the comments file {path} is not valid JSON: {exc}") from exc
+    if isinstance(payload, dict):
+        return payload.get("comments")
+    return payload
+
+
 def build_parser():
-    """Build the CLI parser: one read-only subcommand, `resolve --key`. There
-    is deliberately no credential flag -- credentials are read from the
-    environment only, never from argv."""
+    """Build the CLI parser: a read-only `resolve --key` subcommand and a
+    bounded `comment` subcommand that previews by default and posts only
+    with `--post`. There is deliberately no credential flag on either --
+    credentials are read from the environment only, never from argv."""
     parser = argparse.ArgumentParser(
-        description="Read-only Jira Cloud issue reader.")
+        description="Jira Cloud issue reader with one bounded comment writer.")
     sub = parser.add_subparsers(dest="command", required=True)
     resolve = sub.add_parser(
         "resolve", help="Resolve one issue key to a normalized JSON record.")
     resolve.add_argument(
         "--key", required=True, help="Jira issue key, e.g. ABC-123.")
+
+    comment = sub.add_parser(
+        "comment",
+        help=("Preview the spec-loop intake comments for one issue -- or, "
+              "with --post, actually add them."))
+    comment.add_argument(
+        "--key", required=True, help="Jira issue key, e.g. ABC-123.")
+    comment.add_argument(
+        "--comments", required=True,
+        help=("path to a JSON file holding the `comments` array printed by "
+              "jira_intake.py render (or that whole payload object)"))
+    comment.add_argument(
+        "--post", action="store_true",
+        help=("ARM THE WRITE. Without this flag nothing is posted: the "
+              "lane issues GETs only and reports what it would post."))
     return parser
 
 
+def _dispatch(args):
+    """Run the requested subcommand and return the object to print."""
+    if args.command == "comment":
+        return run_comment_lane(
+            args.key, _load_comments(args.comments), args.post)
+    return resolve_issue(args.key)
+
+
 def main(argv=None):
-    """Parse args, resolve, print one JSON object. Exit 0 ok, 1 contract
+    """Parse args, dispatch, print one JSON object. Exit 0 ok, 1 contract
     failure, 2 usage / unreadable input. JiraUsageError is caught BEFORE
     JiraError: it subclasses JiraError, so the reverse order would collapse
     exit 2 into exit 1.
@@ -628,7 +1005,7 @@ def main(argv=None):
     to STDERR."""
     args = build_parser().parse_args(argv)
     try:
-        record = resolve_issue(args.key)
+        payload = _dispatch(args)
     except JiraUsageError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 2
@@ -636,7 +1013,7 @@ def main(argv=None):
         refusal = {"ok": False, "errors": [str(exc)]}
         print(json.dumps(refusal, ensure_ascii=False, indent=2))
         return 1
-    print(json.dumps(record, ensure_ascii=False, indent=2))
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
 

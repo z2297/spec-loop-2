@@ -107,6 +107,24 @@ RECORD_KEYS = ("key", "web_url", "summary", "description", "acceptance_criteria"
                "acceptance_criteria_source", "status", "issue_type", "comments")
 
 
+_ID_FORBIDDEN = ("\n", "\r")
+
+
+def _errors_for_id_newline(value, where):
+    """Error strings for an id containing a line break. (PURE)
+
+    risks[].id and gaps[].id are emitted inline into the artifact body
+    WITHOUT _neutralize_delimiters, so a multi-line id can put a third
+    line equal to '---' into the file and forge the front-matter
+    delimiter. An id is also a dict key in `answers` and a component of
+    comment_marker, so it is refused rather than rewritten."""
+    if not isinstance(value, str):
+        return []
+    if any(bad in value for bad in _ID_FORBIDDEN):
+        return ["%s.id must not contain a newline" % where]
+    return []
+
+
 def _errors_for_gap(gap, index):
     """Error strings for ONE gap entry. (PURE)"""
     where = "gaps[%d]" % index
@@ -116,6 +134,7 @@ def _errors_for_gap(gap, index):
     for field in ("id", "question"):
         if not isinstance(gap.get(field), str) or not gap.get(field):
             errors.append("%s.%s must be a non-empty string" % (where, field))
+    errors += _errors_for_id_newline(gap.get("id"), where)
     if gap.get("impact") not in IMPACT_ORDER:
         errors.append("%s.impact must be one of high|medium|low" % where)
     if not isinstance(gap.get("blocking"), bool):
@@ -132,6 +151,7 @@ def _errors_for_risk(risk, index):
     for field in ("id", "risk"):
         if not isinstance(risk.get(field), str) or not risk.get(field):
             errors.append("%s.%s must be a non-empty string" % (where, field))
+    errors += _errors_for_id_newline(risk.get("id"), where)
     if risk.get("severity") not in IMPACT_ORDER:
         errors.append("%s.severity must be one of high|medium|low" % where)
     return errors
@@ -400,7 +420,7 @@ ARTIFACT_SECTIONS = ("## 1. Refined description",
                      "## 2. Acceptance criteria",
                      "## 3. Risks",
                      "## 4. Gaps and answers",
-                     "## 5. Comment bodies (rendered, not posted)",
+                     "## 5. Comment bodies (rendered here; posted only on confirmation)",
                      "## 6. Untrusted-input findings")
 
 
@@ -510,8 +530,9 @@ def render_artifact(record, refinement, ts):
               for r in refinement["risks"]]
     lines += ["", ARTIFACT_SECTIONS[3], ""] + _gap_rows(refinement)
     lines += ["", ARTIFACT_SECTIONS[4], "",
-              "This slice posts nothing. Each body below is what "
-              "/spec-loop:jira-intake would post, marker included.", ""]
+              "This module renders and posts nothing. Each body below is "
+              "exactly what /spec-loop:jira-intake posts to the card, "
+              "marker included, once the human confirms.", ""]
     lines += _comment_blocks(comments)
     lines += ["", ARTIFACT_SECTIONS[5], ""]
     lines += (["- %s" % _neutralize_delimiters(f)

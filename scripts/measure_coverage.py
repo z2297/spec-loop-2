@@ -144,8 +144,8 @@ PER_FILE_FLOORS = {
     "scripts/dag.py": 94,                  # local 99.8% (2026-07-30) - 5
     "scripts/dashboard_launcher.py": 95,   # local 100% - 5
     "scripts/dashboard_server.py": 94,     # local 99.5% (2026-07-30) - 5
-    "scripts/jira_client.py": 93,          # local 98.8% (2026-09-08) - >=5 (CI py3.12 co_lines drift margin)
-    "scripts/jira_intake.py": 89,          # local 95.6% (2026-09-09) - >=5 (CI py3.12 co_lines drift margin)
+    "scripts/jira_client.py": 94,          # local 99.5% (2026-09-09) - >=5 (CI py3.12 co_lines drift margin)
+    "scripts/jira_intake.py": 91,          # local 96.2% (2026-09-09) - >=5 (CI py3.12 co_lines drift margin)
     "scripts/knowledge_graph.py": 81,      # local 86.5% (2026-07-30) - 5
     "scripts/pr_resolver.py": 80,          # py3.12 preview 85.4% - 5 (not local 100%)
     "scripts/quality_gate.py": 86,         # local 91.6% (2026-07-30) - 5

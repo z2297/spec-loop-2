@@ -17,8 +17,11 @@ Usage:
 """
 
 import base64
+import inspect
 import json
+import shutil
 import sys
+import tempfile
 import unittest
 import urllib.error
 from contextlib import ExitStack
@@ -264,6 +267,95 @@ class TestHttpGetIsReadOnly(unittest.TestCase):
                 jc._http_get("https://acme.atlassian.net/x", "fred@example.com", "tok")
 
 
+class TestHttpPostIsTheOnlyWriter(unittest.TestCase):
+    """The plugin's FIRST mutating external call. It is a separate
+    function from _http_get on purpose: the read lane's
+    never-a-mutating-verb guarantee must survive unchanged."""
+
+    URL = "https://acme.atlassian.net/rest/api/3/issue/ABC-1/comment"
+
+    def _fake_opener(self, payload=b'{"id": "10001"}'):
+        resp = mock.MagicMock()
+        resp.read.return_value = payload
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = False
+        opener = mock.MagicMock()
+        opener.open.return_value = resp
+        return opener
+
+    def _post(self, opener, payload=None):
+        with mock.patch.object(jc, "_OPENER", opener):
+            return jc._http_post(
+                self.URL, "fred@example.com", "tok",
+                payload if payload is not None else {"body": {"type": "doc"}})
+
+    def test_the_request_method_is_post(self):
+        opener = self._fake_opener()
+        self._post(opener)
+        self.assertEqual(opener.open.call_args.args[0].get_method(), "POST")
+
+    def test_the_body_is_the_json_encoded_payload(self):
+        opener = self._fake_opener()
+        self._post(opener, {"body": {"type": "doc", "version": 1}})
+        data = opener.open.call_args.args[0].data
+        self.assertEqual(
+            json.loads(data.decode("utf-8")),
+            {"body": {"type": "doc", "version": 1}})
+
+    def test_the_content_type_is_json(self):
+        opener = self._fake_opener()
+        self._post(opener)
+        req = opener.open.call_args.args[0]
+        self.assertEqual(req.get_header("Content-type"), "application/json")
+
+    def test_the_authorization_header_is_basic(self):
+        opener = self._fake_opener()
+        self._post(opener)
+        req = opener.open.call_args.args[0]
+        self.assertTrue(req.get_header("Authorization").startswith("Basic "))
+
+    def test_the_response_body_is_returned_raw(self):
+        self.assertEqual(
+            self._post(self._fake_opener(b'{"id": "7"}')), b'{"id": "7"}')
+
+    def test_an_http_error_becomes_an_actionable_jira_error(self):
+        err = urllib.error.HTTPError(self.URL, 403, "Forbidden", {}, None)
+        self.addCleanup(err.close)
+        opener = mock.MagicMock()
+        opener.open.side_effect = err
+        with self.assertRaises(jc.JiraError) as ctx:
+            self._post(opener)
+        self.assertIn("403", str(ctx.exception))
+
+    def test_a_network_error_becomes_a_jira_error(self):
+        opener = mock.MagicMock()
+        opener.open.side_effect = urllib.error.URLError("connection refused")
+        with self.assertRaises(jc.JiraError):
+            self._post(opener)
+
+    def test_a_bare_timeout_reading_the_response_becomes_a_jira_error(self):
+        # urllib only wraps an OSError raised by h.request() into a
+        # URLError; a timeout while reading the response to a POST that
+        # has already landed on the card raises a bare TimeoutError
+        # (a plain OSError subclass) out of h.getresponse()/resp.read(),
+        # which must still surface as a JiraError rather than an
+        # unhandled traceback on this, the write path.
+        opener = mock.MagicMock()
+        opener.open.side_effect = TimeoutError("timed out")
+        with self.assertRaises(jc.JiraError):
+            self._post(opener)
+
+    def test_a_redirect_is_never_followed_on_a_write(self):
+        # _NoRedirect returns None for every 3xx, so urllib raises
+        # instead of replaying the Authorization header (and the POST
+        # body) to another origin.
+        self.assertIsNone(jc._NoRedirect().redirect_request(
+            mock.MagicMock(), mock.MagicMock(), 302, "Found", {},
+            "https://evil.example.com/"))
+        self.assertTrue(
+            any(isinstance(h, jc._NoRedirect) for h in jc._OPENER.handlers))
+
+
 class TestRedirectsAreRefused(unittest.TestCase):
     def test_the_redirect_handler_returns_none(self):
         handler = jc._NoRedirect()
@@ -343,6 +435,50 @@ class TestSecretsNeverLeak(unittest.TestCase):
         raw = f"https://{self.EMAIL}:{self.TOKEN}@acme.atlassian.net"
         with self.assertRaises(jc.JiraUsageError) as ctx:
             jc.validate_base_url(raw)
+        self._assert_clean(str(ctx.exception))
+
+    def test_secrets_absent_from_a_post_http_error_message(self):
+        err = self._http_error(
+            "https://acme.atlassian.net/rest/api/3/issue/ABC-1/comment",
+            401, "Unauthorized")
+        opener = mock.MagicMock()
+        opener.open.side_effect = err
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(jc, "_OPENER", opener))
+            ctx = stack.enter_context(self.assertRaises(jc.JiraError))
+            jc._http_post(
+                "https://acme.atlassian.net/rest/api/3/issue/ABC-1/comment",
+                self.EMAIL, self.TOKEN, {"body": {"type": "doc"}})
+        self._assert_clean(str(ctx.exception))
+
+    def test_secrets_absent_from_a_post_network_error_message(self):
+        opener = mock.MagicMock()
+        opener.open.side_effect = urllib.error.URLError("connection refused")
+        url = "https://acme.atlassian.net/x"
+        payload = {"body": {"type": "doc"}}
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(jc, "_OPENER", opener))
+            ctx = stack.enter_context(self.assertRaises(jc.JiraError))
+            jc._http_post(url, self.EMAIL, self.TOKEN, payload)
+        self._assert_clean(str(ctx.exception))
+
+    def test_secrets_absent_from_a_failed_post_in_the_comment_lane(self):
+        err = self._http_error(
+            "https://acme.atlassian.net/rest/api/3/issue/ABC-1/comment",
+            401, "Unauthorized")
+        opener = mock.MagicMock()
+        resp = mock.MagicMock()
+        resp.read.return_value = comment_page(0, 0, [])
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = False
+        opener.open.side_effect = [resp, err]
+        entries = [entry()]
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, self.ENV, clear=True))
+            stack.enter_context(mock.patch.object(jc, "_OPENER", opener))
+            ctx = stack.enter_context(self.assertRaises(jc.JiraError))
+            jc.run_comment_lane("ABC-1", entries, True)
         self._assert_clean(str(ctx.exception))
 
 
@@ -429,6 +565,64 @@ class TestAdfToText(unittest.TestCase):
         for _ in range(30):
             node = {"type": "blockquote", "content": [node]}
         self.assertIn("x", jc.adf_to_text(adf(node)))
+
+
+class TestTextToAdf(unittest.TestCase):
+    """Verified against Atlassian's REST v3 addComment operation
+    (fetched 2026-09-09): `body` is an ADF DOCUMENT OBJECT, never a
+    plain string. Getting this wrong only fails against real Jira,
+    which CI cannot catch, so the shape is pinned here."""
+
+    def test_the_envelope_is_a_versioned_doc(self):
+        doc = jc.text_to_adf("hello")
+        self.assertEqual(doc["type"], "doc")
+        self.assertEqual(doc["version"], 1)
+
+    def test_one_paragraph_per_line(self):
+        doc = jc.text_to_adf("one\ntwo")
+        self.assertEqual(len(doc["content"]), 2)
+        self.assertEqual(
+            doc["content"][0],
+            {"type": "paragraph",
+             "content": [{"type": "text", "text": "one"}]})
+
+    def test_a_blank_line_is_a_paragraph_with_no_content_key(self):
+        # An ADF text node with an empty `text` string is invalid and
+        # Jira rejects the whole document, so a blank line must not be
+        # represented as an empty text node.
+        doc = jc.text_to_adf("a\n\nb")
+        self.assertEqual(doc["content"][1], {"type": "paragraph"})
+
+    def test_no_text_node_is_ever_empty(self):
+        doc = jc.text_to_adf("a\n\n\nb")
+        for block in doc["content"]:
+            for node in block.get("content") or []:
+                self.assertTrue(node["text"])
+
+    def test_empty_text_yields_a_single_empty_paragraph(self):
+        expected = {
+            "type": "doc", "version": 1,
+            "content": [{"type": "paragraph"}],
+        }
+        self.assertEqual(jc.text_to_adf(""), expected)
+
+    def test_none_is_treated_as_empty(self):
+        self.assertEqual(len(jc.text_to_adf(None)["content"]), 1)
+
+    def test_the_document_is_json_serializable(self):
+        json.dumps(jc.text_to_adf("a\nb"))
+
+    def test_markup_characters_are_carried_verbatim(self):
+        doc = jc.text_to_adf("[spec-loop-intake:decision:abc123abc123]")
+        self.assertEqual(
+            doc["content"][0]["content"][0]["text"],
+            "[spec-loop-intake:decision:abc123abc123]")
+
+    def test_a_body_round_trips_back_through_the_reader(self):
+        body = "heading [spec-loop-intake:decision:0123456789ab]\nline two"
+        self.assertIn(
+            "[spec-loop-intake:decision:0123456789ab]",
+            jc.adf_to_text(jc.text_to_adf(body)))
 
 
 def issue_bean(**fields):
@@ -694,6 +888,386 @@ class TestFetchComments(unittest.TestCase):
         get.assert_not_called()
 
 
+MARKER = "[spec-loop-intake:decision:0123456789ab]"
+
+
+def entry(kind="decision", marker=MARKER, body=None):
+    """One comment entry in the shape jira_intake.build_comment_bodies
+    prints: the marker always lives inside the body."""
+    return {"kind": kind, "marker": marker,
+            "body": body if body is not None else
+            "spec-loop intake - decision %s\nRecorded X.\n\npayload" % marker}
+
+
+class TestCommentEntryValidation(unittest.TestCase):
+    def test_a_well_formed_entry_has_no_errors(self):
+        self.assertEqual(jc.validate_comment_entries([entry()]), [])
+
+    def test_an_empty_list_is_refused(self):
+        self.assertNotEqual(jc.validate_comment_entries([]), [])
+
+    def test_a_non_list_is_refused(self):
+        self.assertNotEqual(jc.validate_comment_entries({"a": 1}), [])
+
+    def test_a_non_object_entry_is_refused(self):
+        errors = jc.validate_comment_entries(["nope"])
+        self.assertIn("comments[0]", errors[0])
+
+    def test_a_missing_body_is_refused(self):
+        bad = entry()
+        del bad["body"]
+        self.assertNotEqual(jc.validate_comment_entries([bad]), [])
+
+    def test_a_marker_of_the_wrong_shape_is_refused(self):
+        errors = jc.validate_comment_entries(
+            [entry(marker="[not-a-marker]", body="[not-a-marker] x")])
+        self.assertTrue(any("marker" in e for e in errors), errors)
+
+    def test_a_marker_of_an_unknown_kind_is_refused(self):
+        bad = "[spec-loop-intake:transition:0123456789ab]"
+        self.assertNotEqual(
+            jc.validate_comment_entries([entry(marker=bad, body=bad)]), [])
+
+    def test_a_body_that_lost_its_marker_is_refused(self):
+        errors = jc.validate_comment_entries(
+            [entry(body="a body with no marker in it")])
+        self.assertTrue(any("marker" in e for e in errors), errors)
+
+    def test_a_real_intake_body_validates(self):
+        # Proves the shape contract with the module that produces it.
+        import jira_intake as intake
+        built = intake.build_comment_bodies(
+            {"key": "ABC-1",
+             "web_url": "https://acme.atlassian.net/browse/ABC-1",
+             "summary": "s", "description": "d",
+             "acceptance_criteria": "", "acceptance_criteria_source": "",
+             "status": "Open", "issue_type": "Task", "comments": []},
+            {"description": "d", "acceptance_criteria": ["a"],
+             "risks": [], "gaps": [], "injection_findings": [],
+             "answers": {}},
+            "2026-09-09T00:00:00Z")
+        self.assertEqual(jc.validate_comment_entries(built), [])
+
+    def test_the_same_marker_twice_in_one_batch_is_refused(self):
+        errors = jc.validate_comment_entries([entry(), entry()])
+        self.assertTrue(any("duplicates" in e for e in errors), errors)
+        self.assertTrue(any("comments[1]" in e for e in errors), errors)
+
+    def test_a_duplicate_is_refused_even_with_differing_kinds(self):
+        # The marker is the dedupe key; a differing `kind` must not
+        # smuggle a second copy of the same marker past the gate.
+        duplicate = entry(kind="understanding")
+        self.assertNotEqual(
+            jc.validate_comment_entries([entry(), duplicate]), [])
+
+    def test_distinct_markers_in_one_batch_stay_valid(self):
+        other = "[spec-loop-intake:open-question:aaaaaaaaaaaa]"
+        second = entry(
+            kind="open-question", marker=other, body="q %s" % other)
+        self.assertEqual(
+            jc.validate_comment_entries([entry(), second]), [])
+
+
+class TestPlanComments(unittest.TestCase):
+    """The dedupe gate is the card's own comment list, read back over the
+    network -- never a local file."""
+
+    def test_an_empty_card_leaves_everything_pending(self):
+        plan = jc.plan_comments([entry()], [])
+        expected = [
+            {"kind": "decision", "marker": MARKER, "already_posted": False},
+        ]
+        self.assertEqual(plan, expected)
+
+    def test_a_marker_already_on_the_card_is_already_posted(self):
+        plan = jc.plan_comments([entry()], ["old", entry()["body"]])
+        self.assertTrue(plan[0]["already_posted"])
+
+    def test_a_marker_on_a_later_page_still_matches(self):
+        plan = jc.plan_comments(
+            [entry()], ["a", "b", "c", "noise " + MARKER + " noise"])
+        self.assertTrue(plan[0]["already_posted"])
+
+    def test_a_different_marker_does_not_match(self):
+        other = "[spec-loop-intake:decision:ffffffffffff]"
+        plan = jc.plan_comments([entry()], [other])
+        self.assertFalse(plan[0]["already_posted"])
+
+    def test_the_plan_preserves_input_order_and_length(self):
+        marker = "[spec-loop-intake:open-question:aaaaaaaaaaaa]"
+        second = entry(
+            kind="open-question", marker=marker, body="x " + marker,
+        )
+        plan = jc.plan_comments([entry(), second], [entry()["body"]])
+        self.assertEqual([p["already_posted"] for p in plan], [True, False])
+        kinds = [p["kind"] for p in plan]
+        self.assertEqual(kinds, ["decision", "open-question"])
+
+
+ENV = {"JIRA_BASE_URL": "https://acme.atlassian.net",
+       "JIRA_EMAIL": "fred@example.com",
+       "JIRA_API_TOKEN": "s3cr3t-api-token-value"}
+
+
+def card_with(bodies):
+    """One comment page whose comments carry `bodies`, as bytes."""
+    return comment_page(
+        0, len(bodies),
+        [raw_comment(i + 1, text) for i, text in enumerate(bodies)])
+
+
+class TestPostComment(unittest.TestCase):
+    """The plugin's sole writer. Bounded to ADDING a comment."""
+
+    SITE = "https://acme.atlassian.net"
+
+    def _post(self, body, response=b'{"id": "10001"}'):
+        """post_comment against a mocked transport: (mock, returned id)."""
+        with mock.patch.object(
+                jc, "_http_post", return_value=response) as post:
+            created = jc.post_comment(
+                self.SITE, ("e", "t"), "ABC-1", body)
+        return post, created
+
+    def test_the_url_is_the_issue_comment_collection(self):
+        post, _ = self._post("body " + MARKER)
+        self.assertEqual(
+            post.call_args.args[0],
+            self.SITE + "/rest/api/3/issue/ABC-1/comment")
+
+    def test_the_payload_body_is_an_adf_document_not_a_string(self):
+        post, _ = self._post("line one\nline two")
+        payload = post.call_args.args[3]
+        self.assertEqual(payload["body"]["type"], "doc")
+        self.assertEqual(payload["body"]["version"], 1)
+
+    def test_the_marker_rides_inside_the_posted_document(self):
+        post, _ = self._post(MARKER + "\npayload")
+        self.assertIn(MARKER, json.dumps(post.call_args.args[3]))
+
+    def test_the_created_comment_id_is_returned(self):
+        _, created = self._post("b")
+        self.assertEqual(created, "10001")
+
+    def test_a_response_without_an_id_is_refused(self):
+        with self.assertRaises(jc.JiraError):
+            self._post("b", b'{}')
+
+    def test_a_non_object_response_is_refused(self):
+        with self.assertRaises(jc.JiraError):
+            self._post("b", b'[]')
+
+    def test_an_invalid_key_is_rejected_before_any_request(self):
+        with mock.patch.object(jc, "_http_post") as post:
+            with self.assertRaises(jc.JiraUsageError):
+                jc.post_comment(self.SITE, ("e", "t"), "x/y", "b")
+        post.assert_not_called()
+
+
+class TestRunCommentLane(unittest.TestCase):
+    """(a) off by default, (b) dedupe against the card's own full comment
+    list, (c) the marker is written by the POST itself, (e) fail closed
+    with nothing partial."""
+
+    def setUp(self):
+        self.entries = [
+            entry(),
+            entry(kind="open-question",
+                  marker="[spec-loop-intake:open-question:aaaaaaaaaaaa]",
+                  body="q [spec-loop-intake:open-question:aaaaaaaaaaaa]")]
+
+    def _run(self, existing, arm, post=None):
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, ENV, clear=True))
+            stack.enter_context(mock.patch.object(
+                jc, "_http_get", return_value=card_with(existing)))
+            poster = stack.enter_context(mock.patch.object(
+                jc, "_http_post",
+                **(post or {"return_value": b'{"id": "10001"}'})))
+            payload = jc.run_comment_lane("ABC-1", self.entries, arm)
+        return payload, poster
+
+    def _statuses(self, payload):
+        """The per-comment status of a lane payload, in request order."""
+        return [result["status"] for result in payload["results"]]
+
+    def test_the_default_path_issues_zero_posts(self):
+        payload, poster = self._run([], arm=False)
+        poster.assert_not_called()
+        self.assertFalse(payload["armed"])
+        self.assertEqual(payload["posted_count"], 0)
+        self.assertEqual(
+            self._statuses(payload), ["would-post", "would-post"])
+
+    def test_arming_posts_every_pending_comment(self):
+        payload, poster = self._run([], arm=True)
+        self.assertEqual(poster.call_count, 2)
+        self.assertEqual(payload["posted_count"], 2)
+        self.assertEqual(self._statuses(payload), ["posted", "posted"])
+        self.assertEqual(payload["results"][0]["comment_id"], "10001")
+
+    def test_a_second_identical_run_issues_zero_posts(self):
+        already = [e["body"] for e in self.entries]
+        payload, poster = self._run(already, arm=True)
+        poster.assert_not_called()
+        self.assertEqual(payload["posted_count"], 0)
+        self.assertEqual(payload["already_posted_count"], 2)
+        self.assertEqual(
+            self._statuses(payload), ["already-posted", "already-posted"])
+
+    def test_a_partly_posted_card_only_posts_the_remainder(self):
+        payload, poster = self._run([self.entries[0]["body"]], arm=True)
+        self.assertEqual(poster.call_count, 1)
+        self.assertEqual(
+            self._statuses(payload), ["already-posted", "posted"])
+
+    def test_an_invalid_entry_refuses_before_any_request(self):
+        self.entries[1]["body"] = "a body with no marker"
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, ENV, clear=True))
+            get = stack.enter_context(mock.patch.object(jc, "_http_get"))
+            post = stack.enter_context(mock.patch.object(jc, "_http_post"))
+            with self.assertRaises(jc.JiraError):
+                jc.run_comment_lane("ABC-1", self.entries, True)
+        get.assert_not_called()
+        post.assert_not_called()
+
+    def test_a_failing_post_stops_the_sequence(self):
+        refused = {"side_effect": jc.JiraError("HTTP 403")}
+        with self.assertRaises(jc.JiraError) as ctx:
+            self._run([], arm=True, post=refused)
+        # Nothing landed before this failure -- the message must not
+        # falsely claim a partial write when there was none.
+        self.assertNotIn("already posted", str(ctx.exception))
+
+    def test_a_failing_post_never_reaches_the_next_comment(self):
+        outcomes = [b'{"id": "1"}', jc.JiraError("HTTP 403")]
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, ENV, clear=True))
+            stack.enter_context(mock.patch.object(
+                jc, "_http_get", return_value=card_with([])))
+            poster = stack.enter_context(mock.patch.object(
+                jc, "_http_post", side_effect=outcomes))
+            with self.assertRaises(jc.JiraError) as ctx:
+                jc.run_comment_lane("ABC-1", self.entries, True)
+        self.assertEqual(poster.call_count, 2)
+        # The batch is not atomic: the first comment already landed
+        # before the second failed, so the error names its marker
+        # rather than silently dropping the fact that it was posted.
+        self.assertIn(MARKER, str(ctx.exception))
+
+    def test_a_bare_timeout_on_the_second_post_still_names_the_first_marker(
+            self):
+        # A bare socket TimeoutError (not wrapped in a URLError) raised
+        # while reading the response to the second POST must still
+        # surface as a JiraError -- and, since the first comment already
+        # landed, name its marker -- rather than an unhandled traceback
+        # that hides the partial write from the operator. The real
+        # _http_post runs unmocked here (only the opener is faked) so
+        # this exercises _http_post's own OSError handling, not a stub.
+        first_resp = mock.MagicMock()
+        first_resp.read.return_value = b'{"id": "1"}'
+        first_resp.__enter__.return_value = first_resp
+        first_resp.__exit__.return_value = False
+        opener = mock.MagicMock()
+        opener.open.side_effect = [first_resp, TimeoutError("timed out")]
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, ENV, clear=True))
+            stack.enter_context(mock.patch.object(
+                jc, "_http_get", return_value=card_with([])))
+            stack.enter_context(mock.patch.object(jc, "_OPENER", opener))
+            with self.assertRaises(jc.JiraError) as ctx:
+                jc.run_comment_lane("ABC-1", self.entries, True)
+        self.assertEqual(opener.open.call_count, 2)
+        self.assertIn(MARKER, str(ctx.exception))
+
+    def test_a_truncated_comment_sweep_refuses_before_any_post(self):
+        # fetch_comments' fail-closed `total` guard is what makes dedupe
+        # trustworthy: a page with no numeric total must abort the lane.
+        body = json.dumps(
+            {"startAt": 0, "maxResults": 100,
+             "comments": [raw_comment(1, "a")]}).encode("utf-8")
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, ENV, clear=True))
+            stack.enter_context(
+                mock.patch.object(jc, "_http_get", return_value=body))
+            post = stack.enter_context(mock.patch.object(jc, "_http_post"))
+            with self.assertRaises(jc.JiraError):
+                jc.run_comment_lane("ABC-1", self.entries, True)
+        post.assert_not_called()
+
+    def test_missing_credentials_refuse_before_any_request(self):
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, {}, clear=True))
+            get = stack.enter_context(mock.patch.object(jc, "_http_get"))
+            post = stack.enter_context(mock.patch.object(jc, "_http_post"))
+            with self.assertRaises(jc.JiraUsageError):
+                jc.run_comment_lane("ABC-1", self.entries, True)
+        get.assert_not_called()
+        post.assert_not_called()
+
+
+class TestADuplicateBatchIsRefusedBeforeAnyPost(unittest.TestCase):
+    """The blocking j3 defect: two identical entries in ONE batch used to
+    pass validation, plan as not-already-posted (plan_comments only
+    dedupes against the CARD), issue two POSTs, and then collapse into a
+    single id in _comment_results. The batch is now refused before the
+    first request."""
+
+    TS = "2026-09-09T00:00:00Z"
+
+    def _entry(self, kind, payload):
+        """One entry built by the REAL producer, so this test cannot
+        drift from the marker/body shape jira_intake actually emits."""
+        import jira_intake as intake
+        return {
+            "kind": kind, "gap_id": "-",
+            "marker": intake.comment_marker("ABC-1", kind, payload),
+            "body": intake.render_comment(
+                "ABC-1", kind, payload, self.TS)}
+
+    def _identical_pair(self):
+        item = self._entry("understanding", "same payload")
+        return [dict(item), dict(item)]
+
+    def test_validation_rejects_the_duplicate_pair(self):
+        errors = jc.validate_comment_entries(self._identical_pair())
+        self.assertNotEqual(errors, [])
+
+    def test_the_armed_lane_issues_zero_posts_for_a_duplicate_pair(self):
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, ENV, clear=True))
+            get = stack.enter_context(mock.patch.object(jc, "_http_get"))
+            post = stack.enter_context(mock.patch.object(jc, "_http_post"))
+            with self.assertRaises(jc.JiraError):
+                jc.run_comment_lane("ABC-1", self._identical_pair(), True)
+        post.assert_not_called()
+        get.assert_not_called()
+
+    def test_a_distinct_pair_still_posts_each_exactly_once(self):
+        entries = [self._entry("understanding", "one"),
+                   self._entry("decision", "two")]
+        responses = [b'{"id": "1"}', b'{"id": "2"}']
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(jc.os.environ, ENV, clear=True))
+            stack.enter_context(mock.patch.object(
+                jc, "_http_get", return_value=card_with([])))
+            post = stack.enter_context(mock.patch.object(
+                jc, "_http_post", side_effect=responses))
+            payload = jc.run_comment_lane("ABC-1", entries, True)
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(payload["posted_count"], 2)
+        self.assertEqual(
+            [r["comment_id"] for r in payload["results"]], ["1", "2"])
+
 
 class TestNormalizedRecord(unittest.TestCase):
     VALUES = {"key": "ABC-123",
@@ -832,10 +1406,119 @@ class TestMain(unittest.TestCase):
             self.assertNotIn(secret, err)
 
 
-class TestReadOnlyContract(unittest.TestCase):
-    """The module must be structurally incapable of mutating Jira."""
+class TestCommentCli(unittest.TestCase):
+    """Posting is off by default at the CLI boundary too: --post is what
+    arms the write."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.path = str(Path(self.dir) / "comments.json")
+
+    def _write(self, payload):
+        Path(self.path).write_text(
+            json.dumps(payload), encoding="utf-8")
+
+    def _run(self, argv, **patches):
+        with ExitStack() as stack:
+            so = stack.enter_context(mock.patch.object(jc.sys, "stdout"))
+            se = stack.enter_context(mock.patch.object(jc.sys, "stderr"))
+            lane = stack.enter_context(
+                mock.patch.object(jc, "run_comment_lane", **patches))
+            rc = jc.main(argv)
+            out = "".join(c.args[0] for c in so.write.call_args_list if c.args)
+            err = "".join(c.args[0] for c in se.write.call_args_list if c.args)
+        return rc, out, err, lane
+
+    PAYLOAD = {"ok": True, "issue_key": "ABC-1", "armed": False,
+               "posted_count": 0, "already_posted_count": 0, "results": []}
+
+    def test_without_the_flag_the_lane_is_not_armed(self):
+        self._write([entry()])
+        _, _, _, lane = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path],
+            return_value=self.PAYLOAD)
+        self.assertIs(lane.call_args.args[2], False)
+
+    def test_the_post_flag_arms_the_lane(self):
+        self._write([entry()])
+        _, _, _, lane = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path, "--post"],
+            return_value=self.PAYLOAD)
+        self.assertIs(lane.call_args.args[2], True)
+
+    def test_success_prints_one_json_object_and_exits_zero(self):
+        self._write([entry()])
+        rc, out, _, _ = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path],
+            return_value=self.PAYLOAD)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out), self.PAYLOAD)
+
+    def test_the_full_render_payload_object_is_accepted(self):
+        self._write({"ok": True, "comments": [entry()]})
+        _, _, _, lane = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path],
+            return_value=self.PAYLOAD)
+        self.assertEqual(lane.call_args.args[1], [entry()])
+
+    def test_a_missing_comments_file_exits_two(self):
+        rc, out, err, _ = self._run(
+            ["comment", "--key", "ABC-1",
+             "--comments", str(Path(self.dir) / "nope.json")],
+            return_value=self.PAYLOAD)
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, "")
+        self.assertIn("error:", err)
+
+    def test_a_malformed_comments_file_exits_two(self):
+        Path(self.path).write_text("not json", encoding="utf-8")
+        rc, _, err, _ = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path],
+            return_value=self.PAYLOAD)
+        self.assertEqual(rc, 2)
+        self.assertIn("error:", err)
+
+    def test_a_contract_failure_exits_one_as_json_on_stdout(self):
+        self._write([entry()])
+        rc, out, err, _ = self._run(
+            ["comment", "--key", "ABC-1", "--comments", self.path],
+            side_effect=jc.JiraError("HTTP 403"))
+        self.assertEqual(rc, 1)
+        self.assertEqual(err, "")
+        expected = {"ok": False, "errors": ["HTTP 403"]}
+        self.assertEqual(json.loads(out), expected)
+
+    def test_there_is_no_credential_flag_anywhere(self):
+        help_text = jc.build_parser().format_help()
+        for banned in ("--token", "--email", "--password", "--api-token"):
+            self.assertNotIn(banned, help_text)
+
+
+class TestTheReadLaneStaysReadOnly(unittest.TestCase):
+    """j3 adds ONE bounded writer. The read lane's guarantee is unchanged
+    and is asserted against _http_get's OWN source rather than the whole
+    file, so the new writer cannot silently loosen it."""
 
     SOURCE = (Path(__file__).resolve().parent / "jira_client.py").read_text()
+    MUTATING_VERBS = ('"POST"', '"PUT"', '"PATCH"', '"DELETE"',
+                      "'POST'", "'PUT'", "'PATCH'", "'DELETE'")
+
+    def test_the_get_helper_names_no_mutating_verb(self):
+        source = inspect.getsource(jc._http_get)
+        for verb in self.MUTATING_VERBS:
+            self.assertNotIn(verb, source, verb)
+
+    def test_the_get_helper_sets_no_body_and_pins_get(self):
+        source = inspect.getsource(jc._http_get)
+        self.assertNotIn("data=", source)
+        self.assertIn('method="GET"', source)
+
+    def test_no_read_function_can_reach_the_writer(self):
+        for fn in (jc.find_ac_field_id, jc.fetch_issue, jc.fetch_comments,
+                   jc.resolve_issue):
+            with self.subTest(fn=fn.__name__):
+                self.assertNotIn("_http_post", inspect.getsource(fn))
 
     def test_the_module_never_imports_subprocess(self):
         self.assertNotIn("import subprocess", self.SOURCE)
@@ -843,19 +1526,18 @@ class TestReadOnlyContract(unittest.TestCase):
     def test_the_module_never_calls_datetime_now(self):
         self.assertNotIn("datetime", self.SOURCE.replace("# ", ""))
 
-    MUTATING_VERBS = ('"POST"', '"PUT"', '"PATCH"', '"DELETE"',
-                      "'POST'", "'PUT'", "'PATCH'", "'DELETE'")
-
-    def test_no_mutating_http_method_appears_in_the_source(self):
-        for verb in self.MUTATING_VERBS:
+    def test_the_only_mutating_verb_in_the_module_is_the_comment_post(self):
+        verbs = (
+            '"PUT"', '"PATCH"', '"DELETE"',
+            "'PUT'", "'PATCH'", "'DELETE'",
+        )
+        for verb in verbs:
             self.assertNotIn(verb, self.SOURCE, verb)
+        self.assertEqual(self.SOURCE.count('method="POST"'), 1)
 
-    def test_the_only_request_construction_sets_method_get(self):
-        self.assertEqual(self.SOURCE.count("urllib.request.Request("), 1)
-        self.assertIn('method="GET"', self.SOURCE)
-
-    def test_the_only_network_call_goes_through_the_module_opener(self):
-        self.assertEqual(self.SOURCE.count("_OPENER.open("), 1)
+    def test_there_are_exactly_two_transports(self):
+        self.assertEqual(self.SOURCE.count("urllib.request.Request("), 2)
+        self.assertEqual(self.SOURCE.count("_OPENER.open("), 2)
 
     def test_the_entry_shim_is_exactly_two_lines(self):
         all_lines = self.SOURCE.splitlines()
@@ -863,6 +1545,7 @@ class TestReadOnlyContract(unittest.TestCase):
         self.assertEqual(len(shim_lines), 1)
         idx = all_lines.index(shim_lines[0])
         self.assertEqual(all_lines[idx + 1].strip(), "sys.exit(main())")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,8 @@
 
 Three invariants that prose alone will not hold: (1) the command is
 structurally incapable of starting the loop or editing a file - no Workflow
-and no Edit in allowed-tools; (2) it posts nothing to Jira in this lane;
+and no Edit in allowed-tools; (2) its one Jira write is bounded to adding a
+comment, off by default, and behind a confirmation round;
 (3) the artifact schema the command prose promises is the schema
 jira_intake.py actually renders, field name for field name.
 
@@ -60,21 +61,68 @@ class TestTheCommandCannotStartTheLoopOrEdit(unittest.TestCase):
         self.assertIn("Do not run it", text)
 
 
-class TestTheCommandPostsNothingInThisLane(unittest.TestCase):
-    """j2 renders; j3 posts. A command that quietly grew a POST would still
-    read as read-only prose, so pin the claim."""
+class TestTheJiraWriteIsBoundedToComments(unittest.TestCase):
+    """This slice reverses a standing read-only doctrine. The reversal is
+    only safe because it is bounded, off by default, and confirmed --
+    so each of those three claims is pinned rather than remembered."""
 
     def setUp(self):
         raw = COMMAND_MD.read_text(encoding="utf-8")
         self.text = re.sub(r"\s+", " ", raw)
 
-    def test_it_states_that_it_posts_nothing(self):
-        expected = "renders the comment bodies it would post and posts nothing"
-        self.assertIn(expected, self.text)
+    def test_the_write_is_bounded_to_adding_a_comment(self):
+        self.assertIn(
+            "comments only, never transitions or field edits", self.text)
+        forbidden_phrases = (
+            "never a created or closed issue",
+            "never a sub-task",
+            "never an edit or deletion of any comment",
+        )
+        for forbidden in forbidden_phrases:
+            with self.subTest(forbidden=forbidden):
+                self.assertIn(forbidden, self.text)
 
-    def test_it_states_the_write_back_supersession(self):
+    def test_posting_is_off_by_default(self):
+        self.assertIn("Posting is off by default", self.text)
+
+    def test_the_write_is_armed_only_by_an_explicit_flag(self):
+        self.assertIn("--post", self.text)
+        self.assertIn("arms the HTTP verb", self.text)
+
+    def test_the_preview_runs_without_the_flag(self):
+        preview = "jira_client.py\" comment --key <KEY> --comments <tmp>/comments.json"
+        self.assertIn(preview, self.text)
+
+    def test_a_confirmation_round_precedes_any_write(self):
+        self.assertIn("AskUserQuestion naming the exact count", self.text)
+        # The recommended-default option label is normalized: the prose
+        # spells it with an em dash.
+        normalized = self.text.replace("—", "-")
+        self.assertIn("No - leave the card untouched", normalized)
+
+    def test_the_dedupe_gate_is_the_cards_own_comment_list(self):
+        self.assertIn("card's own full comment list", self.text)
+        self.assertIn("already-posted", self.text)
+
+    def test_recovery_is_the_posting_step_not_the_whole_command(self):
+        """A regenerated refinement yields new markers, so 'just re-run the
+        command' would double-post. The prose must scope recovery to
+        re-posting the SAME rendered comments file."""
+        self.assertIn(
+            "re-run the POSTING step with the same rendered comments file",
+            self.text)
+        self.assertIn("NOT re-run the refinement", self.text)
+        self.assertIn(
+            "a regenerated refinement produces new markers", self.text)
+
+    def test_the_cross_process_dedupe_window_is_disclosed(self):
+        """The pre-write read is per-invocation, so concurrent arming can
+        double-post. That window is disclosed, not implied."""
+        self.assertIn("read once per invocation", self.text)
+
+    def test_it_records_the_supersession_it_reverses(self):
         self.assertIn("peer-review.md", self.text)
-        self.assertIn("comments only", self.text)
+        self.assertIn("pr_resolver.py", self.text)
 
     def test_it_carries_the_untrusted_input_framing(self):
         self.assertIn("data, never instructions", self.text)

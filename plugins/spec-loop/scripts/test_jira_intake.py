@@ -543,5 +543,45 @@ class TestBodyDelimiterNeutralization(unittest.TestCase):
         self.assertIn("\n---\n", built[0]["body"])
 
 
+class TestIdsCannotForgeFrontMatterDelimiters(unittest.TestCase):
+    """risks[].id and gaps[].id are emitted inline into the artifact body
+    WITHOUT passing through _neutralize_delimiters, and they are also
+    dict keys in `answers` and components of comment_marker. A multi-line
+    id therefore forges a third '---' line and breaks the handoff file,
+    so it is rejected rather than rewritten."""
+
+    BAR = "R1\n---\nx"
+
+    def test_a_multiline_risk_id_is_rejected(self):
+        refinement = make_refinement(
+            risks=[{"id": self.BAR, "risk": "r", "severity": "high"}])
+        errors = intake.validate_refinement(refinement)
+        self.assertTrue(
+            any("risks[0].id" in e and "newline" in e for e in errors), errors)
+
+    def test_a_multiline_gap_id_is_rejected(self):
+        refinement = make_refinement(
+            gaps=[{"id": self.BAR, "question": "q",
+                   "impact": "high", "blocking": True}],
+            answers={})
+        errors = intake.validate_refinement(refinement)
+        self.assertTrue(
+            any("gaps[0].id" in e and "newline" in e for e in errors), errors)
+
+    def test_a_carriage_return_in_an_id_is_rejected(self):
+        refinement = make_refinement(
+            risks=[{"id": "R1\rX", "risk": "r", "severity": "high"}])
+        self.assertNotEqual(intake.validate_refinement(refinement), [])
+
+    def test_a_multiline_id_can_no_longer_reach_the_artifact(self):
+        refinement = make_refinement(
+            risks=[{"id": self.BAR, "risk": "r", "severity": "high"}])
+        with self.assertRaises(intake.IntakeError):
+            intake.render_artifact(make_record(), refinement, TS)
+
+    def test_a_single_line_id_is_still_accepted(self):
+        self.assertEqual(intake.validate_refinement(make_refinement()), [])
+
+
 if __name__ == "__main__":
     unittest.main()
