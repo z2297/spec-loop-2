@@ -1301,6 +1301,44 @@ class TestAnalyzeBuiltinPython(unittest.TestCase):
         self.assertIsNone(cls)
 
 
+# A two-record list where the OUTER record is listed first, exactly as
+# _extract_functions_cbrace appends them (headers in source order). F4:
+# the bound `fn['start'] <= line_no < fn['end']` used to be written twice
+# -- once as a predicate and once re-derived inside a bare next() -- so a
+# drift between them would raise StopIteration inside analyze_builtin,
+# which has no try/except around it in measure()'s file loop and would
+# abort the gate for EVERY file rather than one. MEASURED: behaviour is
+# unchanged; next() selected the OUTERMOST enclosing record and so does
+# the helper. The 1-based-inclusive boundary cases live with
+# TestExtensionScopedControlWords, which owns them already.
+ENCLOSING_FUNCS = [
+    {"name": "outer", "start": 1, "end": 20, "header_idx": 0},
+    {"name": "inner", "start": 5, "end": 12, "header_idx": 4},
+]
+
+
+class TestEnclosingRecord(unittest.TestCase):
+    def test_it_selects_the_outermost_enclosing_record(self):
+        got = qg._strictly_enclosing_record(ENCLOSING_FUNCS, 7)
+        self.assertEqual(got["name"], "outer")
+
+    def test_a_phantom_with_more_params_is_not_redundant(self):
+        lines = ["void outer(int a) {"] + [""] * 19
+        self.assertFalse(
+            qg._phantom_is_redundant(
+                ENCLOSING_FUNCS[0], "using (a, b, c, d, e) {", lines))
+
+    def test_a_phantom_with_no_more_params_is_redundant(self):
+        lines = ["void outer(int a, int b) {"] + [""] * 19
+        self.assertTrue(
+            qg._phantom_is_redundant(
+                ENCLOSING_FUNCS[0], "using (x) {", lines))
+
+    def test_no_enclosing_record_means_not_redundant(self):
+        self.assertFalse(
+            qg._phantom_is_redundant(None, "using (x) {", []))
+
+
 class TestAnalyzeBuiltinCbrace(unittest.TestCase):
     SOURCE = (
         "function outer(a, b) {\n"
@@ -2173,7 +2211,7 @@ CS_MULTI_DECL_USING_SOURCE = (
 
 # r1-F1 follow-up (s2): the same shape with the DOMINANCE reversed. The
 # `using` header declares 5 comma items, the enclosing Go declares 6, so
-# _phantom_has_more_params does NOT keep the phantom and it is dropped.
+# _phantom_is_redundant DOES report the phantom redundant, so it is dropped.
 # Measured: {'Go': 6} for a full [(1, 400)] range and for a narrow
 # [(4, 6)] range covering only the using block -- the dropped count is
 # never the file's highest, and the enclosing record is always emitted
@@ -2272,13 +2310,15 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         # line produces (see test_a_literal_brace_on_the_header_line_...
         # below), so treating it as enclosure silently drops a real
         # violation.
+        # r1-F4: the helper now returns the enclosing record or None; the
+        # bound is unchanged.
         funcs = [{"name": "Import", "start": 3, "end": 11, "header_idx": 2}]
-        self.assertFalse(qg._strictly_encloses_line(funcs, 2))
-        self.assertTrue(qg._strictly_encloses_line(funcs, 3))
-        self.assertTrue(qg._strictly_encloses_line(funcs, 10))
-        self.assertFalse(qg._strictly_encloses_line(funcs, 11))
-        self.assertFalse(qg._strictly_encloses_line(funcs, 12))
-        self.assertFalse(qg._strictly_encloses_line([], 3))
+        self.assertIsNone(qg._strictly_enclosing_record(funcs, 2))
+        self.assertIsNotNone(qg._strictly_enclosing_record(funcs, 3))
+        self.assertIsNotNone(qg._strictly_enclosing_record(funcs, 10))
+        self.assertIsNone(qg._strictly_enclosing_record(funcs, 11))
+        self.assertIsNone(qg._strictly_enclosing_record(funcs, 12))
+        self.assertIsNone(qg._strictly_enclosing_record([], 3))
 
     def test_the_reserved_words_are_scoped_to_their_own_extensions(self):
         self.assertEqual(
@@ -2392,7 +2432,7 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         # i.e. Import's measured end EQUALS foreach's header line_no. Under
         # the old inclusive `_encloses_line` that equality counted as
         # enclosure and foreach vanished entirely (measured: only "Import"
-        # remained). Under the new strict `_strictly_encloses_line` equality
+        # remained). Under the new strict `_strictly_enclosing_record` equality
         # no longer enclose, so foreach is retained.
         funcs = qg._extract_functions_cbrace(
             CS_LITERAL_BRACE_HEADER_SOURCE.splitlines(), ".cs")
