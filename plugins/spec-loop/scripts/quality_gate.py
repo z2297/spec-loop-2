@@ -133,7 +133,14 @@ _JS_MASK_EXTS = frozenset({".js", ".mjs", ".cjs", ".ts"})
 
 # Branch keywords whose occurrence adds one to cyclomatic complexity. Matched as
 # whole words (or operators) so an identifier like `ifield` is not counted.
-_BRANCH_WORDS = ("if", "elif", "case", "catch", "for", "while", "when")
+# The set is deliberately GLOBAL, not per-language: `foreach` is C#'s loop
+# keyword and its worst case elsewhere is an over-count, the one direction
+# this heuristic is permitted to move. Matching stays case-sensitive and
+# \b-anchored so JS/Java `arr.forEach(...)` -- a method call, not a loop --
+# is never counted; `for` inside `foreach` fails its own trailing \b, so the
+# keyword contributes exactly one branch, not two.
+_BRANCH_WORDS = ("if", "elif", "case", "catch", "for", "while", "when",
+                 "foreach")
 _BRANCH_WORD_RE = re.compile(r"\b(?:%s)\b" % "|".join(_BRANCH_WORDS))
 # Boolean operators and the ternary each add a branch. `else if` is NOT listed
 # here: its `if` is already counted by _BRANCH_WORD_RE, so matching it again

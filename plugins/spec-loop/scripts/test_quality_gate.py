@@ -10,7 +10,11 @@ brace languages left deliberately unmasked, the measured regex-versus-quote
 residuals, and every fall-back-to-raw path), a differential harness comparing
 masked against raw measurement over every heuristic-readable file in the plugin
 tree, the builtin heuristic function extraction for python and brace languages,
-backend CSV/JSON
+the per-extension reserved-word scoping and its coverage-conditional phantom
+suppression (`TestExtensionScopedControlWords`), `measure()`'s skip record for
+every changed file it could not measure (`TestMeasureSkipRecord` — the
+suite's FIRST `qg.measure()`-level test; every other class exercises the
+primitives or `analyze_builtin`), backend CSV/JSON
 parsing and backend+heuristic merging with per-metric sourcing (cognitive is
 NEVER attributed to a tool), coverage parsing (cobertura + lcov) and CRAP
 assembly, custom-gate evaluation (metric-form evaluated here, command-form
@@ -593,6 +597,22 @@ class TestBranchCount(unittest.TestCase):
     def test_word_boundary_avoids_identifiers(self):
         # 'ifield' / 'forum' must not be counted as if/for
         self.assertEqual(qg._branch_count("ifield = forum + whilehouse\n"), 1)
+
+    def test_csharp_foreach_counts_exactly_one_branch(self):
+        # D2: `foreach` was not a branch word. Measured before: 1 (base only).
+        # After: 2. The tuple's earlier "for" alternative fails its trailing
+        # \b inside `foreach`, so the engine backtracks to the `foreach`
+        # alternative and the keyword is counted ONCE, not twice.
+        self.assertEqual(
+            qg._branch_count("foreach (var r in rows) { }\n"), 2)
+
+    def test_camel_case_for_each_is_not_a_branch_word(self):
+        # The match must stay case-sensitive and \b-anchored: JS/Java/Kotlin
+        # `arr.forEach(...)` is a method call, not a loop keyword, and the
+        # differential harness floors are pinned at EQUALITY against files
+        # that contain it.
+        self.assertEqual(qg._branch_count("arr.forEach(x => x);\n"), 1)
+        self.assertEqual(qg._BRANCH_WORD_RE.findall("arr.forEach(x)"), [])
 
 
 class TestNesting(unittest.TestCase):
@@ -1990,6 +2010,24 @@ CS_MULTI_DECL_USING_SOURCE = (
     "}\n"
 )
 
+# r1-F1 follow-up (s2): the same shape with the DOMINANCE reversed. The
+# `using` header declares 5 comma items, the enclosing Go declares 6, so
+# _phantom_has_more_params does NOT keep the phantom and it is dropped.
+# Measured: {'Go': 6} for a full [(1, 400)] range and for a narrow
+# [(4, 6)] range covering only the using block -- the dropped count is
+# never the file's highest, and the enclosing record is always emitted
+# alongside because its span strictly contains the phantom's.
+CS_DOMINATED_USING_SOURCE = (
+    "public class C\n"
+    "{\n"
+    "    public void Go(int a,int b,int c,int d,int e,int f) {\n"
+    "        using (Stream p = A(), q = B(), r = C(), s = D(), t = E()) {\n"
+    "            p.Write(q);\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
 JAVA_SYNCHRONIZED_SOURCE = (
     "public class Cache\n"
     "{\n"
@@ -2016,6 +2054,26 @@ JS_RESERVED_NAME_METHODS = (
     "    }\n"
     "}\n"
 )
+
+# D2: `foreach` was absent from _BRANCH_WORDS, so a C# foreach loop added no
+# cyclomatic branch. Measured on this fixture BEFORE the fix: Go scored
+# cyclomatic_complexity 4 (1 base + if + && + case) and cognitive 8, with
+# the foreach contributing nothing. AFTER: 5 and 10. K&R braces, so the
+# real enclosing method IS extracted and the branch is attributed to Go
+# rather than to a phantom (s1's enclosure suppression drops the phantom
+# here, which is why this slice was ordered after s1).
+CS_FOREACH_CONTROL_SOURCE = (
+    "public class C\n"
+    "{\n"
+    "    public void Go(List<Row> rows) {\n"
+    "        foreach (var r in rows) {\n"
+    "            if (r.A && r.B) { X(r); }\n"
+    "        }\n"
+    "        switch (rows.Count) { case 1: Y(); break; }\n"
+    "    }\n"
+    "}\n"
+)
+
 
 FULL = [(1, 400)]
 
@@ -2080,16 +2138,19 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         # Measured before: 4 records -- Import (3-11, cc 2, cog 3) plus
         # foreach (4-6, cc 2), using (7-9, cc 1) and lock (10-10, cc 1), all
         # three inside Import's span. After: Import alone, metrics unchanged.
+        # s2: adding `foreach` to _BRANCH_WORDS raises Import's own count --
+        # cyclomatic 2 -> 3, cognitive 3 -> 5 (the foreach is at brace depth 1,
+        # so _cognitive_approx weights it x2). The extraction list is unchanged.
         self.assertEqual(
             qg._extract_functions_cbrace(CS_KR_SOURCE.splitlines(), ".cs"),
             [{"name": "Import", "start": 3, "end": 11, "header_idx": 2}])
         found = self.by_name("Importer.cs", CS_KR_SOURCE)
         self.assertEqual(sorted(found), ["Import"])
         self.assertEqual(found["Import"]["metrics"], {
-            "cyclomatic_complexity": 2,
+            "cyclomatic_complexity": 3,
             "method_lines": 9,
             "parameter_count": 2,
-            "cognitive_complexity": 3,
+            "cognitive_complexity": 5,
             "nesting_depth": 2,
         })
 
@@ -2112,16 +2173,18 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         # Measured: unconditional suppression collapses this file to
         # class_lines alone. Nothing extracted encloses line 5, so the
         # record is KEPT, before and after, with every metric identical.
+        # s2: the retained record's own body now counts its `foreach` too --
+        # cyclomatic 5 -> 6, cognitive 8 -> 9. Retention itself is unchanged.
         self.assertEqual(
             qg._extract_functions_cbrace(CS_MIXED_SOURCE.splitlines(), ".cs"),
             [{"name": "foreach", "start": 5, "end": 9, "header_idx": 4}])
         found = self.by_name("Importer.cs", CS_MIXED_SOURCE)
         self.assertEqual(sorted(found), ["foreach"])
         self.assertEqual(found["foreach"]["metrics"], {
-            "cyclomatic_complexity": 5,
+            "cyclomatic_complexity": 6,
             "method_lines": 5,
             "parameter_count": 1,
-            "cognitive_complexity": 8,
+            "cognitive_complexity": 9,
             "nesting_depth": 1,
         })
 
@@ -2195,6 +2258,42 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         self.assertGreater(
             found["using"]["metrics"]["parameter_count"],
             qg.DEFAULT_THRESHOLDS["parameter_count"])
+
+    def test_a_csharp_foreach_adds_a_branch_to_its_enclosing_method(self):
+        # D2, end to end through analyze_builtin so a mis-wired routing fails
+        # here rather than passing on a hand-composed _branch_count call.
+        # Measured before: Go cyclomatic 4, cognitive 8. After: 5 and 10 --
+        # the foreach sits at brace depth 1, so _cognitive_approx weights it
+        # x2. Every other metric is unchanged.
+        found = self.by_name("C.cs", CS_FOREACH_CONTROL_SOURCE)
+        self.assertEqual(sorted(found), ["Go"])
+        self.assertEqual(found["Go"]["metrics"], {
+            "cyclomatic_complexity": 5,
+            "method_lines": 6,
+            "parameter_count": 1,
+            "cognitive_complexity": 10,
+            "nesting_depth": 2,
+        })
+
+    def test_a_dominated_using_is_dropped_only_behind_a_higher_count(self):
+        # The narrow guarantee the CHANGELOG now states, pinned rather than
+        # argued: suppression's per-metric safety for parameter_count rests on
+        # BOTH halves. When the phantom's own count is higher it survives
+        # (test_an_enclosed_multi_declaration_using_keeps_its_own_finding);
+        # when it is lower it is dropped, and the enclosing record that
+        # replaces it carries a HIGHER count and is emitted for any changed
+        # range that could have reached the phantom -- its span strictly
+        # contains the phantom's.
+        for ranges in ([(1, 400)], [(4, 6)]):
+            findings, _ = qg.analyze_builtin(
+                "C.cs", CS_DOMINATED_USING_SOURCE, ranges)
+            counts = {
+                f["function"]: f["metrics"]["parameter_count"]
+                for f in findings
+            }
+            self.assertEqual(counts, {"Go": 6})
+            self.assertGreater(
+                counts["Go"], qg.DEFAULT_THRESHOLDS["parameter_count"])
 
 
 # --------------------------------------------------------------------------

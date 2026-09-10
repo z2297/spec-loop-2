@@ -22,11 +22,15 @@ All notable changes to the spec-loop plugin are documented here. The format is
   sees the method, so the `foreach` record is the only measurement of that body (measured:
   cyclomatic 5, cognitive 8); suppressing it unconditionally would take the file to
   `class_lines` alone and turn a real reading into a silent pass. An over-count is the one
-  direction this heuristic is permitted to move. Known, documented residuals: a pure-Allman
-  C# file (every brace on its own line, the Visual Studio default) still extracts nothing at
-  all, because `_CBRACE_DEF_RE` requires the `{` on the signature line — deferred to its own
-  run; and `foreach` is still absent from `_BRANCH_WORDS`, so a C# `foreach` adds no
-  cyclomatic branch.
+  direction this heuristic is permitted to move. That safety argument is PER-METRIC, not
+  blanket: an enclosed phantom's cyclomatic, cognitive, method_lines and nesting_depth are
+  all dominated by the enclosing record whose body contains it, but its `parameter_count` is
+  read from its own header and is NOT — see the `_phantom_has_more_params` entry below.
+  Known, documented residuals: a pure-Allman C# file (every brace on its own line, the
+  Visual Studio default) still extracts nothing at all, because `_CBRACE_DEF_RE` requires
+  the `{` on the signature line — deferred to its own run. (The second residual named here
+  — `foreach` absent from `_BRANCH_WORDS` — is fixed below in this same Unreleased
+  section.)
 - **A changed file the quality gate could not measure can no longer vanish from the report.**
   `measure()` in `plugins/spec-loop/scripts/quality_gate.py` ended its skip chain in
   `elif _lang_for(path) is None`, so a file with a supported extension that yielded zero
@@ -58,6 +62,21 @@ All notable changes to the spec-loop plugin are documented here. The format is
   `test_an_enclosed_multi_declaration_using_keeps_its_own_finding` pins a 5-parameter `using`
   surviving inside a 1-parameter `Import` method (5 > `DEFAULT_THRESHOLDS["parameter_count"]`
   == 4). Both are the same failure family the run's NEVER-UNDER-COUNT constraint names.
+  Known, documented residuals: the parameter_count guarantee is an ARGUMENT the code does
+  not assert. `_phantom_has_more_params` keeps a phantom only when its own count is strictly
+  higher, so a phantom whose count is equal or lower is still dropped; that is safe only
+  because the enclosing record's own count is then at least as high AND is always emitted
+  alongside — the enclosing span strictly contains the phantom's, so any changed range that
+  reaches the phantom reaches the enclosing record too. Measured both halves on `.cs`:
+  `using (Stream p = A(), q = B(), r = C(), s = D(), t = E())` inside `Go(int a)` reports
+  `Go` 1 AND `using` 5 (the phantom survives, 5 > the threshold of 4); the same `using`
+  inside `Go(int a,int b,int c,int d,int e,int f)` reports `Go` 6 alone, for a full range and
+  for a narrow range covering only the `using` block. `test_quality_gate.py`'s
+  `test_a_dominated_using_is_dropped_only_behind_a_higher_count` pins that second half. A
+  related measured non-result, recorded so no reader re-derives it: the nested-call form
+  `foreach (var x in Zip(a, b, c))` does NOT reach this path at all — `_count_params` splits
+  commas only at paren depth 0, so it measures 1. The multi-declarator `using` is the only
+  shape that reaches it.
 - **A skip record could itself misreport why a file went unmeasured.** `measure()`'s new
   unconditional `else` arm (see above) reached `_skip_reason(path)` whenever a file yielded
   zero IN-RANGE findings — which also fires for an import-only edit, a docstring tweak, or any
@@ -78,6 +97,27 @@ All notable changes to the spec-loop plugin are documented here. The format is
   pre-existing cognitive_complexity/nesting_depth violations this slice did not introduce and
   does not fix here, and `class_lines` on both `quality_gate.py` and `test_quality_gate.py`
   remains accepted debt per standing ruling.
+- **A C# `foreach` now contributes a cyclomatic branch.** `_BRANCH_WORDS` in
+  `plugins/spec-loop/scripts/quality_gate.py:142` gains `foreach`, so both `_branch_count`
+  and `_cognitive_approx` see C#'s loop keyword. Measured on a K&R `.cs` method containing
+  one `foreach`, one `if` with `&&` and one `switch`/`case`: cyclomatic_complexity 4 → 5 and
+  cognitive_complexity 8 → 10, the foreach having contributed nothing before. The word set
+  stays GLOBAL rather than per-language, because a `foreach` in a language that does not
+  reserve it can only over-count, the one direction this heuristic is permitted to move.
+  The match stays case-sensitive and word-boundary-anchored, so JS/Java/Kotlin
+  `arr.forEach(...)` — a method call, not a loop — is not counted, and `for` inside
+  `foreach` fails its own trailing boundary so the keyword adds exactly one branch, not two.
+  `plugins/spec-loop/scripts/test_quality_gate.py` gains
+  `test_csharp_foreach_counts_exactly_one_branch`,
+  `test_camel_case_for_each_is_not_a_branch_word` and the end-to-end
+  `test_a_csharp_foreach_adds_a_branch_to_its_enclosing_method` over the new
+  `CS_FOREACH_CONTROL_SOURCE` fixture, whose enclosing method is genuinely extracted (the
+  phantom is suppressed there by the enclosure guard above, which is why this change is
+  sequenced after it); two pre-existing pinned metric dicts move with it, `Import` 2/3 → 3/5
+  and the deliberately retained `foreach` phantom 5/8 → 6/9. Known, documented residuals:
+  a `foreach` written in a language that does not reserve the word is counted as a branch by
+  design (an over-count); a pure-Allman C# file still extracts no method at all, so its
+  `foreach` is attributed to nothing — deferred to its own run.
 
 ## [2.5.0] - 2026-09-09
 ### Added
