@@ -6,6 +6,167 @@ All notable changes to the spec-loop plugin are documented here. The format is
 [v1 repository](https://github.com/z2297/spec-loop).
 
 ## [Unreleased]
+### Fixed
+- **A tab-indented python file was measured as if it had no nesting at all, and now
+  measures the same as the identical space-indented file.** Parity now survives the
+  literal mask too: the python mask's own continuation-row fill started at `lstrip(" ")` and
+  overwrote a tab-indented row's leading tabs, so a tab body holding a multi-line string
+  whose closing row carries branch operators measured cognitive 10 against the space body's
+  13 -- an under-count, now fixed in `_token_mask_spans` and pinned by
+  `TestTabIndentedPython`. `_nesting_depth_python` and the
+  python arm of `_cognitive_approx` in `plugins/spec-loop/scripts/quality_gate.py` stripped
+  leading SPACES only (`lstrip(" ")`) before dividing by the model's 4-column step, so every
+  line of a tab-indented file read as indent 0 and the whole file collapsed to
+  `nesting_depth` 0 at any real depth. Measured on one six-level-deep body: space-indented it
+  reports cognitive 20 / nesting_depth 6 and FAILS the nesting threshold of 3; the
+  byte-identical tab-indented body reported cognitive 5 / nesting_depth 0 and PASSED, on the
+  same branch count (cyclomatic 6 either way). The new PURE `_py_indent_width` is now the
+  single place leading whitespace becomes a column count — it expands tabs at 4 columns,
+  matching the `// 4` the nesting and cognitive models divide by, so one tab is exactly one
+  level — and the three space-only sites (`_nesting_depth_python`, the `_cognitive_approx`
+  python arm, and `_function_metrics`' `base_indent`) call it. `test_quality_gate.py` gains
+  `TestTabIndentedPython`, pinning tab/space parity and the helper itself, including a
+  tab-indented method whose own `def` header is indented (not just a top-level function at
+  column 0), which is the shape that exercises `_function_metrics`'s `base_indent` call
+  specifically. **This changes existing `.py` results in both directions, most often
+  upward**: a tab-indented python function that passes the gate today can fail after this
+  change. That is the safe direction under the never-under-count rule and is the intended
+  effect, but it is an observable behaviour change, not merely internal. It also moves
+  results DOWN where a tab-indented `def` header is combined with space-indented body lines:
+  `_function_metrics`'s `base_indent` now expands the header's tab while the body lines'
+  indent (already space-only) is unchanged, so the gap between them can shrink (measured on
+  one such method: nesting_depth 10 -> 9, cognitive 21 -> 18), retiring an existing violation
+  on that mixed-indent shape — the new values are closer to truth in both directions, a
+  reduction in over-count rather than a new under-count.
+  Known, documented residuals: `_extract_functions_python` still measures indent with a bare
+  `lstrip()` and is deliberately left alone — it compares a header against its own body with
+  one consistent measure, so it already spans a tab-indented file correctly, and expanding
+  there was measured to SHRINK a mixed tab-and-space function's span (a four-line method
+  dropping to one), which would be a new under-count. The 4-column tab step is HARDCODED,
+  deliberately: the indent step stays at 4 and is not parameterised, since no 2-space
+  language is routed to this model. Parity is against the 4-column space form specifically,
+  because the `// 4` step is hardcoded: MEASURED on a six-level body indented at TWO spaces
+  per level, the space form reports cognitive 11 / nesting_depth 3 and its tab-converted twin
+  reports cognitive 20 / nesting_depth 6. That is an over-count on the tab side, the
+  permitted direction, but it is not parity. A row whose own leading whitespace mixes tabs
+  and spaces is likewise measured by column width at a 4-column tab, which can disagree with
+  python's own tokenizer at 8. The python mask helper `_token_mask_spans` measures a
+  continuation row's leading whitespace with the same bare `lstrip()` `_py_indent_width`
+  uses, so a masked row keeps its tab indent; it previously used `lstrip(" ")` and
+  under-counted a tab-indented body holding a multi-line string (see the parity note
+  above).
+- **The quality gate's C-family control-keyword guard is now scoped to the language that
+  reserves the word, and suppresses a phantom record only when the real enclosing method was
+  itself measured.** `plugins/spec-loop/scripts/quality_gate.py` keys the new
+  `_CONTROL_WORDS_BY_EXT` map by file extension — `foreach`/`using`/`lock`/`fixed` for `.cs`,
+  `synchronized` for `.java` — while the nine words in `_CONTROL_WORDS` stay global; the
+  extension is threaded from `analyze_builtin` through `_extract_functions_for` and
+  `_extract_functions_cbrace` into `_looks_like_call_or_control`, whose unused `line`
+  parameter it replaces and whose docstring no longer claims a function-call detection the
+  body never implemented. Suppression is conditional on coverage by design: the new PURE
+  `_encloses_line` helper drops a `foreach` record only when an already-extracted function's
+  1-based inclusive span contains it. **The retained phantom is DELIBERATE, not a residual
+  defect** — on a C# method whose opening brace sits on its own line, `_CBRACE_DEF_RE` never
+  sees the method, so the `foreach` record is the only measurement of that body (measured:
+  cyclomatic 5, cognitive 8); suppressing it unconditionally would take the file to
+  `class_lines` alone and turn a real reading into a silent pass. An over-count is the one
+  direction this heuristic is permitted to move. That safety argument is PER-METRIC, not
+  blanket: an enclosed phantom's cyclomatic, cognitive, method_lines and nesting_depth are
+  all dominated by the enclosing record whose body contains it, but its `parameter_count` is
+  read from its own header and is NOT — see the `_phantom_is_redundant` entry below.
+  Known, documented residuals: a pure-Allman C# file (every brace on its own line, the
+  Visual Studio default) still extracts nothing at all, because `_CBRACE_DEF_RE` requires
+  the `{` on the signature line — deferred to its own run. (A related residual — `foreach`
+  absent from `_BRANCH_WORDS` — is fixed below in this same Unreleased section.)
+- **A changed file the quality gate could not measure can no longer vanish from the report.**
+  `measure()` in `plugins/spec-loop/scripts/quality_gate.py` ended its skip chain in
+  `elif _lang_for(path) is None`, so a file with a supported extension that yielded zero
+  callables produced neither a function measurement nor a `skipped` entry — measured on a
+  pure-Allman `.cs` file and a `def`-less `.py` file, `skipped` named neither. The chain now
+  ends in an unconditional `else` carrying the new PURE `_skip_reason(path)`, which keeps the
+  existing `"unsupported file type for analysis"` text and adds `"no callable found by the
+  builtin heuristic"` for the supported case, so the two are distinguishable in the report.
+  `plugins/spec-loop/scripts/test_quality_gate.py` gains `TestMeasureSkipRecord`, the suite's
+  first `qg.measure()`-level test. Known, documented residuals: a `skipped` entry still feeds
+  no threshold and no exit code, and `summary.vacuous` is still read by nothing in the
+  per-slice pipeline — only `references/phase-5-integration.md:14` tells any reader to check
+  it. Both are deferred, not fixed here.
+- **The control-keyword suppression could itself under-count, on two separate paths, and both
+  are closed.** `plugins/spec-loop/scripts/quality_gate.py`'s `_encloses_line` (now
+  `_strictly_enclosing_record`) tested only `fn["start"] <= line_no <= fn["end"]`; because `.cs`
+  and `.java` are excluded from `_JS_MASK_EXTS`, `_match_brace_end` counts a `}` inside a
+  string or char literal on the enclosing method's own header line — e.g.
+  `raw.Split('}')` — as a real close, ending the enclosing record's span exactly AT the
+  phantom's header line. That equality used to count as enclosure, suppressing the phantom
+  even though the enclosing record measures almost none of its body; the bound is now
+  exclusive (`line_no < fn["end"]`), and `TestExtensionScopedControlWords` gains
+  `test_a_literal_brace_on_the_control_header_line_keeps_its_phantom` pinning the retained
+  `foreach` record. Separately, suppression assumed an enclosed phantom's own metrics were
+  always dominated by the enclosing record, which is false for `parameter_count`: a C#
+  `using (a, b, c, d, e)` can declare more comma-separated items than the enclosing method's
+  own signature. The new PURE `_phantom_is_redundant` compares the phantom's own header
+  against the enclosing record's header, and the guard keeps the phantom whenever its own
+  count is higher;
+  `test_an_enclosed_multi_declaration_using_keeps_its_own_finding` pins a 5-parameter `using`
+  surviving inside a 1-parameter `Import` method (5 > `DEFAULT_THRESHOLDS["parameter_count"]`
+  == 4). Both are the same failure family the run's NEVER-UNDER-COUNT constraint names.
+  Known, documented residuals: the parameter_count guarantee is an ARGUMENT the code does
+  not assert. `_phantom_is_redundant` reports a phantom redundant when its own count is less
+  than or equal to the enclosing header's, and only a redundant phantom is dropped; a phantom
+  whose count is strictly higher is kept. That is safe only
+  because the enclosing record's own count is then at least as high AND is always emitted
+  alongside — the enclosing span strictly contains the phantom's, so any changed range that
+  reaches the phantom reaches the enclosing record too. Measured both halves on `.cs`:
+  `using (Stream p = A(), q = B(), r = C(), s = D(), t = E())` inside `Go(int a)` reports
+  `Go` 1 AND `using` 5 (the phantom survives, 5 > the threshold of 4); the same `using`
+  inside `Go(int a,int b,int c,int d,int e,int f)` reports `Go` 6 alone, for a full range and
+  for a narrow range covering only the `using` block. `test_quality_gate.py`'s
+  `test_a_dominated_using_is_dropped_only_behind_a_higher_count` pins that second half. A
+  related measured non-result, recorded so no reader re-derives it: the nested-call form
+  `foreach (var x in Zip(a, b, c))` does NOT reach this path at all — `_count_params` splits
+  commas only at paren depth 0, so it measures 1. The multi-declarator `using` is the only
+  shape that reaches it.
+- **A skip record could itself misreport why a file went unmeasured.** `measure()`'s new
+  unconditional `else` arm (see above) reached `_skip_reason(path)` whenever a file yielded
+  zero IN-RANGE findings — which also fires for an import-only edit, a docstring tweak, or any
+  changed hunk that simply falls outside every callable in an otherwise fully-measurable file.
+  Such a file got the same `"no callable found by the builtin heuristic"` text as a file with
+  no callables at all, a false claim on the common path. `_skip_reason` now takes the file's
+  `source` too and calls the new PURE `_has_any_callable` (a changed-range-free extraction) to
+  tell the two apart, returning `"no changed callable found by the builtin heuristic"` when
+  callables exist outside the diff. `measure()` is also refactored into `_read_changed_source`,
+  `_backend_records_for`, `_measurements_for_file`, `_heuristic_measurement`,
+  `_class_measurement`, `_python_only`, `_detect_backend_records` and `_used_backend_names`,
+  which brings its own cyclomatic/cognitive/method_lines/nesting_depth back under threshold
+  (measured before: 14/36/66/5 against 10/15/50/3; after: 5/11/40/3) without changing its
+  return contract; `_extract_functions_cbrace` is similarly split out into `_cbrace_name_at`,
+  bringing its nesting_depth from 5 to 3. `TestMeasureSkipRecord` gains
+  `test_an_import_only_edit_does_not_falsely_claim_no_callable_exists`. Known, documented
+  residuals: `_extract_functions_python`, `_match_brace_end` and `_match_changed` carry
+  pre-existing cognitive_complexity/nesting_depth violations this slice did not introduce and
+  does not fix here, and `class_lines` on both `quality_gate.py` and `test_quality_gate.py`
+  remains accepted debt per standing ruling.
+- **A C# `foreach` now contributes a cyclomatic branch.** `_BRANCH_WORDS` in
+  `plugins/spec-loop/scripts/quality_gate.py:142` gains `foreach`, so both `_branch_count`
+  and `_cognitive_approx` see C#'s loop keyword. Measured on a K&R `.cs` method containing
+  one `foreach`, one `if` with `&&` and one `switch`/`case`: cyclomatic_complexity 4 → 5 and
+  cognitive_complexity 8 → 10, the foreach having contributed nothing before. The word set
+  stays GLOBAL rather than per-language, because a `foreach` in a language that does not
+  reserve it can only over-count, the one direction this heuristic is permitted to move.
+  The match stays case-sensitive and word-boundary-anchored, so JS/Java/Kotlin
+  `arr.forEach(...)` — a method call, not a loop — is not counted, and `for` inside
+  `foreach` fails its own trailing boundary so the keyword adds exactly one branch, not two.
+  `plugins/spec-loop/scripts/test_quality_gate.py` gains
+  `test_csharp_foreach_counts_exactly_one_branch`,
+  `test_camel_case_for_each_is_not_a_branch_word` and the end-to-end
+  `test_a_csharp_foreach_adds_a_branch_to_its_enclosing_method` over the new
+  `CS_FOREACH_CONTROL_SOURCE` fixture, whose enclosing method is genuinely extracted (the
+  phantom is suppressed there by the enclosure guard above, which is why this change is
+  sequenced after it); two pre-existing pinned metric dicts move with it, `Import` 2/3 → 3/5
+  and the deliberately retained `foreach` phantom 5/8 → 6/9. Known, documented residuals:
+  a `foreach` written in a language that does not reserve the word is counted as a branch by
+  design (an over-count); a pure-Allman C# file still extracts no method at all, so its
+  `foreach` is attributed to nothing — deferred to its own run.
 
 ## [2.5.0] - 2026-09-09
 ### Added

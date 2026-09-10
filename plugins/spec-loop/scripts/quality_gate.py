@@ -133,7 +133,14 @@ _JS_MASK_EXTS = frozenset({".js", ".mjs", ".cjs", ".ts"})
 
 # Branch keywords whose occurrence adds one to cyclomatic complexity. Matched as
 # whole words (or operators) so an identifier like `ifield` is not counted.
-_BRANCH_WORDS = ("if", "elif", "case", "catch", "for", "while", "when")
+# The set is deliberately GLOBAL, not per-language: `foreach` is C#'s loop
+# keyword and its worst case elsewhere is an over-count, the one direction
+# this heuristic is permitted to move. Matching stays case-sensitive and
+# \b-anchored so JS/Java `arr.forEach(...)` -- a method call, not a loop --
+# is never counted; `for` inside `foreach` fails its own trailing \b, so the
+# keyword contributes exactly one branch, not two.
+_BRANCH_WORDS = ("if", "elif", "case", "catch", "for", "while", "when",
+                 "foreach")
 _BRANCH_WORD_RE = re.compile(r"\b(?:%s)\b" % "|".join(_BRANCH_WORDS))
 # Boolean operators and the ternary each add a branch. `else if` is NOT listed
 # here: its `if` is already counted by _BRANCH_WORD_RE, so matching it again
@@ -577,17 +584,21 @@ def _token_mask_spans(tok, rows):
     """The (row_index, start_col, end_col) spans one masked token covers, one per
     physical line it reaches. Row indexes are 0-based into `rows`. On the
     opening physical line, masking starts at the token's own start column. On
-    every later physical line, masking starts after that row's own leading
-    spaces rather than at column 0, so the sentinel fill never erases the
-    leading whitespace a downstream nesting-level reader derives from that
-    row: leading whitespace carries no branch words or operator punctuation,
-    so leaving it unmasked is measurement-neutral. (PURE)"""
+    every later physical line, masking starts after that row's whole
+    leading-whitespace run -- spaces AND tabs, the same bare lstrip()
+    _py_indent_width uses -- so the sentinel fill never erases the indent a
+    downstream nesting-level reader derives from that row. It measured that
+    run with lstrip(" ") until the tab fix made _py_indent_width expand
+    tabs: a tab-indented continuation row then had its tabs overwritten and
+    read as indent 0, UNDER-counting _cognitive_approx. Leading whitespace
+    carries no branch words or operator punctuation, so leaving all of it
+    unmasked is measurement-neutral for the scan itself. (PURE)"""
     (first_row, first_col), (last_row, last_col) = tok.start, tok.end
     spans = []
     for row in range(first_row, last_row + 1):
         line = rows[row - 1]
         start = first_col if row == first_row else (
-            len(line) - len(line.lstrip(" ")))
+            len(line) - len(line.lstrip()))
         end = len(line)
         if row == last_row:
             end = last_col
@@ -889,6 +900,19 @@ def _branch_count(text):
             + len(_BRANCH_OPS_RE.findall(text)))
 
 
+def _py_indent_width(line):
+    """Leading-whitespace width of one python source line, in COLUMNS, with
+    tabs expanded. The step is 4 to match the `// 4` the nesting and
+    cognitive models divide by, so one tab reads as exactly one nesting
+    level; expanding at python's own default of 8 would read it as two.
+    The three indent measurements that feed those models go through here:
+    they used to strip spaces alone (`lstrip(" ")`), so a tab-indented file
+    measured indent 0 on every line and collapsed to nesting_depth 0 at any
+    real depth. (PURE)"""
+    lead = line[:len(line) - len(line.lstrip())]
+    return len(lead.expandtabs(4))
+
+
 def _extract_functions_python(lines):
     """Split python source (list of lines, 0-based) into functions by indent.
     Returns [{name, start, end, header_idx}] with 1-based inclusive line spans.
@@ -915,41 +939,140 @@ def _extract_functions_python(lines):
     return funcs
 
 
-def _extract_functions_cbrace(lines):
+def _cbrace_name_at(lines, ext, funcs, i):
+    """The function name detected at 0-based line `i` (else None), tried as a
+    brace signature first and an arrow form second. `funcs` is the record list
+    collected so far; this is where the control-keyword guard's enclosure
+    question is resolved, by _strictly_enclosing_record then
+    _phantom_is_redundant, so the guard itself takes a plain boolean.
+    Extracted out of _extract_functions_cbrace purely to keep that loop's own
+    nesting shallow; carries no state across calls. (PURE)"""
+    line = lines[i]
+    m = _CBRACE_DEF_RE.search(line)
+    if m:
+        enclosing = _strictly_enclosing_record(funcs, i + 1)
+        redundant = _phantom_is_redundant(enclosing, line, lines)
+        if not _looks_like_call_or_control(ext, m, redundant):
+            return m.group(1)
+    am = _CBRACE_ARROW_RE.search(line)
+    if am:
+        return am.group(1)
+    return None
+
+
+def _extract_functions_cbrace(lines, ext=""):
     """Split brace-language source into functions by matching the brace that
     opens each detected signature. Returns [{name, start, end, header_idx}] with
     1-based inclusive spans. Best-effort: a signature whose opening brace can't
-    be balanced is skipped."""
+    be balanced is skipped. `ext` is the file's extension, used only to scope
+    the per-language reserved words in _looks_like_call_or_control; it defaults
+    to "" so a caller with no path gets the global words alone."""
     funcs = []
-    text_by_line = lines
-    for i, line in enumerate(lines):
-        name = None
-        m = _CBRACE_DEF_RE.search(line)
-        if m and not _looks_like_call_or_control(line, m):
-            name = m.group(1)
-        else:
-            am = _CBRACE_ARROW_RE.search(line)
-            if am:
-                name = am.group(1)
+    for i in range(len(lines)):
+        name = _cbrace_name_at(lines, ext, funcs, i)
         if not name:
             continue
-        end = _match_brace_end(text_by_line, i)
+        end = _match_brace_end(lines, i)
         if end is None:
             continue
-        funcs.append({"name": name, "start": i + 1, "end": end + 1,
-                      "header_idx": i})
+        funcs.append({
+            "name": name, "start": i + 1, "end": end + 1,
+            "header_idx": i,
+        })
     return funcs
 
 
+# The 9 words below are reserved in EVERY brace language this analyzer reads,
+# so they stay global. `foreach`/`using`/`lock`/`fixed` (C#) and
+# `synchronized` (Java) are reserved only in their own language -- a .js class
+# may legitimately define a method named `lock`, and measured on a fixture
+# with methods named lock/fixed/using, adding those words globally drops all
+# three real functions from the report. They are therefore keyed by EXTENSION,
+# not by the "cbrace" family, which .ts and .cs share.
 _CONTROL_WORDS = {"if", "for", "while", "switch", "catch", "else", "do",
                   "return", "case"}
+_CONTROL_WORDS_BY_EXT = {
+    ".cs": frozenset({"foreach", "using", "lock", "fixed"}),
+    ".java": frozenset({"synchronized"}),
+}
 
 
-def _looks_like_call_or_control(line, match):
+def _control_words_for(ext):
+    """The extra reserved words for one file extension (a frozenset, possibly
+    empty). `ext` is a leading-dot extension; None, "" and any unknown
+    extension yield the empty set. (PURE)"""
+    return _CONTROL_WORDS_BY_EXT.get((ext or "").lower(), frozenset())
+
+
+def _strictly_enclosing_record(funcs, line_no):
+    """The already-collected function record that STRICTLY contains
+    `line_no`, or None. `funcs` is a list of
+    {name, start, end, header_idx} records whose start/end are 1-BASED
+    INCLUSIVE; `line_no` is 1-based. Records arrive in header order, so the
+    first match is the OUTERMOST enclosing one -- the selection the bare
+    next() this helper replaces already made, preserved deliberately:
+    whichever record encloses the phantom is always emitted alongside it.
+
+    The upper bound is exclusive on purpose: a record's span can only reach
+    exactly the phantom's header line when a non-JS-masked brace language
+    (.cs/.java are excluded from _JS_MASK_EXTS) counts a `}` inside a string
+    or char literal ON that header line and balances the enclosing scan to
+    depth 0 there. In that case the enclosing record does not actually
+    dominate the phantom's body, so equality must not count as enclosure --
+    otherwise the phantom (and the real violation it measures) is suppressed
+    while the record kept in its place covers almost none of it. (PURE)"""
+    for fn in funcs:
+        if fn["start"] <= line_no < fn["end"]:
+            return fn
+    return None
+
+
+def _phantom_is_redundant(enclosing, phantom_header, lines):
+    """True when a control-keyword phantom adds no parameter_count reading
+    its enclosing record does not already carry. `enclosing` is the record
+    from _strictly_enclosing_record (None when nothing encloses the
+    phantom, in which case the phantom is the sole measurement of that body
+    and is never redundant). `phantom_header` is the phantom's own raw
+    source line; `lines` is the file's raw source lines, used only to read
+    the enclosing record's header.
+
+    A phantom declaring MORE comma-separated items than the enclosing
+    method -- e.g. a C# `using (a, b, c, d, e)` inside a one-argument
+    method -- is kept, because collapsing it would silently drop a
+    parameter_count violation the enclosing header does not carry: the
+    exact under-count this heuristic must never introduce. (PURE)"""
+    if enclosing is None:
+        return False
+    phantom_params = _count_params(phantom_header)
+    enclosing_params = _count_params(lines[enclosing["header_idx"]])
+    return phantom_params <= enclosing_params
+
+
+def _looks_like_call_or_control(ext, match, phantom_is_redundant):
     """True if the C-family signature match is really a control keyword
-    (`if (...) {`) or a function CALL, not a definition. Cheap guard to cut the
-    most common false positives in the heuristic path."""
-    return match.group(1) in _CONTROL_WORDS
+    (`if (...) {`) rather than a definition, so the caller should not record it
+    as a function. `ext` is the file's extension, `match` the _CBRACE_DEF_RE
+    match, and `phantom_is_redundant` the caller's already-resolved answer to
+    "does a real record enclose this phantom and already carry every metric it
+    would measure" (see _strictly_enclosing_record and _phantom_is_redundant).
+    Resolving it once at the call site keeps the enclosure bound written in
+    exactly one place.
+
+    A globally reserved word is always rejected. A per-extension word is
+    rejected ONLY when `phantom_is_redundant` -- i.e. when the real enclosing
+    method was itself extracted and the phantom is redundant on every metric
+    it would have measured. When nothing encloses it the phantom is the sole
+    measurement of that method body -- measured on a C# method whose brace
+    sits on its own line, dropping it takes the file from a reported
+    cyclomatic 5 / cognitive 8 to no function measurement at all -- so it is
+    deliberately kept. That is an over-count, the one direction this
+    heuristic is allowed to move. (PURE)"""
+    word = match.group(1)
+    if word in _CONTROL_WORDS:
+        return True
+    if word not in _control_words_for(ext):
+        return False
+    return phantom_is_redundant
 
 
 def _match_brace_end(lines, header_idx):
@@ -976,7 +1099,7 @@ def _nesting_depth_python(body_lines, base_indent):
     for line in body_lines:
         if not line.strip():
             continue
-        indent = len(line) - len(line.lstrip(" "))
+        indent = _py_indent_width(line)
         depth = max(0, (indent - base_indent)) // 4
         max_depth = max(max_depth, depth)
     return max_depth
@@ -1008,7 +1131,7 @@ def _cognitive_approx(body_text_or_lines, lang, base_indent):
             stripped = line.strip()
             if not stripped:
                 continue
-            indent = len(line) - len(line.lstrip(" "))
+            indent = _py_indent_width(line)
             level = max(0, (indent - base_indent)) // 4
             hits = (len(_BRANCH_WORD_RE.findall(stripped))
                     + len(_BRANCH_OPS_RE.findall(stripped)))
@@ -1028,11 +1151,13 @@ def _nonblank(lines):
     return sum(1 for line in lines if line.strip())
 
 
-def _extract_functions_for(lines, lang):
-    """The extracted callables of one file, by language family. (PURE)"""
+def _extract_functions_for(lines, lang, ext=""):
+    """The extracted callables of one file, by language family. `ext` scopes
+    the brace extractor's per-language reserved words; the python branch
+    ignores it. (PURE)"""
     if lang == "python":
         return _extract_functions_python(lines)
-    return _extract_functions_cbrace(lines)
+    return _extract_functions_cbrace(lines, ext)
 
 
 def _nesting_depth_for(body_lines, lang, base_indent):
@@ -1057,12 +1182,14 @@ def _scan_lines_for(source, scan_lang, lines):
 
 def _function_metrics(lines, scan_lines, fn, lang):
     """Measured metric values for one extracted function. `lines` is raw source;
-    `scan_lines` is its masked counterpart, read by the two branch scans alone,
-    so span, indentation and length metrics all stay on raw text. (PURE)"""
+    `scan_lines` is its masked counterpart. Span and length metrics stay on raw
+    text, as does `base_indent`; `_cognitive_approx` reads BOTH branch hits and
+    per-line indent off the masked body, which is why _token_mask_spans must
+    preserve each row's whole leading-whitespace run. (PURE)"""
     body_lines = lines[fn["header_idx"]:fn["end"]]
     scan_body = scan_lines[fn["header_idx"]:fn["end"]]
     header_line = lines[fn["header_idx"]]
-    base_indent = len(header_line) - len(header_line.lstrip(" "))
+    base_indent = _py_indent_width(header_line)
     return {
         "cyclomatic_complexity": _branch_count("\n".join(scan_body)),
         "method_lines": _nonblank(body_lines),
@@ -1090,7 +1217,8 @@ def analyze_builtin(path, source, changed_ranges):
         return [], None
     lines = source.splitlines()
     scan_lines = _scan_lines_for(source, _scan_lang_for(path), lines)
-    funcs = _extract_functions_for(lines, lang)
+    funcs = _extract_functions_for(
+        lines, lang, os.path.splitext(path)[1].lower())
 
     findings = []
     for fn in funcs:
@@ -1235,12 +1363,144 @@ def _match_changed(records, changed_ranges):
                                     changed_ranges)]
 
 
+def _has_any_callable(path, source):
+    """True if the builtin extractor finds at least one callable anywhere in
+    `path`'s full source, ignoring changed ranges entirely. Used only to tell
+    apart, for the skip reason, a file whose callables all sit outside the
+    diff from a file the extractor cannot see any callable in at all. (PURE)"""
+    lang = _lang_for(path)
+    if lang is None:
+        return False
+    lines = source.splitlines()
+    return bool(_extract_functions_for(
+        lines, lang, os.path.splitext(path)[1].lower()))
+
+
+def _skip_reason(path, source):
+    """Why one changed file produced no function measurement. Three cases:
+    unsupported extension (_lang_for(path) is None); a supported file whose
+    callables exist somewhere but none intersect the changed ranges (its
+    diff touched only imports, constants, a docstring, etc.); and a supported
+    file the extractor could not see any callable in at all.
+
+    The second case used to be misreported as the third: `measure()` reached
+    this helper whenever a file yielded zero IN-RANGE findings, with no way to
+    tell "no callables at all" apart from "callables exist, just not in the
+    diff" -- so an import-only edit to a file full of real functions falsely
+    claimed the builtin heuristic found no callable in it. `source` lets this
+    helper re-run the (changed-range-free) extraction to distinguish the two.
+    (PURE)"""
+    if _lang_for(path) is None:
+        return "unsupported file type for analysis"
+    if _has_any_callable(path, source):
+        return "no changed callable found by the builtin heuristic"
+    return "no callable found by the builtin heuristic"
+
+
+def _read_changed_source(path, repo_dir):
+    """The text of one changed file, or None if it cannot be read (missing,
+    a directory, undecodable in a way `errors="replace"` doesn't paper over,
+    permissions, ...). Isolated so measure()'s own loop stays a single
+    if/continue rather than a try/except."""
+    full_path = os.path.join(repo_dir, path)
+    try:
+        with open(full_path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except (OSError, IsADirectoryError):
+        return None
+
+
+def _backend_records_for(path, changed_ranges, lizard_by_file, radon_by_file):
+    """The in-range backend records for one changed file (lizard preferred,
+    radon as fallback), plus its forward-slash-normalised path. Looks up both
+    the normalised and raw spellings since a backend may report either."""
+    norm = path.replace("\\", "/")
+    recs = _match_changed(
+        lizard_by_file.get(norm, []) or lizard_by_file.get(path, []),
+        changed_ranges)
+    if not recs:
+        recs = _match_changed(
+            radon_by_file.get(norm, []) or radon_by_file.get(path, []),
+            changed_ranges)
+    return recs, norm
+
+
+def _heuristic_measurement(path, hf):
+    """One heuristic-only function measurement record for the report, built
+    from a single analyze_builtin() finding `hf`. (PURE)"""
+    return {
+        "file": path, "function": hf["function"],
+        "metrics": hf["metrics"], "source": "builtin-heuristic",
+    }
+
+
+def _class_measurement(path, heur_class):
+    """The class_lines measurement record for `path`, or None if
+    analyze_builtin found no class_finding for it. (PURE)"""
+    if heur_class is None:
+        return None
+    return {
+        "file": path, "class_lines": heur_class["class_lines"],
+        "source": "builtin-heuristic",
+    }
+
+
+def _measurements_for_file(
+        path, source, changed_ranges, lizard_by_file, radon_by_file):
+    """Function measurements, the class measurement (or None) and the skip
+    reason (or None) for one already-read changed file. Exactly one of "some
+    func_measurements" or "a skip reason" holds; never both, never neither."""
+    heur_funcs, heur_class = analyze_builtin(path, source, changed_ranges)
+    backend_recs, norm = _backend_records_for(
+        path, changed_ranges, lizard_by_file, radon_by_file)
+
+    if backend_recs:
+        funcs = _merge_backend_and_heuristic(backend_recs, heur_funcs, norm)
+        skip = None
+    elif heur_funcs:
+        funcs = [_heuristic_measurement(path, hf) for hf in heur_funcs]
+        skip = None
+    else:
+        funcs = []
+        skip = _skip_reason(path, source)
+
+    return funcs, _class_measurement(path, heur_class), skip
+
+
+def _python_only(files):
+    """The .py-suffixed subset of `files`, order preserved. (PURE)"""
+    return [f for f in files if f.endswith(".py")]
+
+
+def _detect_backend_records(files, py_files, repo_dir, backends):
+    """Run the configured backends over the changed files, honouring the
+    historical preference order: lizard first when enabled, radon only as a
+    fallback when lizard produced nothing. Returns (lizard_recs, radon_recs),
+    either possibly empty."""
+    lizard_recs = run_lizard(files, repo_dir) if "lizard" in backends else []
+    radon_wanted = "radon" in backends and not lizard_recs
+    radon_recs = run_radon(py_files, repo_dir) if radon_wanted else []
+    return lizard_recs, radon_recs
+
+
+def _used_backend_names(lizard_recs, radon_recs):
+    """Which backend(s) actually produced records, in preference order.
+    (PURE)"""
+    by_name = (("lizard", lizard_recs), ("radon", radon_recs))
+    return [name for name, recs in by_name if recs]
+
+
 def measure(changed, repo_dir, backends):
     """Measure every changed file, preferring detected backends and falling back
     to the builtin heuristic per file. Returns (function_measurements,
     class_measurements, skipped, used_backends) where each function measurement
     is {file, function, metrics: {...}, source} and skipped is a list of
-    {"metric"|"file", "reason"} entries.
+    {"metric"|"file", "reason"} entries. EVERY changed file that yields no
+    function measurement gets a `skipped` entry -- an unreadable file, an
+    unsupported extension, a supported file whose callables all sit outside
+    the diff, or a supported file the heuristic could not see any callable in
+    at all (see _skip_reason) -- so a file can never leave the report with an
+    incorrect or silently missing explanation.
 
     A backend supplies cyclomatic_complexity / method_lines / parameter_count
     (lizard) or cyclomatic_complexity only (radon); every remaining metric for
@@ -1249,63 +1509,31 @@ def measure(changed, repo_dir, backends):
     tagged accordingly, so no metric is silently dropped and cognitive is never
     attributed to a tool."""
     files = sorted(changed)
-    py_files = [f for f in files if f.endswith(".py")]
+    py_files = _python_only(files)
 
-    lizard_recs = run_lizard(files, repo_dir) if "lizard" in backends else []
-    radon_recs = (run_radon(py_files, repo_dir)
-                  if "radon" in backends and not lizard_recs else [])
+    lizard_recs, radon_recs = _detect_backend_records(
+        files, py_files, repo_dir, backends)
     lizard_by_file = _backend_records_by_file(lizard_recs)
     radon_by_file = _backend_records_by_file(radon_recs)
-
-    used_backends = []
-    if lizard_recs:
-        used_backends.append("lizard")
-    if radon_recs:
-        used_backends.append("radon")
+    used_backends = _used_backend_names(lizard_recs, radon_recs)
 
     func_measurements = []
     class_measurements = []
     skipped = []
 
     for path in files:
-        try:
-            with open(os.path.join(repo_dir, path), encoding="utf-8",
-                      errors="replace") as fh:
-                source = fh.read()
-        except (OSError, IsADirectoryError):
+        source = _read_changed_source(path, repo_dir)
+        if source is None:
             skipped.append({"file": path, "reason": "file not readable"})
             continue
 
-        heur_funcs, heur_class = analyze_builtin(path, source, changed[path])
-        heur_by_name = {(f["function"], f["line_start"]): f for f in heur_funcs}
-
-        norm = path.replace("\\", "/")
-        backend_recs = _match_changed(
-            lizard_by_file.get(norm, []) or lizard_by_file.get(path, []),
-            changed[path])
-        if not backend_recs:
-            backend_recs = _match_changed(
-                radon_by_file.get(norm, []) or radon_by_file.get(path, []),
-                changed[path])
-
-        if backend_recs:
-            func_measurements.extend(
-                _merge_backend_and_heuristic(backend_recs, heur_funcs, norm))
-        elif heur_funcs:
-            for hf in heur_funcs:
-                func_measurements.append({
-                    "file": path, "function": hf["function"],
-                    "metrics": hf["metrics"], "source": "builtin-heuristic",
-                })
-        elif _lang_for(path) is None:
-            skipped.append({"file": path,
-                            "reason": "unsupported file type for analysis"})
-
-        if heur_class is not None:
-            class_measurements.append({
-                "file": path, "class_lines": heur_class["class_lines"],
-                "source": "builtin-heuristic",
-            })
+        funcs, class_measurement, skip = _measurements_for_file(
+            path, source, changed[path], lizard_by_file, radon_by_file)
+        func_measurements.extend(funcs)
+        if class_measurement is not None:
+            class_measurements.append(class_measurement)
+        if skip is not None:
+            skipped.append({"file": path, "reason": skip})
 
     return func_measurements, class_measurements, skipped, used_backends
 

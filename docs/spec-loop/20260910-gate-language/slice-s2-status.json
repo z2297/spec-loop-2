@@ -1,0 +1,265 @@
+{
+  "schema_version": 2,
+  "id": "s2",
+  "status": "DONE",
+  "branch": "spec-loop/20260910-gate-language/s2",
+  "commits": {
+    "base": "b574405e4b90c33a56ba02658a63ee37c6a5d8e4",
+    "head": "5ba3c6bf41598a826edfee0d865fce2109e79a1a"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 6,
+    "over_scope": {
+      "flag": false,
+      "reason": "Every step maps to a clause of the slice goal. Task 2's new characterisation test (CS_DOMINATED_USING_SOURCE) goes marginally beyond 'correct s1's prose', but it pins the very claim the CHANGELOG now makes and reads s1's code without modifying it, so it stays inside the goal and clear of the 'do not re-open s1's suppression logic' ceiling entry."
+    }
+  },
+  "tasks_completed": 2,
+  "review": {
+    "confirmed": 1,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: The rewritten s1 bullet says \"The second residual named here — `foreach` absent from `_BRANCH_WORDS` — is fixed below\", but after the same edit that sentence now names only ONE residual (pure-Allman). The phrase \"the second residual named here\" refers to a residual that is no longer named anywhere in that bullet, so the prose is self-contradictory to a reader of the shipped file.",
+      "P3: The new module fixture `CS_FOREACH_CONTROL_SOURCE` is separated from `FULL = [(1, 400)]` by two blank lines, while every neighbouring module-level fixture in this block (`CS_KR_SOURCE`, `CS_MIXED_SOURCE`, `CS_MULTI_DECL_USING_SOURCE`, `CS_DOMINATED_USING_SOURCE`, `JAVA_SYNCHRONIZED_SOURCE`) uses one. Cosmetic inconsistency only.",
+      "P3: The docstring insertion leaves the paragraph ragged: the inserted text ends mid-line with `primitives or \\`analyze_builtin\\`), backend CSV/JSON` at ~52 columns while the surrounding paragraph is wrapped to ~79, because the untouched continuation lines were not re-wrapped with the new text."
+    ],
+    "open": []
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p 'test_*.py' ; python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_*.py' ; python3 scripts/measure_coverage.py ; node --test --experimental-test-coverage plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs plugins/spec-loop/scripts/slice_wave_radius.test.mjs plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs plugins/spec-loop/scripts/slice_wave_reentry.test.mjs plugins/spec-loop/scripts/slice_wave_accepted.test.mjs plugins/spec-loop/scripts/slice_wave_replan.test.mjs ; claude plugin validate .",
+    "result": "All suite segments passed: validate_marketplace OK; 126 scripts tests OK; 1813 plugins tests OK; 1939 coverage tests OK (97.2% TOTAL, all floors met); 48 node dashboard tests OK; 136 wave tests OK; claude plugin validate passed",
+    "passed": true,
+    "scope": "full",
+    "tree_sha": "09f50d4c129bc48e25bfa7d0d3dbbe95dfb3cb01"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "Quality gate exited with code 1 and produced valid JSON. summary.pass is false. The two violations are class_lines overages in quality_gate.py (1574 vs 300 threshold) and test_quality_gate.py (2059 vs 300 threshold). Per the shared constraints, these are pre-existing violations accepted as standing debt for these two files only.",
+    "head_sha": "5ba3c6bf41598a826edfee0d865fce2109e79a1a",
+    "tree_sha": "09f50d4c129bc48e25bfa7d0d3dbbe95dfb3cb01",
+    "measured_at": "verify:1",
+    "violations": 0,
+    "accepted": [
+      {
+        "metric": "class_lines",
+        "file": "plugins/spec-loop/scripts/quality_gate.py",
+        "function": null,
+        "value": 1574,
+        "threshold": 300
+      },
+      {
+        "metric": "class_lines",
+        "file": "plugins/spec-loop/scripts/test_quality_gate.py",
+        "function": null,
+        "value": 2059,
+        "threshold": 300
+      }
+    ]
+  },
+  "escalations": [],
+  "agents_used": 9,
+  "wave": 2,
+  "events": [
+    {
+      "scope": "s2",
+      "type": "decision",
+      "payload": {
+        "summary": "2 accepted violation fingerprint(s) supplied for s2: class_lines plugins/spec-loop/scripts/quality_gate.py, class_lines plugins/spec-loop/scripts/test_quality_gate.py",
+        "rationale": "controller-recorded acceptances (redispatch.py accept-violations); matched violations stop blocking the gate and are listed under quality.accepted",
+        "reversibility": "moderate"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "decision",
+      "payload": {
+        "summary": "accepted violation keys naming no slice of this wave, accepting nothing: s1",
+        "rationale": "the map is keyed by slice id; a key matching none of the dispatched slices reaches no gate",
+        "reversibility": "n/a"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "refactor-radius",
+      "payload": {
+        "summary": "refactor radius WITHIN: every declared number is at or under its ceiling (compared: rewrite_ratio, touched_existing_files)",
+        "state": "WITHIN",
+        "exceeded": [],
+        "measured": {
+          "rewrite_ratio": 0.08,
+          "touched_existing_files": 3,
+          "rewritten_lines": 10
+        },
+        "thresholds": {
+          "enabled": true,
+          "max_rewrite_ratio": 0.5,
+          "max_touched_existing_files": 8,
+          "min_rewritten_lines": 150
+        },
+        "compared": [
+          "rewrite_ratio",
+          "touched_existing_files"
+        ],
+        "skipped": [],
+        "basis": "Counted from the final task list: 1 existing line rewritten in quality_gate.py (_BRANCH_WORDS tuple), 4 pinned metric values plus 3 docstring lines in test_quality_gate.py, and 2 CHANGELOG sentences, against roughly 120 total changed lines (the rest being new comments, fixtures, tests and prose)."
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council"
+        ],
+        "safety": false,
+        "concerns_folded": 6,
+        "deferred": [],
+        "over_scope": {
+          "flag": false,
+          "reason": "Every step maps to a clause of the slice goal. Task 2's new characterisation test (CS_DOMINATED_USING_SOURCE) goes marginally beyond 'correct s1's prose', but it pins the very claim the CHANGELOG now makes and reads s1's code without modifying it, so it stays inside the goal and clear of the 'do not re-open s1's suppression logic' ceiling entry."
+        }
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:t2",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:full",
+        "model": "inherit",
+        "effort": "medium",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "quality-gate",
+      "payload": {
+        "summary": "measured at gate on e933d5e: 1 violation(s), 2 accepted",
+        "status": "FAIL",
+        "violations": 1,
+        "accepted": 2,
+        "head_sha": "e933d5edbba3218676ad0b1126c4bfaab5462f75",
+        "tree_sha": "ee70ffe33cb12c62ef0f113db23e183084c3c529",
+        "stage": "gate"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "review-summary",
+      "payload": {
+        "note": "fix round 1 touched files outside the original diff: /Users/zachmcmurry/Documents/Repos/spec-loop-2/.worktrees/spec-loop/20260910-gate-language/s2/plugins/spec-loop/scripts/test_quality_gate.py",
+        "requires_full_rereview": true
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "review-summary",
+      "payload": {
+        "findings": 3,
+        "confirmed": 1,
+        "refuted": 0,
+        "fix_rounds": 1,
+        "reviewers": 1
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "s2",
+      "type": "quality-gate",
+      "payload": {
+        "summary": "measured at verify:1 on 5ba3c6b: 0 violation(s), 2 accepted",
+        "status": "FAIL",
+        "violations": 0,
+        "accepted": 2,
+        "head_sha": "5ba3c6bf41598a826edfee0d865fce2109e79a1a",
+        "tree_sha": "09f50d4c129bc48e25bfa7d0d3dbbe95dfb3cb01",
+        "stage": "verify:1"
+      }
+    }
+  ]
+}

@@ -10,7 +10,11 @@ brace languages left deliberately unmasked, the measured regex-versus-quote
 residuals, and every fall-back-to-raw path), a differential harness comparing
 masked against raw measurement over every heuristic-readable file in the plugin
 tree, the builtin heuristic function extraction for python and brace languages,
-backend CSV/JSON
+the per-extension reserved-word scoping and its coverage-conditional phantom
+suppression (`TestExtensionScopedControlWords`), `measure()`'s skip record for
+every changed file it could not measure (`TestMeasureSkipRecord` — the
+suite's FIRST `qg.measure()`-level test; every other class exercises the
+primitives or `analyze_builtin`), backend CSV/JSON
 parsing and backend+heuristic merging with per-metric sourcing (cognitive is
 NEVER attributed to a tool), coverage parsing (cobertura + lcov) and CRAP
 assembly, custom-gate evaluation (metric-form evaluated here, command-form
@@ -594,6 +598,22 @@ class TestBranchCount(unittest.TestCase):
         # 'ifield' / 'forum' must not be counted as if/for
         self.assertEqual(qg._branch_count("ifield = forum + whilehouse\n"), 1)
 
+    def test_csharp_foreach_counts_exactly_one_branch(self):
+        # D2: `foreach` was not a branch word. Measured before: 1 (base only).
+        # After: 2. The tuple's earlier "for" alternative fails its trailing
+        # \b inside `foreach`, so the engine backtracks to the `foreach`
+        # alternative and the keyword is counted ONCE, not twice.
+        self.assertEqual(
+            qg._branch_count("foreach (var r in rows) { }\n"), 2)
+
+    def test_camel_case_for_each_is_not_a_branch_word(self):
+        # The match must stay case-sensitive and \b-anchored: JS/Java/Kotlin
+        # `arr.forEach(...)` is a method call, not a loop keyword, and the
+        # differential harness floors are pinned at EQUALITY against files
+        # that contain it.
+        self.assertEqual(qg._branch_count("arr.forEach(x => x);\n"), 1)
+        self.assertEqual(qg._BRANCH_WORD_RE.findall("arr.forEach(x)"), [])
+
 
 class TestNesting(unittest.TestCase):
     def test_python_nesting_by_indent(self):
@@ -611,6 +631,167 @@ class TestNesting(unittest.TestCase):
     def test_brace_nesting_two_levels(self):
         self.assertEqual(
             qg._nesting_depth_braces("{ if(x){ while(y){ z; } } }"), 2)
+
+
+# A six-level-deep python body, and the byte-identical body with each
+# four-space indent run replaced by a single tab. Measured before the tab
+# fix: the space form reported cognitive 20 / nesting_depth 6, the tab form
+# cognitive 5 / nesting_depth 0 -- every line read as indent 0.
+DEEP_PY_SPACES = (
+    "def deep(a, b, c):\n"
+    "    if a:\n"
+    "        for i in b:\n"
+    "            if c:\n"
+    "                while a:\n"
+    "                    if b and c:\n"
+    "                        return i\n"
+    "    return 0\n"
+)
+DEEP_PY_TABS = "\n".join(
+    line.replace("    ", "\t") for line in DEEP_PY_SPACES.split("\n"))
+
+# The same six-level-deep body, but as a method: the `def` header itself is
+# indented one level inside a class. This pins _function_metrics's own
+# base_indent = _py_indent_width(header_line) line, which DEEP_PY_SPACES /
+# DEEP_PY_TABS above never exercise -- their top-level `def deep` sits at
+# column 0 in both variants, so base_indent is 0 under the old formula too.
+DEEP_PY_METHOD_SPACES = (
+    "class C:\n"
+    "    def deep(self, a, b, c):\n"
+    "        if a:\n"
+    "            for i in b:\n"
+    "                if c:\n"
+    "                    while a:\n"
+    "                        if b and c:\n"
+    "                            return i\n"
+    "        return 0\n"
+)
+DEEP_PY_METHOD_TABS = "\n".join(
+    line.replace("    ", "\t")
+    for line in DEEP_PY_METHOD_SPACES.split("\n"))
+
+# A tab-indented body that CONTAINS a triple-quoted string whose CLOSING
+# row carries branch operators, and the byte-identical space-indented
+# body. No existing TestTabIndentedPython fixture holds a string literal,
+# which is why the mask defect below went uncaught; and the operators
+# after the closing quotes are what make it visible in a metric rather
+# than only in the mask's column arithmetic. MEASURED before this fix:
+# the tab form reported cognitive 10 against the space form's 13 -- the
+# python mask overwrote the tab row's leading tabs with the sentinel, so
+# _cognitive_approx read that continuation row at indent 0. After this
+# fix both report 13 and the full metrics dicts are equal.
+STRINGY_PY_SPACES = (
+    "def stringy(a, b, c):\n"
+    "    if a:\n"
+    "        for i in b:\n"
+    "            note = \"\"\"a long\n"
+    "            note\"\"\" if c and b else \"\"\n"
+    "            if c and note:\n"
+    "                return i\n"
+    "    return 0\n"
+)
+STRINGY_PY_TABS = "\n".join(
+    line.replace("    ", "\t") for line in STRINGY_PY_SPACES.split("\n"))
+
+# The DOWN direction, which no other fixture here pins: a class whose
+# `def` header is TAB-indented while its body lines are SPACE-indented.
+# base_indent now expands the header's tab to 4 columns while the body's
+# space widths are unchanged, so the gap between them SHRINKS. MEASURED
+# pre-s3 (26adcad) cognitive 25 / nesting_depth 7; head cognitive
+# 20 / nesting_depth 6. That is a reduction in over-count, not a new
+# under-count -- head cognitive 20 is still above the cognitive
+# threshold of 15, so this shape does NOT change its verdict; it changes
+# its number, and this fixture exists so that direction is never silent.
+MIXED_INDENT_PY = (
+    "class C:\n"
+    "\tdef mixed(self, a, b, c):\n"
+    "        if a:\n"
+    "            for i in b:\n"
+    "                if c:\n"
+    "                    while a:\n"
+    "                        if b and c:\n"
+    "                            return i\n"
+    "        return 0\n"
+)
+
+
+class TestTabIndentedPython(unittest.TestCase):
+    """The indent model must read a tab as one nesting step. Before this
+    fix _nesting_depth_python and the python arm of _cognitive_approx
+    stripped only spaces, so a tab-indented file collapsed to depth 0 and
+    passed the nesting threshold of 3 at any real depth -- an under-count,
+    the one direction this heuristic is never allowed to move."""
+
+    def metrics(self, source):
+        """Builtin metrics for one whole-file python source string."""
+        findings, _ = qg.analyze_builtin("m.py", source, [(1, 8)])
+        return findings[0]["metrics"]
+
+    def test_a_tab_indented_body_reports_real_nesting_depth(self):
+        got = self.metrics(DEEP_PY_TABS)
+        self.assertEqual(got["nesting_depth"], 6)
+        self.assertGreater(
+            got["nesting_depth"],
+            qg.DEFAULT_THRESHOLDS["nesting_depth"])
+
+    def test_tabs_and_spaces_measure_identically(self):
+        self.assertEqual(
+            self.metrics(DEEP_PY_TABS), self.metrics(DEEP_PY_SPACES))
+
+    def test_a_tab_indented_method_header_reports_real_nesting_depth(self):
+        """Pins _function_metrics's base_indent line: a tab-indented `def`
+        header that is itself indented (a method, not a top-level function)
+        must still measure the real nesting depth of its body."""
+        got = self.metrics(DEEP_PY_METHOD_TABS)
+        self.assertEqual(got["nesting_depth"], 6)
+        self.assertGreater(
+            got["nesting_depth"],
+            qg.DEFAULT_THRESHOLDS["nesting_depth"])
+
+    def test_tabs_and_spaces_measure_identically_for_a_method(self):
+        self.assertEqual(
+            self.metrics(DEEP_PY_METHOD_TABS),
+            self.metrics(DEEP_PY_METHOD_SPACES))
+
+    def test_the_helper_expands_a_tab_to_one_indent_step(self):
+        self.assertEqual(qg._py_indent_width("\tif a:"), 4)
+        self.assertEqual(qg._py_indent_width("        if a:"), 8)
+        self.assertEqual(qg._py_indent_width("\t    if a:"), 8)
+        self.assertEqual(qg._py_indent_width("if a:"), 0)
+        self.assertEqual(qg._py_indent_width(""), 0)
+
+    def test_a_tab_indented_string_literal_keeps_its_indent_through_the_mask(
+            self):
+        # F1: _token_mask_spans started each continuation row's sentinel fill
+        # at lstrip(" "), which is 0 on a tab-indented row, so the fill erased
+        # the leading TABS that _py_indent_width now reads. MEASURED before
+        # the fix: cognitive 10 for the tab body against 13 for the identical
+        # space body -- an under-count, the one direction this heuristic is
+        # never allowed to move.
+        self.assertEqual(
+            self.metrics(STRINGY_PY_TABS),
+            self.metrics(STRINGY_PY_SPACES))
+
+    def test_the_mask_leaves_a_tab_continuation_rows_indent_alone(self):
+        # The mechanism behind the test above, pinned directly: every masked
+        # row must report the same _py_indent_width as its raw counterpart.
+        # MEASURED before the fix: row index 4 read 12 raw and 0 masked.
+        masked = qg._mask_python_literals(STRINGY_PY_TABS)
+        self.assertIsNotNone(masked)
+        for raw, got in zip(STRINGY_PY_TABS.split("\n"), masked.split("\n")):
+            self.assertEqual(
+                qg._py_indent_width(got), qg._py_indent_width(raw))
+
+    def test_a_mixed_indent_method_pins_the_downward_direction(self):
+        # F3: the CHANGELOG documents that this change can move results DOWN
+        # and nothing pinned it. Tab-indented `def` header, space-indented
+        # body: MEASURED pre-s3 (26adcad) cognitive 25 / nesting_depth
+        # 7, head cognitive 20 / nesting_depth 6. Both head values
+        # are pinned exactly so a future indent change cannot move this shape
+        # again without a test saying so.
+        got = self.metrics(MIXED_INDENT_PY)
+        self.assertEqual(got["cognitive_complexity"], 20)
+        self.assertEqual(got["nesting_depth"], 6)
 
 
 class TestCrapScore(unittest.TestCase):
@@ -1118,6 +1299,44 @@ class TestAnalyzeBuiltinPython(unittest.TestCase):
         findings, cls = qg.analyze_builtin("data.txt", "whatever\n", [(1, 1)])
         self.assertEqual(findings, [])
         self.assertIsNone(cls)
+
+
+# A two-record list where the OUTER record is listed first, exactly as
+# _extract_functions_cbrace appends them (headers in source order). F4:
+# the bound `fn['start'] <= line_no < fn['end']` used to be written twice
+# -- once as a predicate and once re-derived inside a bare next() -- so a
+# drift between them would raise StopIteration inside analyze_builtin,
+# which has no try/except around it in measure()'s file loop and would
+# abort the gate for EVERY file rather than one. MEASURED: behaviour is
+# unchanged; next() selected the OUTERMOST enclosing record and so does
+# the helper. The 1-based-inclusive boundary cases live with
+# TestExtensionScopedControlWords, which owns them already.
+ENCLOSING_FUNCS = [
+    {"name": "outer", "start": 1, "end": 20, "header_idx": 0},
+    {"name": "inner", "start": 5, "end": 12, "header_idx": 4},
+]
+
+
+class TestEnclosingRecord(unittest.TestCase):
+    def test_it_selects_the_outermost_enclosing_record(self):
+        got = qg._strictly_enclosing_record(ENCLOSING_FUNCS, 7)
+        self.assertEqual(got["name"], "outer")
+
+    def test_a_phantom_with_more_params_is_not_redundant(self):
+        lines = ["void outer(int a) {"] + [""] * 19
+        self.assertFalse(
+            qg._phantom_is_redundant(
+                ENCLOSING_FUNCS[0], "using (a, b, c, d, e) {", lines))
+
+    def test_a_phantom_with_no_more_params_is_redundant(self):
+        lines = ["void outer(int a, int b) {"] + [""] * 19
+        self.assertTrue(
+            qg._phantom_is_redundant(
+                ENCLOSING_FUNCS[0], "using (x) {", lines))
+
+    def test_no_enclosing_record_means_not_redundant(self):
+        self.assertFalse(
+            qg._phantom_is_redundant(None, "using (x) {", []))
 
 
 class TestAnalyzeBuiltinCbrace(unittest.TestCase):
@@ -1928,6 +2147,463 @@ class TestDifferentialAgainstRawScan(unittest.TestCase):
             if brace and got["metrics"] != was["metrics"]:
                 moved.append(where)
         self.assertGreater(len(moved), 10)
+
+
+
+# --------------------------------------------------------------------------
+# D1: the C-family control-keyword guard was language-blind. `foreach`,
+# `using`, `lock`, `fixed` (C#) and `synchronized` (Java) matched
+# _CBRACE_DEF_RE and were measured as functions. These fixtures live at
+# module level because the gate measures function bodies and a fixture inside
+# a test method would be counted as that method's own branching.
+# --------------------------------------------------------------------------
+
+CS_KR_SOURCE = (
+    "public class Importer\n"
+    "{\n"
+    "    public void Import(List<Row> rows, bool strict) {\n"
+    "        foreach (var row in rows) {\n"
+    "            if (row.Valid) { Accept(row); }\n"
+    "        }\n"
+    "        using (var log = Open()) {\n"
+    "            log.Write(\"done\");\n"
+    "        }\n"
+    "        lock (_gate) { _count++; }\n"
+    "    }\n"
+    "}\n"
+)
+
+CS_MIXED_SOURCE = (
+    "public class Importer\n"
+    "{\n"
+    "    public void Import(List<Row> rows, bool strict)\n"
+    "    {\n"
+    "        foreach (var row in rows) {\n"
+    "            if (row.Valid && strict) { Accept(row); }\n"
+    "            else if (row.Retry) { Queue(row); }\n"
+    "            while (row.Next != null) { row = row.Next; }\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
+CS_LITERAL_BRACE_HEADER_SOURCE = (
+    "public class Importer\n"
+    "{\n"
+    "    public void Import(string raw) {\n"
+    "        foreach (var part in raw.Split('}')) {\n"
+    "            if (part.Length > 0) { Accept(part); }\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
+CS_MULTI_DECL_USING_SOURCE = (
+    "public class Importer\n"
+    "{\n"
+    "    public void Import(List<Row> rows) {\n"
+    "        using (var a = Foo(), b = Bar(), c = Baz(), d = Qux(), e = Zap()) {\n"
+    "            a.Write(b);\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
+# r1-F1 follow-up (s2): the same shape with the DOMINANCE reversed. The
+# `using` header declares 5 comma items, the enclosing Go declares 6, so
+# _phantom_is_redundant DOES report the phantom redundant, so it is dropped.
+# Measured: {'Go': 6} for a full [(1, 400)] range and for a narrow
+# [(4, 6)] range covering only the using block -- the dropped count is
+# never the file's highest, and the enclosing record is always emitted
+# alongside because its span strictly contains the phantom's.
+CS_DOMINATED_USING_SOURCE = (
+    "public class C\n"
+    "{\n"
+    "    public void Go(int a,int b,int c,int d,int e,int f) {\n"
+    "        using (Stream p = A(), q = B(), r = C(), s = D(), t = E()) {\n"
+    "            p.Write(q);\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
+JAVA_SYNCHRONIZED_SOURCE = (
+    "public class Cache\n"
+    "{\n"
+    "    public void put(String k, Object v) {\n"
+    "        synchronized (this) {\n"
+    "            if (k != null) { map.put(k, v); }\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
+JS_RESERVED_NAME_METHODS = (
+    "class Store {\n"
+    "    lock(a, b) {\n"
+    "        if (a) { return b; }\n"
+    "        return 0;\n"
+    "    }\n"
+    "    fixed(a) {\n"
+    "        return a;\n"
+    "    }\n"
+    "    using(a, b) {\n"
+    "        if (a && b) { return 1; }\n"
+    "        return 2;\n"
+    "    }\n"
+    "}\n"
+)
+
+# D2: `foreach` was absent from _BRANCH_WORDS, so a C# foreach loop added no
+# cyclomatic branch. Measured on this fixture BEFORE the fix: Go scored
+# cyclomatic_complexity 4 (1 base + if + && + case) and cognitive 8, with
+# the foreach contributing nothing. AFTER: 5 and 10. K&R braces, so the
+# real enclosing method IS extracted and the branch is attributed to Go
+# rather than to a phantom (s1's enclosure suppression drops the phantom
+# here, which is why this slice was ordered after s1).
+CS_FOREACH_CONTROL_SOURCE = (
+    "public class C\n"
+    "{\n"
+    "    public void Go(List<Row> rows) {\n"
+    "        foreach (var r in rows) {\n"
+    "            if (r.A && r.B) { X(r); }\n"
+    "        }\n"
+    "        switch (rows.Count) { case 1: Y(); break; }\n"
+    "    }\n"
+    "}\n"
+)
+
+
+FULL = [(1, 400)]
+
+
+class TestExtensionScopedControlWords(unittest.TestCase):
+    """The per-extension reserved words suppress a phantom record ONLY when an
+    already-extracted function encloses the match line. Otherwise the phantom
+    is the sole measurement of that method body and is deliberately kept: an
+    over-count is the permitted direction, a silent pass is not."""
+
+    def names(self, path, source):
+        findings, _ = qg.analyze_builtin(path, source, FULL)
+        return [f["function"] for f in findings]
+
+    def by_name(self, path, source):
+        findings, _ = qg.analyze_builtin(path, source, FULL)
+        return {f["function"]: f for f in findings}
+
+    def test_the_function_record_contract_is_one_based_inclusive(self):
+        # The enclosure helper reads these spans, so the convention is pinned
+        # directly rather than inferred: start/end are 1-based inclusive and
+        # header_idx is 0-based, always start - 1.
+        funcs = qg._extract_functions_cbrace(CS_KR_SOURCE.splitlines(), ".cs")
+        self.assertEqual(len(funcs), 1)
+        record = funcs[0]
+        self.assertEqual(sorted(record), ["end", "header_idx", "name", "start"])
+        self.assertEqual(record["name"], "Import")
+        self.assertEqual((record["start"], record["end"]), (3, 11))
+        self.assertEqual(record["header_idx"], record["start"] - 1)
+
+    def test_the_enclosure_helper_reads_one_based_inclusive_spans_strictly(self):
+        # r0-F1: the upper bound is EXCLUSIVE now -- a record whose own end
+        # equals the phantom's header line does not strictly enclose it. That
+        # equality is exactly what a stray brace-in-a-literal on the header
+        # line produces (see test_a_literal_brace_on_the_header_line_...
+        # below), so treating it as enclosure silently drops a real
+        # violation.
+        # r1-F4: the helper now returns the enclosing record or None; the
+        # bound is unchanged.
+        funcs = [{"name": "Import", "start": 3, "end": 11, "header_idx": 2}]
+        self.assertIsNone(qg._strictly_enclosing_record(funcs, 2))
+        self.assertIsNotNone(qg._strictly_enclosing_record(funcs, 3))
+        self.assertIsNotNone(qg._strictly_enclosing_record(funcs, 10))
+        self.assertIsNone(qg._strictly_enclosing_record(funcs, 11))
+        self.assertIsNone(qg._strictly_enclosing_record(funcs, 12))
+        self.assertIsNone(qg._strictly_enclosing_record([], 3))
+
+    def test_the_reserved_words_are_scoped_to_their_own_extensions(self):
+        self.assertEqual(
+            qg._control_words_for(".cs"),
+            frozenset({"foreach", "using", "lock", "fixed"}))
+        self.assertEqual(
+            qg._control_words_for(".java"), frozenset({"synchronized"}))
+        self.assertEqual(qg._control_words_for(".js"), frozenset())
+        self.assertEqual(qg._control_words_for(""), frozenset())
+        self.assertEqual(qg._control_words_for(None), frozenset())
+        # The 9 globally reserved words are unchanged and stay global.
+        self.assertEqual(
+            qg._CONTROL_WORDS,
+            {"if", "for", "while", "switch", "catch", "else", "do",
+             "return", "case"})
+
+    def test_a_kandr_csharp_method_drops_its_enclosed_phantoms(self):
+        # Measured before: 4 records -- Import (3-11, cc 2, cog 3) plus
+        # foreach (4-6, cc 2), using (7-9, cc 1) and lock (10-10, cc 1), all
+        # three inside Import's span. After: Import alone, metrics unchanged.
+        # s2: adding `foreach` to _BRANCH_WORDS raises Import's own count --
+        # cyclomatic 2 -> 3, cognitive 3 -> 5 (the foreach is at brace depth 1,
+        # so _cognitive_approx weights it x2). The extraction list is unchanged.
+        self.assertEqual(
+            qg._extract_functions_cbrace(CS_KR_SOURCE.splitlines(), ".cs"),
+            [{"name": "Import", "start": 3, "end": 11, "header_idx": 2}])
+        found = self.by_name("Importer.cs", CS_KR_SOURCE)
+        self.assertEqual(sorted(found), ["Import"])
+        self.assertEqual(found["Import"]["metrics"], {
+            "cyclomatic_complexity": 3,
+            "method_lines": 9,
+            "parameter_count": 2,
+            "cognitive_complexity": 5,
+            "nesting_depth": 2,
+        })
+
+    def test_a_java_synchronized_block_drops_inside_its_method(self):
+        # Measured before: put (3-7, cc 2, cog 3, nest 2) AND the phantom
+        # synchronized (4-6, cc 2, cog 2, nest 1). After: put alone.
+        self.assertEqual(
+            qg._extract_functions_cbrace(
+                JAVA_SYNCHRONIZED_SOURCE.splitlines(), ".java"),
+            [{"name": "put", "start": 3, "end": 7, "header_idx": 2}])
+        found = self.by_name("Cache.java", JAVA_SYNCHRONIZED_SOURCE)
+        self.assertEqual(sorted(found), ["put"])
+        self.assertEqual(found["put"]["metrics"]["cognitive_complexity"], 3)
+        self.assertEqual(found["put"]["metrics"]["nesting_depth"], 2)
+
+    def test_an_unenclosed_csharp_phantom_is_deliberately_retained(self):
+        # The mixed-brace shape: the method's `{` is on its own line so
+        # _CBRACE_DEF_RE misses the method, and the `foreach` record (5-9,
+        # cc 5, cog 8, ml 5, nest 1) is the ONLY measurement of that body.
+        # Measured: unconditional suppression collapses this file to
+        # class_lines alone. Nothing extracted encloses line 5, so the
+        # record is KEPT, before and after, with every metric identical.
+        # s2: the retained record's own body now counts its `foreach` too --
+        # cyclomatic 5 -> 6, cognitive 8 -> 9. Retention itself is unchanged.
+        self.assertEqual(
+            qg._extract_functions_cbrace(CS_MIXED_SOURCE.splitlines(), ".cs"),
+            [{"name": "foreach", "start": 5, "end": 9, "header_idx": 4}])
+        found = self.by_name("Importer.cs", CS_MIXED_SOURCE)
+        self.assertEqual(sorted(found), ["foreach"])
+        self.assertEqual(found["foreach"]["metrics"], {
+            "cyclomatic_complexity": 6,
+            "method_lines": 5,
+            "parameter_count": 1,
+            "cognitive_complexity": 9,
+            "nesting_depth": 1,
+        })
+
+    def test_javascript_methods_named_lock_fixed_and_using_survive(self):
+        # The safety regression the extension scoping exists to prevent: add
+        # these words GLOBALLY and this file measures zero functions. Measured
+        # both before and after -- lock (2-5, cc 2, cog 2, ml 4, params 2,
+        # nest 1), fixed (6-8, cc 1, cog 0, ml 3, params 1, nest 0),
+        # using (9-12, cc 3, cog 4, ml 4, params 2, nest 1).
+        found = self.by_name("store.js", JS_RESERVED_NAME_METHODS)
+        self.assertEqual(sorted(found), ["fixed", "lock", "using"])
+        self.assertEqual(found["lock"]["metrics"], {
+            "cyclomatic_complexity": 2, "method_lines": 4,
+            "parameter_count": 2, "cognitive_complexity": 2,
+            "nesting_depth": 1,
+        })
+        self.assertEqual(found["fixed"]["metrics"], {
+            "cyclomatic_complexity": 1, "method_lines": 3,
+            "parameter_count": 1, "cognitive_complexity": 0,
+            "nesting_depth": 0,
+        })
+        self.assertEqual(found["using"]["metrics"], {
+            "cyclomatic_complexity": 3, "method_lines": 4,
+            "parameter_count": 2, "cognitive_complexity": 4,
+            "nesting_depth": 1,
+        })
+
+    def test_a_typescript_file_is_not_given_the_csharp_words(self):
+        # .ts and .cs both route to "cbrace"; the scoping key is the
+        # EXTENSION, not the family, so a .ts `using` method survives.
+        found = self.by_name("store.ts", JS_RESERVED_NAME_METHODS)
+        self.assertEqual(sorted(found), ["fixed", "lock", "using"])
+
+    def test_the_global_control_words_still_apply_to_every_extension(self):
+        # Regression guard on the 9 pre-existing words: `if (a) {` must not
+        # become a function in a .cs file either.
+        self.assertNotIn("if", self.names("Importer.cs", CS_KR_SOURCE))
+        self.assertNotIn("if", self.names("store.js", JS_RESERVED_NAME_METHODS))
+
+    def test_a_literal_brace_on_the_control_header_line_keeps_its_phantom(self):
+        # r0-F1: .cs is excluded from _JS_MASK_EXTS, so _match_brace_end reads
+        # raw text and the char literal '}' inside `raw.Split('}')` balances
+        # Import's own scan to depth 0 exactly on the foreach header line,
+        # i.e. Import's measured end EQUALS foreach's header line_no. Under
+        # the old inclusive `_encloses_line` that equality counted as
+        # enclosure and foreach vanished entirely (measured: only "Import"
+        # remained). Under the new strict `_strictly_enclosing_record` equality
+        # no longer enclose, so foreach is retained.
+        funcs = qg._extract_functions_cbrace(
+            CS_LITERAL_BRACE_HEADER_SOURCE.splitlines(), ".cs")
+        names = [fn["name"] for fn in funcs]
+        self.assertIn("foreach", names)
+        found = self.by_name("Importer.cs", CS_LITERAL_BRACE_HEADER_SOURCE)
+        self.assertIn("foreach", found)
+
+    def test_an_enclosed_multi_declaration_using_keeps_its_own_finding(self):
+        # r1-F1: `using (a, b, c, d, e)`'s own header declares 5 comma
+        # items -- more than the enclosing Import(rows) method's 1 parameter
+        # -- so suppressing it as "redundant" would drop a real
+        # parameter_count violation (5 > DEFAULT_THRESHOLDS["parameter_count"]
+        # == 4) that the enclosing record's own header never carries. Measured
+        # before this guard: the phantom was unconditionally suppressed once
+        # enclosed, at parameter_count 5.
+        funcs = qg._extract_functions_cbrace(
+            CS_MULTI_DECL_USING_SOURCE.splitlines(), ".cs")
+        names = [fn["name"] for fn in funcs]
+        self.assertIn("using", names)
+        found = self.by_name("Importer.cs", CS_MULTI_DECL_USING_SOURCE)
+        self.assertIn("using", found)
+        self.assertEqual(found["using"]["metrics"]["parameter_count"], 5)
+        self.assertGreater(
+            found["using"]["metrics"]["parameter_count"],
+            qg.DEFAULT_THRESHOLDS["parameter_count"])
+
+    def test_a_csharp_foreach_adds_a_branch_to_its_enclosing_method(self):
+        # D2, end to end through analyze_builtin so a mis-wired routing fails
+        # here rather than passing on a hand-composed _branch_count call.
+        # Measured before: Go cyclomatic 4, cognitive 8. After: 5 and 10 --
+        # the foreach sits at brace depth 1, so _cognitive_approx weights it
+        # x2. Every other metric is unchanged.
+        found = self.by_name("C.cs", CS_FOREACH_CONTROL_SOURCE)
+        self.assertEqual(sorted(found), ["Go"])
+        self.assertEqual(found["Go"]["metrics"], {
+            "cyclomatic_complexity": 5,
+            "method_lines": 6,
+            "parameter_count": 1,
+            "cognitive_complexity": 10,
+            "nesting_depth": 2,
+        })
+
+    def test_a_dominated_using_is_dropped_only_behind_a_higher_count(self):
+        # The narrow guarantee the CHANGELOG now states, pinned rather than
+        # argued: suppression's per-metric safety for parameter_count rests on
+        # BOTH halves. When the phantom's own count is higher it survives
+        # (test_an_enclosed_multi_declaration_using_keeps_its_own_finding);
+        # when it is lower it is dropped, and the enclosing record that
+        # replaces it carries a HIGHER count and is emitted for any changed
+        # range that could have reached the phantom -- its span strictly
+        # contains the phantom's.
+        for ranges in ([(1, 400)], [(4, 6)]):
+            findings, _ = qg.analyze_builtin(
+                "C.cs", CS_DOMINATED_USING_SOURCE, ranges)
+            counts = {
+                f["function"]: f["metrics"]["parameter_count"]
+                for f in findings
+            }
+            self.assertEqual(counts, {"Go": 6})
+            self.assertGreater(
+                counts["Go"], qg.DEFAULT_THRESHOLDS["parameter_count"])
+
+
+# --------------------------------------------------------------------------
+# D3: measure()'s skip chain ended in `elif _lang_for(path) is None`, so a
+# SUPPORTED file that yielded zero callables produced neither a function
+# measurement nor a skip record -- it vanished from the report entirely.
+# Measured on a pure-Allman I.cs plus a def-less conf.py: skipped held one
+# entry (notes.md) and neither of the other two files appeared anywhere in it.
+# --------------------------------------------------------------------------
+
+CS_PURE_ALLMAN_SOURCE = (
+    "public class I\n"
+    "{\n"
+    "    public void Import(int a)\n"
+    "    {\n"
+    "        return;\n"
+    "    }\n"
+    "}\n"
+)
+
+
+class TestMeasureSkipRecord(unittest.TestCase):
+    """measure() must leave a record for every changed file it could not
+    measure, distinguishing an unsupported extension from a supported one that
+    yielded no callables. Writes real files, so this is not a pure test."""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="quality_gate_skip_")
+        self.addCleanup(shutil.rmtree, self._tmp, ignore_errors=True)
+        Path(self._tmp, "I.cs").write_text(
+            CS_PURE_ALLMAN_SOURCE, encoding="utf-8")
+        Path(self._tmp, "conf.py").write_text("x = 1\n", encoding="utf-8")
+        Path(self._tmp, "notes.md").write_text("# notes\n", encoding="utf-8")
+
+    def measure_all(self):
+        changed = {"I.cs": [(1, 7)], "conf.py": [(1, 1)],
+                   "notes.md": [(1, 1)]}
+        funcs, classes, skipped, backends = qg.measure(
+            changed, self._tmp, [])
+        return funcs, classes, skipped, backends
+
+    def test_the_three_skip_reasons_are_distinguishable(self):
+        self.assertEqual(
+            qg._skip_reason("notes.md", "# notes\n"),
+            "unsupported file type for analysis")
+        self.assertEqual(
+            qg._skip_reason("I.cs", CS_PURE_ALLMAN_SOURCE),
+            "no callable found by the builtin heuristic")
+        self.assertEqual(
+            qg._skip_reason("conf.py", "x = 1\n"),
+            "no callable found by the builtin heuristic")
+        self.assertEqual(
+            qg._skip_reason("m.py", "def a(x):\n    return x\n"),
+            "no changed callable found by the builtin heuristic")
+
+    def test_a_supported_file_with_no_callables_leaves_a_skip_record(self):
+        # Measured before: skipped == [{"file": "notes.md", ...}] only -- the
+        # pure-Allman I.cs (which extracts zero functions because
+        # _CBRACE_DEF_RE needs the `{` on the signature line) and the def-less
+        # conf.py appeared in NO record. After: all three are present.
+        funcs, _, skipped, _ = self.measure_all()
+        self.assertEqual(funcs, [])
+        self.assertEqual(
+            {s["file"]: s["reason"] for s in skipped},
+            {"notes.md": "unsupported file type for analysis",
+             "I.cs": "no callable found by the builtin heuristic",
+             "conf.py": "no callable found by the builtin heuristic"})
+
+    def test_the_unsupported_reason_string_is_unchanged(self):
+        # The pre-existing reason text is an output surface; only the new arm
+        # is new, so pin the old string exactly.
+        _, _, skipped, _ = self.measure_all()
+        reasons = [s["reason"] for s in skipped if s["file"] == "notes.md"]
+        self.assertEqual(reasons, ["unsupported file type for analysis"])
+
+    def test_a_measured_file_gets_no_skip_record(self):
+        # The else-arm must not fire for a file that WAS measured.
+        Path(self._tmp, "m.py").write_text(
+            "def a(x):\n    if x:\n        return 1\n    return 0\n",
+            encoding="utf-8")
+        funcs, _, skipped, _ = qg.measure({"m.py": [(1, 4)]}, self._tmp, [])
+        self.assertEqual([f["function"] for f in funcs], ["a"])
+        self.assertEqual(skipped, [])
+
+    def test_class_lines_is_still_emitted_for_a_skipped_supported_file(self):
+        # The skip record is additive: class_lines is not language-routed and
+        # must still be measured for I.cs and conf.py.
+        _, classes, _, _ = self.measure_all()
+        self.assertEqual(
+            {c["file"]: c["class_lines"] for c in classes},
+            {"I.cs": 7, "conf.py": 1})
+
+    def test_an_import_only_edit_does_not_falsely_claim_no_callable_exists(self):
+        # r0-F2: before this fix, measure() reached _skip_reason whenever a
+        # file yielded zero IN-RANGE findings, so an import-only edit to a
+        # file that DOES define real callables -- they just aren't in the
+        # diff -- reported the same "no callable found by the builtin
+        # heuristic" text as a genuinely callable-less file. Measured before:
+        # skipped == [{"file": "m.py",
+        # "reason": "no callable found by the builtin heuristic"}], a false
+        # claim since `def a(x)` is right there, just outside line (1, 1).
+        Path(self._tmp, "m.py").write_text(
+            "import os\ndef a(x):\n    return os.path.join(x)\n",
+            encoding="utf-8")
+        funcs, _, skipped, _ = qg.measure({"m.py": [(1, 1)]}, self._tmp, [])
+        self.assertEqual(funcs, [])
+        self.assertEqual(
+            {s["file"]: s["reason"] for s in skipped},
+            {"m.py": "no changed callable found by the builtin heuristic"})
 
 
 if __name__ == "__main__":
