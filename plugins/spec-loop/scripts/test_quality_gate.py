@@ -693,6 +693,27 @@ STRINGY_PY_SPACES = (
 STRINGY_PY_TABS = "\n".join(
     line.replace("    ", "\t") for line in STRINGY_PY_SPACES.split("\n"))
 
+# The DOWN direction, which no other fixture here pins: a class whose
+# `def` header is TAB-indented while its body lines are SPACE-indented.
+# base_indent now expands the header's tab to 4 columns while the body's
+# space widths are unchanged, so the gap between them SHRINKS. MEASURED
+# pre-s3 (26adcad) cognitive 25 / nesting_depth 7; head cognitive
+# 20 / nesting_depth 6. That is a reduction in over-count, not a new
+# under-count -- head cognitive 20 is still above the cognitive
+# threshold of 15, so this shape does NOT change its verdict; it changes
+# its number, and this fixture exists so that direction is never silent.
+MIXED_INDENT_PY = (
+    "class C:\n"
+    "\tdef mixed(self, a, b, c):\n"
+    "        if a:\n"
+    "            for i in b:\n"
+    "                if c:\n"
+    "                    while a:\n"
+    "                        if b and c:\n"
+    "                            return i\n"
+    "        return 0\n"
+)
+
 
 class TestTabIndentedPython(unittest.TestCase):
     """The indent model must read a tab as one nesting step. Before this
@@ -760,6 +781,17 @@ class TestTabIndentedPython(unittest.TestCase):
         for raw, got in zip(STRINGY_PY_TABS.split("\n"), masked.split("\n")):
             self.assertEqual(
                 qg._py_indent_width(got), qg._py_indent_width(raw))
+
+    def test_a_mixed_indent_method_pins_the_downward_direction(self):
+        # F3: the CHANGELOG documents that this change can move results DOWN
+        # and nothing pinned it. Tab-indented `def` header, space-indented
+        # body: MEASURED pre-s3 (26adcad) cognitive 25 / nesting_depth
+        # 7, head cognitive 20 / nesting_depth 6. Both head values
+        # are pinned exactly so a future indent change cannot move this shape
+        # again without a test saying so.
+        got = self.metrics(MIXED_INDENT_PY)
+        self.assertEqual(got["cognitive_complexity"], 20)
+        self.assertEqual(got["nesting_depth"], 6)
 
 
 class TestCrapScore(unittest.TestCase):
