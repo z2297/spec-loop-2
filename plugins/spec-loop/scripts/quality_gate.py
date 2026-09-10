@@ -1279,12 +1279,31 @@ def _match_changed(records, changed_ranges):
                                     changed_ranges)]
 
 
+def _skip_reason(path):
+    """Why one changed file produced no function measurement. Returns the
+    unsupported-extension reason when _lang_for(path) is None, otherwise the
+    supported-but-empty reason.
+
+    The second case used to produce NO record at all: the skip chain ended in
+    `elif _lang_for(path) is None`, so a .cs or .rs file whose callables the
+    signature detector could not see -- a pure-Allman C# file, for instance,
+    where every brace sits on its own line -- vanished from the report rather
+    than reporting that it had not been measured. (PURE)"""
+    if _lang_for(path) is None:
+        return "unsupported file type for analysis"
+    return "no callable found by the builtin heuristic"
+
+
 def measure(changed, repo_dir, backends):
     """Measure every changed file, preferring detected backends and falling back
     to the builtin heuristic per file. Returns (function_measurements,
     class_measurements, skipped, used_backends) where each function measurement
     is {file, function, metrics: {...}, source} and skipped is a list of
-    {"metric"|"file", "reason"} entries.
+    {"metric"|"file", "reason"} entries. EVERY changed
+    file that yielded no function measurement gets a `skipped` entry -- an
+    unreadable file, an unsupported extension, or a supported extension whose
+    callables the heuristic could not see (see _skip_reason) -- so a file can
+    never leave the report silently unmeasured.
 
     A backend supplies cyclomatic_complexity / method_lines / parameter_count
     (lizard) or cyclomatic_complexity only (radon); every remaining metric for
@@ -1341,9 +1360,8 @@ def measure(changed, repo_dir, backends):
                     "file": path, "function": hf["function"],
                     "metrics": hf["metrics"], "source": "builtin-heuristic",
                 })
-        elif _lang_for(path) is None:
-            skipped.append({"file": path,
-                            "reason": "unsupported file type for analysis"})
+        else:
+            skipped.append({"file": path, "reason": _skip_reason(path)})
 
         if heur_class is not None:
             class_measurements.append({

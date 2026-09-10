@@ -27,6 +27,19 @@ All notable changes to the spec-loop plugin are documented here. The format is
   all, because `_CBRACE_DEF_RE` requires the `{` on the signature line — deferred to its own
   run; and `foreach` is still absent from `_BRANCH_WORDS`, so a C# `foreach` adds no
   cyclomatic branch.
+- **A changed file the quality gate could not measure can no longer vanish from the report.**
+  `measure()` in `plugins/spec-loop/scripts/quality_gate.py` ended its skip chain in
+  `elif _lang_for(path) is None`, so a file with a supported extension that yielded zero
+  callables produced neither a function measurement nor a `skipped` entry — measured on a
+  pure-Allman `.cs` file and a `def`-less `.py` file, `skipped` named neither. The chain now
+  ends in an unconditional `else` carrying the new PURE `_skip_reason(path)`, which keeps the
+  existing `"unsupported file type for analysis"` text and adds `"no callable found by the
+  builtin heuristic"` for the supported case, so the two are distinguishable in the report.
+  `plugins/spec-loop/scripts/test_quality_gate.py` gains `TestMeasureSkipRecord`, the suite's
+  first `qg.measure()`-level test. Known, documented residuals: a `skipped` entry still feeds
+  no threshold and no exit code, and `summary.vacuous` is still read by nothing in the
+  per-slice pipeline — only `references/phase-5-integration.md:14` tells any reader to check
+  it. Both are deferred, not fixed here.
 
 ## [2.5.0] - 2026-09-09
 ### Added

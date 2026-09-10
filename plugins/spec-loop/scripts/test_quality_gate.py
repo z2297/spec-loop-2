@@ -2133,5 +2133,93 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         self.assertNotIn("if", self.names("store.js", JS_RESERVED_NAME_METHODS))
 
 
+# --------------------------------------------------------------------------
+# D3: measure()'s skip chain ended in `elif _lang_for(path) is None`, so a
+# SUPPORTED file that yielded zero callables produced neither a function
+# measurement nor a skip record -- it vanished from the report entirely.
+# Measured on a pure-Allman I.cs plus a def-less conf.py: skipped held one
+# entry (notes.md) and neither of the other two files appeared anywhere in it.
+# --------------------------------------------------------------------------
+
+CS_PURE_ALLMAN_SOURCE = (
+    "public class I\n"
+    "{\n"
+    "    public void Import(int a)\n"
+    "    {\n"
+    "        return;\n"
+    "    }\n"
+    "}\n"
+)
+
+
+class TestMeasureSkipRecord(unittest.TestCase):
+    """measure() must leave a record for every changed file it could not
+    measure, distinguishing an unsupported extension from a supported one that
+    yielded no callables. Writes real files, so this is not a pure test."""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="quality_gate_skip_")
+        self.addCleanup(shutil.rmtree, self._tmp, ignore_errors=True)
+        Path(self._tmp, "I.cs").write_text(
+            CS_PURE_ALLMAN_SOURCE, encoding="utf-8")
+        Path(self._tmp, "conf.py").write_text("x = 1\n", encoding="utf-8")
+        Path(self._tmp, "notes.md").write_text("# notes\n", encoding="utf-8")
+
+    def measure_all(self):
+        changed = {"I.cs": [(1, 7)], "conf.py": [(1, 1)],
+                   "notes.md": [(1, 1)]}
+        funcs, classes, skipped, backends = qg.measure(
+            changed, self._tmp, [])
+        return funcs, classes, skipped, backends
+
+    def test_the_two_skip_reasons_are_distinguishable(self):
+        self.assertEqual(
+            qg._skip_reason("notes.md"),
+            "unsupported file type for analysis")
+        self.assertEqual(
+            qg._skip_reason("I.cs"),
+            "no callable found by the builtin heuristic")
+        self.assertEqual(
+            qg._skip_reason("conf.py"),
+            "no callable found by the builtin heuristic")
+
+    def test_a_supported_file_with_no_callables_leaves_a_skip_record(self):
+        # Measured before: skipped == [{"file": "notes.md", ...}] only -- the
+        # pure-Allman I.cs (which extracts zero functions because
+        # _CBRACE_DEF_RE needs the `{` on the signature line) and the def-less
+        # conf.py appeared in NO record. After: all three are present.
+        funcs, _, skipped, _ = self.measure_all()
+        self.assertEqual(funcs, [])
+        self.assertEqual(
+            {s["file"]: s["reason"] for s in skipped},
+            {"notes.md": "unsupported file type for analysis",
+             "I.cs": "no callable found by the builtin heuristic",
+             "conf.py": "no callable found by the builtin heuristic"})
+
+    def test_the_unsupported_reason_string_is_unchanged(self):
+        # The pre-existing reason text is an output surface; only the new arm
+        # is new, so pin the old string exactly.
+        _, _, skipped, _ = self.measure_all()
+        reasons = [s["reason"] for s in skipped if s["file"] == "notes.md"]
+        self.assertEqual(reasons, ["unsupported file type for analysis"])
+
+    def test_a_measured_file_gets_no_skip_record(self):
+        # The else-arm must not fire for a file that WAS measured.
+        Path(self._tmp, "m.py").write_text(
+            "def a(x):\n    if x:\n        return 1\n    return 0\n",
+            encoding="utf-8")
+        funcs, _, skipped, _ = qg.measure({"m.py": [(1, 4)]}, self._tmp, [])
+        self.assertEqual([f["function"] for f in funcs], ["a"])
+        self.assertEqual(skipped, [])
+
+    def test_class_lines_is_still_emitted_for_a_skipped_supported_file(self):
+        # The skip record is additive: class_lines is not language-routed and
+        # must still be measured for I.cs and conf.py.
+        _, classes, _, _ = self.measure_all()
+        self.assertEqual(
+            {c["file"]: c["class_lines"] for c in classes},
+            {"I.cs": 7, "conf.py": 1})
+
+
 if __name__ == "__main__":
     unittest.main()
