@@ -10,7 +10,11 @@ brace languages left deliberately unmasked, the measured regex-versus-quote
 residuals, and every fall-back-to-raw path), a differential harness comparing
 masked against raw measurement over every heuristic-readable file in the plugin
 tree, the builtin heuristic function extraction for python and brace languages,
-backend CSV/JSON
+the per-extension reserved-word scoping and its coverage-conditional phantom
+suppression (`TestExtensionScopedControlWords`), `measure()`'s skip record for
+every changed file it could not measure (`TestMeasureSkipRecord` — the
+suite's FIRST `qg.measure()`-level test; every other class exercises the
+primitives or `analyze_builtin`), backend CSV/JSON
 parsing and backend+heuristic merging with per-metric sourcing (cognitive is
 NEVER attributed to a tool), coverage parsing (cobertura + lcov) and CRAP
 assembly, custom-gate evaluation (metric-form evaluated here, command-form
@@ -2006,6 +2010,24 @@ CS_MULTI_DECL_USING_SOURCE = (
     "}\n"
 )
 
+# r1-F1 follow-up (s2): the same shape with the DOMINANCE reversed. The
+# `using` header declares 5 comma items, the enclosing Go declares 6, so
+# _phantom_has_more_params does NOT keep the phantom and it is dropped.
+# Measured: {'Go': 6} for a full [(1, 400)] range and for a narrow
+# [(4, 6)] range covering only the using block -- the dropped count is
+# never the file's highest, and the enclosing record is always emitted
+# alongside because its span strictly contains the phantom's.
+CS_DOMINATED_USING_SOURCE = (
+    "public class C\n"
+    "{\n"
+    "    public void Go(int a,int b,int c,int d,int e,int f) {\n"
+    "        using (Stream p = A(), q = B(), r = C(), s = D(), t = E()) {\n"
+    "            p.Write(q);\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
 JAVA_SYNCHRONIZED_SOURCE = (
     "public class Cache\n"
     "{\n"
@@ -2252,6 +2274,24 @@ class TestExtensionScopedControlWords(unittest.TestCase):
             "cognitive_complexity": 10,
             "nesting_depth": 2,
         })
+
+    def test_a_dominated_using_is_dropped_only_behind_a_higher_count(self):
+        # The narrow guarantee the CHANGELOG now states, pinned rather than
+        # argued: suppression's per-metric safety for parameter_count rests on
+        # BOTH halves. When the phantom's own count is higher it survives
+        # (test_an_enclosed_multi_declaration_using_keeps_its_own_finding);
+        # when it is lower it is dropped, and the enclosing record that
+        # replaces it carries a HIGHER count and is emitted for any changed
+        # range that could have reached the phantom -- its span strictly
+        # contains the phantom's.
+        for ranges in ([(1, 400)], [(4, 6)]):
+            findings, _ = qg.analyze_builtin(
+                "C.cs", CS_DOMINATED_USING_SOURCE, ranges)
+            counts = {f["function"]: f["metrics"]["parameter_count"]
+                      for f in findings}
+            self.assertEqual(counts, {"Go": 6})
+            self.assertGreater(
+                counts["Go"], qg.DEFAULT_THRESHOLDS["parameter_count"])
 
 
 # --------------------------------------------------------------------------

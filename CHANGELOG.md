@@ -22,11 +22,15 @@ All notable changes to the spec-loop plugin are documented here. The format is
   sees the method, so the `foreach` record is the only measurement of that body (measured:
   cyclomatic 5, cognitive 8); suppressing it unconditionally would take the file to
   `class_lines` alone and turn a real reading into a silent pass. An over-count is the one
-  direction this heuristic is permitted to move. Known, documented residuals: a pure-Allman
-  C# file (every brace on its own line, the Visual Studio default) still extracts nothing at
-  all, because `_CBRACE_DEF_RE` requires the `{` on the signature line — deferred to its own
-  run. (The second residual named here — `foreach` absent from `_BRANCH_WORDS` — is fixed
-  below in this same Unreleased section.)
+  direction this heuristic is permitted to move. That safety argument is PER-METRIC, not
+  blanket: an enclosed phantom's cyclomatic, cognitive, method_lines and nesting_depth are
+  all dominated by the enclosing record whose body contains it, but its `parameter_count` is
+  read from its own header and is NOT — see the `_phantom_has_more_params` entry below.
+  Known, documented residuals: a pure-Allman C# file (every brace on its own line, the
+  Visual Studio default) still extracts nothing at all, because `_CBRACE_DEF_RE` requires
+  the `{` on the signature line — deferred to its own run. (The second residual named here
+  — `foreach` absent from `_BRANCH_WORDS` — is fixed below in this same Unreleased
+  section.)
 - **A changed file the quality gate could not measure can no longer vanish from the report.**
   `measure()` in `plugins/spec-loop/scripts/quality_gate.py` ended its skip chain in
   `elif _lang_for(path) is None`, so a file with a supported extension that yielded zero
@@ -58,6 +62,21 @@ All notable changes to the spec-loop plugin are documented here. The format is
   `test_an_enclosed_multi_declaration_using_keeps_its_own_finding` pins a 5-parameter `using`
   surviving inside a 1-parameter `Import` method (5 > `DEFAULT_THRESHOLDS["parameter_count"]`
   == 4). Both are the same failure family the run's NEVER-UNDER-COUNT constraint names.
+  Known, documented residuals: the parameter_count guarantee is an ARGUMENT the code does
+  not assert. `_phantom_has_more_params` keeps a phantom only when its own count is strictly
+  higher, so a phantom whose count is equal or lower is still dropped; that is safe only
+  because the enclosing record's own count is then at least as high AND is always emitted
+  alongside — the enclosing span strictly contains the phantom's, so any changed range that
+  reaches the phantom reaches the enclosing record too. Measured both halves on `.cs`:
+  `using (Stream p = A(), q = B(), r = C(), s = D(), t = E())` inside `Go(int a)` reports
+  `Go` 1 AND `using` 5 (the phantom survives, 5 > the threshold of 4); the same `using`
+  inside `Go(int a,int b,int c,int d,int e,int f)` reports `Go` 6 alone, for a full range and
+  for a narrow range covering only the `using` block. `test_quality_gate.py`'s
+  `test_a_dominated_using_is_dropped_only_behind_a_higher_count` pins that second half. A
+  related measured non-result, recorded so no reader re-derives it: the nested-call form
+  `foreach (var x in Zip(a, b, c))` does NOT reach this path at all — `_count_params` splits
+  commas only at paren depth 0, so it measures 1. The multi-declarator `using` is the only
+  shape that reaches it.
 - **A skip record could itself misreport why a file went unmeasured.** `measure()`'s new
   unconditional `else` arm (see above) reached `_skip_reason(path)` whenever a file yielded
   zero IN-RANGE findings — which also fires for an import-only edit, a docstring tweak, or any
