@@ -7,6 +7,42 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 ### Fixed
+- **A tab-indented python file was measured as if it had no nesting at all, and now
+  measures the same as the identical space-indented file.** `_nesting_depth_python` and the
+  python arm of `_cognitive_approx` in `plugins/spec-loop/scripts/quality_gate.py` stripped
+  leading SPACES only (`lstrip(" ")`) before dividing by the model's 4-column step, so every
+  line of a tab-indented file read as indent 0 and the whole file collapsed to
+  `nesting_depth` 0 at any real depth. Measured on one six-level-deep body: space-indented it
+  reports cognitive 20 / nesting_depth 6 and FAILS the nesting threshold of 3; the
+  byte-identical tab-indented body reported cognitive 5 / nesting_depth 0 and PASSED, on the
+  same branch count (cyclomatic 6 either way). The new PURE `_py_indent_width` is now the
+  single place leading whitespace becomes a column count — it expands tabs at 4 columns,
+  matching the `// 4` the nesting and cognitive models divide by, so one tab is exactly one
+  level — and the three space-only sites (`_nesting_depth_python`, the `_cognitive_approx`
+  python arm, and `_function_metrics`' `base_indent`) call it. `test_quality_gate.py` gains
+  `TestTabIndentedPython`, pinning tab/space parity and the helper itself, including a
+  tab-indented method whose own `def` header is indented (not just a top-level function at
+  column 0), which is the shape that exercises `_function_metrics`'s `base_indent` call
+  specifically. **This changes existing `.py` results in both directions, most often
+  upward**: a tab-indented python function that passes the gate today can fail after this
+  change. That is the safe direction under the never-under-count rule and is the intended
+  effect, but it is an observable behaviour change, not merely internal. It also moves
+  results DOWN where a tab-indented `def` header is combined with space-indented body lines:
+  `_function_metrics`'s `base_indent` now expands the header's tab while the body lines'
+  indent (already space-only) is unchanged, so the gap between them can shrink (measured on
+  one such method: nesting_depth 10 -> 9, cognitive 21 -> 18), retiring an existing violation
+  on that mixed-indent shape — the new values are closer to truth in both directions, a
+  reduction in over-count rather than a new under-count.
+  Known, documented residuals: `_extract_functions_python` still measures indent with a bare
+  `lstrip()` and is deliberately left alone — it compares a header against its own body with
+  one consistent measure, so it already spans a tab-indented file correctly, and expanding
+  there was measured to SHRINK a mixed tab-and-space function's span (a four-line method
+  dropping to one), which would be a new under-count. The 4-column tab step is HARDCODED,
+  deliberately: the indent step stays at 4 and is not parameterised, since no 2-space
+  language is routed to this model. A file mixing tabs and spaces inconsistently is measured
+  by column width alone, which can disagree with python's own tokenizer (tabs at 8); no such
+  file exists in this repo and none is handled specially. The mask-span helper's own
+  `lstrip(" ")` is left as-is on purpose: it picks a raw column index, not a width.
 - **The quality gate's C-family control-keyword guard is now scoped to the language that
   reserves the word, and suppresses a phantom record only when the real enclosing method was
   itself measured.** `plugins/spec-loop/scripts/quality_gate.py` keys the new
@@ -28,9 +64,8 @@ All notable changes to the spec-loop plugin are documented here. The format is
   read from its own header and is NOT — see the `_phantom_has_more_params` entry below.
   Known, documented residuals: a pure-Allman C# file (every brace on its own line, the
   Visual Studio default) still extracts nothing at all, because `_CBRACE_DEF_RE` requires
-  the `{` on the signature line — deferred to its own run. (The second residual named here
-  — `foreach` absent from `_BRANCH_WORDS` — is fixed below in this same Unreleased
-  section.)
+  the `{` on the signature line — deferred to its own run. (A related residual — `foreach`
+  absent from `_BRANCH_WORDS` — is fixed below in this same Unreleased section.)
 - **A changed file the quality gate could not measure can no longer vanish from the report.**
   `measure()` in `plugins/spec-loop/scripts/quality_gate.py` ended its skip chain in
   `elif _lang_for(path) is None`, so a file with a supported extension that yielded zero

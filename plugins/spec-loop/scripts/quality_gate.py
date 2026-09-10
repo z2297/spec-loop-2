@@ -896,6 +896,19 @@ def _branch_count(text):
             + len(_BRANCH_OPS_RE.findall(text)))
 
 
+def _py_indent_width(line):
+    """Leading-whitespace width of one python source line, in COLUMNS, with
+    tabs expanded. The step is 4 to match the `// 4` the nesting and
+    cognitive models divide by, so one tab reads as exactly one nesting
+    level; expanding at python's own default of 8 would read it as two.
+    The three indent measurements that feed those models go through here:
+    they used to strip spaces alone (`lstrip(" ")`), so a tab-indented file
+    measured indent 0 on every line and collapsed to nesting_depth 0 at any
+    real depth. (PURE)"""
+    lead = line[:len(line) - len(line.lstrip())]
+    return len(lead.expandtabs(4))
+
+
 def _extract_functions_python(lines):
     """Split python source (list of lines, 0-based) into functions by indent.
     Returns [{name, start, end, header_idx}] with 1-based inclusive line spans.
@@ -1073,7 +1086,7 @@ def _nesting_depth_python(body_lines, base_indent):
     for line in body_lines:
         if not line.strip():
             continue
-        indent = len(line) - len(line.lstrip(" "))
+        indent = _py_indent_width(line)
         depth = max(0, (indent - base_indent)) // 4
         max_depth = max(max_depth, depth)
     return max_depth
@@ -1105,7 +1118,7 @@ def _cognitive_approx(body_text_or_lines, lang, base_indent):
             stripped = line.strip()
             if not stripped:
                 continue
-            indent = len(line) - len(line.lstrip(" "))
+            indent = _py_indent_width(line)
             level = max(0, (indent - base_indent)) // 4
             hits = (len(_BRANCH_WORD_RE.findall(stripped))
                     + len(_BRANCH_OPS_RE.findall(stripped)))
@@ -1161,7 +1174,7 @@ def _function_metrics(lines, scan_lines, fn, lang):
     body_lines = lines[fn["header_idx"]:fn["end"]]
     scan_body = scan_lines[fn["header_idx"]:fn["end"]]
     header_line = lines[fn["header_idx"]]
-    base_indent = len(header_line) - len(header_line.lstrip(" "))
+    base_indent = _py_indent_width(header_line)
     return {
         "cyclomatic_complexity": _branch_count("\n".join(scan_body)),
         "method_lines": _nonblank(body_lines),
