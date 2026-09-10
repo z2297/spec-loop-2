@@ -134,3 +134,17 @@ Rendered from EscalationRecords; answers are written back into the matching entr
 - Answer: RETRY the slice at verify. Two determinations, both controller-measured first-hand at the real head 7aba97ea7d05498a264b6378854d04f49025d206. (1) THE CRASH is the SECOND occurrence of an identical failure this run: the verify:1 verifier exceeded a StructuredOutput retry cap of 5, last error 'must have required property suite/quality/head_sha/tree_sha'. s3 attempt 1 died exactly the same way, at e…
 - Answered-at: 2026-09-10T18:30:31Z
 
+## [run] Release version level: the changelog says patch, the behaviour change argues minor   (status: ANSWERED)
+<!-- escalation-id: phase5:material-assumption:2 -->
+<!-- escalation-identity: 61965171e464deb5 -->
+- Trigger: material-assumption
+- Opened: 2026-09-10T19:03:45Z
+- Context: You authorised push-to-main plus a tagged release. Everything else is finished: 18 code commits plus the run-state commit b0711ae, Phase 5 passed on attempt 2, runbook and metrics committed, knowledge graph updated. The only undecided input to scripts/release.py is the version string, and it is not mine to guess because it is a promise to consumers. I told you earlier I expected a MINOR bump beca…
+- The decision: What version should scripts/release.py cut?
+- Options:
+  1. 2.5.1 (patch) — (RECOMMENDED DEFAULT) Matches the changelog's Fixed-only structure and strict SemVer: no API changed, only defects repaired. Consumers who read the release notes see six fixes. The risk is that a CI-visible measurement change arrives in a version people assume is safe to take blind.
+  2. 2.6.0 (minor) — Signals the observable behaviour change even though no interface moved. Anyone pinning a minor range gets a deliberate decision point before their gate results shift. Costs nothing except that the changelog would ideally gain a '### Changed' heading naming the measurement shift, which is a one-line…
+- If unanswered: pause the release; everything else is committed and nothing is pushed
+- Answer: 2.5.1 (patch). Matches the changelog Fixed-only structure and strict SemVer; no API moved. The observable measurement change is documented in the six Fixed bullets rather than signalled by the version number.
+- Answered-at: 2026-09-10T19:04:52Z
+
