@@ -915,17 +915,19 @@ def _extract_functions_python(lines):
     return funcs
 
 
-def _extract_functions_cbrace(lines):
+def _extract_functions_cbrace(lines, ext=""):
     """Split brace-language source into functions by matching the brace that
     opens each detected signature. Returns [{name, start, end, header_idx}] with
     1-based inclusive spans. Best-effort: a signature whose opening brace can't
-    be balanced is skipped."""
+    be balanced is skipped. `ext` is the file's extension, used only to scope
+    the per-language reserved words in _looks_like_call_or_control; it defaults
+    to "" so a caller with no path gets the global words alone."""
     funcs = []
     text_by_line = lines
     for i, line in enumerate(lines):
         name = None
         m = _CBRACE_DEF_RE.search(line)
-        if m and not _looks_like_call_or_control(line, m):
+        if m and not _looks_like_call_or_control(ext, m, funcs, i + 1):
             name = m.group(1)
         else:
             am = _CBRACE_ARROW_RE.search(line)
@@ -941,15 +943,54 @@ def _extract_functions_cbrace(lines):
     return funcs
 
 
+# The 9 words below are reserved in EVERY brace language this analyzer reads,
+# so they stay global. `foreach`/`using`/`lock`/`fixed` (C#) and
+# `synchronized` (Java) are reserved only in their own language -- a .js class
+# may legitimately define a method named `lock`, and measured on a fixture
+# with methods named lock/fixed/using, adding those words globally drops all
+# three real functions from the report. They are therefore keyed by EXTENSION,
+# not by the "cbrace" family, which .ts and .cs share.
 _CONTROL_WORDS = {"if", "for", "while", "switch", "catch", "else", "do",
                   "return", "case"}
+_CONTROL_WORDS_BY_EXT = {
+    ".cs": frozenset({"foreach", "using", "lock", "fixed"}),
+    ".java": frozenset({"synchronized"}),
+}
 
 
-def _looks_like_call_or_control(line, match):
+def _control_words_for(ext):
+    """The extra reserved words for one file extension (a frozenset, possibly
+    empty). `ext` is a leading-dot extension; None, "" and any unknown
+    extension yield the empty set. (PURE)"""
+    return _CONTROL_WORDS_BY_EXT.get((ext or "").lower(), frozenset())
+
+
+def _encloses_line(funcs, line_no):
+    """True if any already-collected function record contains `line_no`.
+    `funcs` is a list of {name, start, end, header_idx} records whose
+    start/end are 1-BASED INCLUSIVE; `line_no` is 1-based. (PURE)"""
+    return any(fn["start"] <= line_no <= fn["end"] for fn in funcs)
+
+
+def _looks_like_call_or_control(ext, match, funcs, line_no):
     """True if the C-family signature match is really a control keyword
-    (`if (...) {`) or a function CALL, not a definition. Cheap guard to cut the
-    most common false positives in the heuristic path."""
-    return match.group(1) in _CONTROL_WORDS
+    (`if (...) {`) rather than a definition, so the caller should not record it
+    as a function. `ext` is the file's extension, `match` the _CBRACE_DEF_RE
+    match, `funcs` the records collected so far and `line_no` the match's
+    1-based line.
+
+    A globally reserved word is always rejected. A per-extension word is
+    rejected ONLY when an already-collected record encloses `line_no`, i.e.
+    when the real enclosing method was itself extracted and the phantom is
+    redundant. When nothing encloses it the phantom is the sole measurement of
+    that method body -- measured on a C# method whose brace sits on its own
+    line, dropping it takes the file from a reported cyclomatic 5 / cognitive 8
+    to no function measurement at all -- so it is deliberately kept. That is an
+    over-count, the one direction this heuristic is allowed to move. (PURE)"""
+    word = match.group(1)
+    if word in _CONTROL_WORDS:
+        return True
+    return word in _control_words_for(ext) and _encloses_line(funcs, line_no)
 
 
 def _match_brace_end(lines, header_idx):
@@ -1028,11 +1069,13 @@ def _nonblank(lines):
     return sum(1 for line in lines if line.strip())
 
 
-def _extract_functions_for(lines, lang):
-    """The extracted callables of one file, by language family. (PURE)"""
+def _extract_functions_for(lines, lang, ext=""):
+    """The extracted callables of one file, by language family. `ext` scopes
+    the brace extractor's per-language reserved words; the python branch
+    ignores it. (PURE)"""
     if lang == "python":
         return _extract_functions_python(lines)
-    return _extract_functions_cbrace(lines)
+    return _extract_functions_cbrace(lines, ext)
 
 
 def _nesting_depth_for(body_lines, lang, base_indent):
@@ -1090,7 +1133,8 @@ def analyze_builtin(path, source, changed_ranges):
         return [], None
     lines = source.splitlines()
     scan_lines = _scan_lines_for(source, _scan_lang_for(path), lines)
-    funcs = _extract_functions_for(lines, lang)
+    funcs = _extract_functions_for(
+        lines, lang, os.path.splitext(path)[1].lower())
 
     findings = []
     for fn in funcs:

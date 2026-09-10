@@ -1930,5 +1930,208 @@ class TestDifferentialAgainstRawScan(unittest.TestCase):
         self.assertGreater(len(moved), 10)
 
 
+
+# --------------------------------------------------------------------------
+# D1: the C-family control-keyword guard was language-blind. `foreach`,
+# `using`, `lock`, `fixed` (C#) and `synchronized` (Java) matched
+# _CBRACE_DEF_RE and were measured as functions. These fixtures live at
+# module level because the gate measures function bodies and a fixture inside
+# a test method would be counted as that method's own branching.
+# --------------------------------------------------------------------------
+
+CS_KR_SOURCE = (
+    "public class Importer\n"
+    "{\n"
+    "    public void Import(List<Row> rows, bool strict) {\n"
+    "        foreach (var row in rows) {\n"
+    "            if (row.Valid) { Accept(row); }\n"
+    "        }\n"
+    "        using (var log = Open()) {\n"
+    "            log.Write(\"done\");\n"
+    "        }\n"
+    "        lock (_gate) { _count++; }\n"
+    "    }\n"
+    "}\n"
+)
+
+CS_MIXED_SOURCE = (
+    "public class Importer\n"
+    "{\n"
+    "    public void Import(List<Row> rows, bool strict)\n"
+    "    {\n"
+    "        foreach (var row in rows) {\n"
+    "            if (row.Valid && strict) { Accept(row); }\n"
+    "            else if (row.Retry) { Queue(row); }\n"
+    "            while (row.Next != null) { row = row.Next; }\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
+JAVA_SYNCHRONIZED_SOURCE = (
+    "public class Cache\n"
+    "{\n"
+    "    public void put(String k, Object v) {\n"
+    "        synchronized (this) {\n"
+    "            if (k != null) { map.put(k, v); }\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
+JS_RESERVED_NAME_METHODS = (
+    "class Store {\n"
+    "    lock(a, b) {\n"
+    "        if (a) { return b; }\n"
+    "        return 0;\n"
+    "    }\n"
+    "    fixed(a) {\n"
+    "        return a;\n"
+    "    }\n"
+    "    using(a, b) {\n"
+    "        if (a && b) { return 1; }\n"
+    "        return 2;\n"
+    "    }\n"
+    "}\n"
+)
+
+FULL = [(1, 400)]
+
+
+class TestExtensionScopedControlWords(unittest.TestCase):
+    """The per-extension reserved words suppress a phantom record ONLY when an
+    already-extracted function encloses the match line. Otherwise the phantom
+    is the sole measurement of that method body and is deliberately kept: an
+    over-count is the permitted direction, a silent pass is not."""
+
+    def names(self, path, source):
+        findings, _ = qg.analyze_builtin(path, source, FULL)
+        return [f["function"] for f in findings]
+
+    def by_name(self, path, source):
+        findings, _ = qg.analyze_builtin(path, source, FULL)
+        return {f["function"]: f for f in findings}
+
+    def test_the_function_record_contract_is_one_based_inclusive(self):
+        # The enclosure helper reads these spans, so the convention is pinned
+        # directly rather than inferred: start/end are 1-based inclusive and
+        # header_idx is 0-based, always start - 1.
+        funcs = qg._extract_functions_cbrace(CS_KR_SOURCE.splitlines(), ".cs")
+        self.assertEqual(len(funcs), 1)
+        record = funcs[0]
+        self.assertEqual(sorted(record), ["end", "header_idx", "name", "start"])
+        self.assertEqual(record["name"], "Import")
+        self.assertEqual((record["start"], record["end"]), (3, 11))
+        self.assertEqual(record["header_idx"], record["start"] - 1)
+
+    def test_the_enclosure_helper_reads_one_based_inclusive_spans(self):
+        funcs = [{"name": "Import", "start": 3, "end": 11, "header_idx": 2}]
+        self.assertFalse(qg._encloses_line(funcs, 2))
+        self.assertTrue(qg._encloses_line(funcs, 3))
+        self.assertTrue(qg._encloses_line(funcs, 11))
+        self.assertFalse(qg._encloses_line(funcs, 12))
+        self.assertFalse(qg._encloses_line([], 3))
+
+    def test_the_reserved_words_are_scoped_to_their_own_extensions(self):
+        self.assertEqual(
+            qg._control_words_for(".cs"),
+            frozenset({"foreach", "using", "lock", "fixed"}))
+        self.assertEqual(
+            qg._control_words_for(".java"), frozenset({"synchronized"}))
+        self.assertEqual(qg._control_words_for(".js"), frozenset())
+        self.assertEqual(qg._control_words_for(""), frozenset())
+        self.assertEqual(qg._control_words_for(None), frozenset())
+        # The 9 globally reserved words are unchanged and stay global.
+        self.assertEqual(
+            qg._CONTROL_WORDS,
+            {"if", "for", "while", "switch", "catch", "else", "do",
+             "return", "case"})
+
+    def test_a_kandr_csharp_method_drops_its_enclosed_phantoms(self):
+        # Measured before: 4 records -- Import (3-11, cc 2, cog 3) plus
+        # foreach (4-6, cc 2), using (7-9, cc 1) and lock (10-10, cc 1), all
+        # three inside Import's span. After: Import alone, metrics unchanged.
+        self.assertEqual(
+            qg._extract_functions_cbrace(CS_KR_SOURCE.splitlines(), ".cs"),
+            [{"name": "Import", "start": 3, "end": 11, "header_idx": 2}])
+        found = self.by_name("Importer.cs", CS_KR_SOURCE)
+        self.assertEqual(sorted(found), ["Import"])
+        self.assertEqual(found["Import"]["metrics"], {
+            "cyclomatic_complexity": 2,
+            "method_lines": 9,
+            "parameter_count": 2,
+            "cognitive_complexity": 3,
+            "nesting_depth": 2,
+        })
+
+    def test_a_java_synchronized_block_drops_inside_its_method(self):
+        # Measured before: put (3-7, cc 2, cog 3, nest 2) AND the phantom
+        # synchronized (4-6, cc 2, cog 2, nest 1). After: put alone.
+        self.assertEqual(
+            qg._extract_functions_cbrace(
+                JAVA_SYNCHRONIZED_SOURCE.splitlines(), ".java"),
+            [{"name": "put", "start": 3, "end": 7, "header_idx": 2}])
+        found = self.by_name("Cache.java", JAVA_SYNCHRONIZED_SOURCE)
+        self.assertEqual(sorted(found), ["put"])
+        self.assertEqual(found["put"]["metrics"]["cognitive_complexity"], 3)
+        self.assertEqual(found["put"]["metrics"]["nesting_depth"], 2)
+
+    def test_an_unenclosed_csharp_phantom_is_deliberately_retained(self):
+        # The mixed-brace shape: the method's `{` is on its own line so
+        # _CBRACE_DEF_RE misses the method, and the `foreach` record (5-9,
+        # cc 5, cog 8, ml 5, nest 1) is the ONLY measurement of that body.
+        # Measured: unconditional suppression collapses this file to
+        # class_lines alone. Nothing extracted encloses line 5, so the
+        # record is KEPT, before and after, with every metric identical.
+        self.assertEqual(
+            qg._extract_functions_cbrace(CS_MIXED_SOURCE.splitlines(), ".cs"),
+            [{"name": "foreach", "start": 5, "end": 9, "header_idx": 4}])
+        found = self.by_name("Importer.cs", CS_MIXED_SOURCE)
+        self.assertEqual(sorted(found), ["foreach"])
+        self.assertEqual(found["foreach"]["metrics"], {
+            "cyclomatic_complexity": 5,
+            "method_lines": 5,
+            "parameter_count": 1,
+            "cognitive_complexity": 8,
+            "nesting_depth": 1,
+        })
+
+    def test_javascript_methods_named_lock_fixed_and_using_survive(self):
+        # The safety regression the extension scoping exists to prevent: add
+        # these words GLOBALLY and this file measures zero functions. Measured
+        # both before and after -- lock (2-5, cc 2, cog 2, ml 4, params 2,
+        # nest 1), fixed (6-8, cc 1, cog 0, ml 3, params 1, nest 0),
+        # using (9-12, cc 3, cog 4, ml 4, params 2, nest 1).
+        found = self.by_name("store.js", JS_RESERVED_NAME_METHODS)
+        self.assertEqual(sorted(found), ["fixed", "lock", "using"])
+        self.assertEqual(found["lock"]["metrics"], {
+            "cyclomatic_complexity": 2, "method_lines": 4,
+            "parameter_count": 2, "cognitive_complexity": 2,
+            "nesting_depth": 1,
+        })
+        self.assertEqual(found["fixed"]["metrics"], {
+            "cyclomatic_complexity": 1, "method_lines": 3,
+            "parameter_count": 1, "cognitive_complexity": 0,
+            "nesting_depth": 0,
+        })
+        self.assertEqual(found["using"]["metrics"], {
+            "cyclomatic_complexity": 3, "method_lines": 4,
+            "parameter_count": 2, "cognitive_complexity": 4,
+            "nesting_depth": 1,
+        })
+
+    def test_a_typescript_file_is_not_given_the_csharp_words(self):
+        # .ts and .cs both route to "cbrace"; the scoping key is the
+        # EXTENSION, not the family, so a .ts `using` method survives.
+        found = self.by_name("store.ts", JS_RESERVED_NAME_METHODS)
+        self.assertEqual(sorted(found), ["fixed", "lock", "using"])
+
+    def test_the_global_control_words_still_apply_to_every_extension(self):
+        # Regression guard on the 9 pre-existing words: `if (a) {` must not
+        # become a function in a .cs file either.
+        self.assertNotIn("if", self.names("Importer.cs", CS_KR_SOURCE))
+        self.assertNotIn("if", self.names("store.js", JS_RESERVED_NAME_METHODS))
+
+
 if __name__ == "__main__":
     unittest.main()

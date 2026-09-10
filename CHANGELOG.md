@@ -6,6 +6,27 @@ All notable changes to the spec-loop plugin are documented here. The format is
 [v1 repository](https://github.com/z2297/spec-loop).
 
 ## [Unreleased]
+### Fixed
+- **The quality gate's C-family control-keyword guard is now scoped to the language that
+  reserves the word, and suppresses a phantom record only when the real enclosing method was
+  itself measured.** `plugins/spec-loop/scripts/quality_gate.py` keys the new
+  `_CONTROL_WORDS_BY_EXT` map by file extension — `foreach`/`using`/`lock`/`fixed` for `.cs`,
+  `synchronized` for `.java` — while the nine words in `_CONTROL_WORDS` stay global; the
+  extension is threaded from `analyze_builtin` through `_extract_functions_for` and
+  `_extract_functions_cbrace` into `_looks_like_call_or_control`, whose unused `line`
+  parameter it replaces and whose docstring no longer claims a function-call detection the
+  body never implemented. Suppression is conditional on coverage by design: the new PURE
+  `_encloses_line` helper drops a `foreach` record only when an already-extracted function's
+  1-based inclusive span contains it. **The retained phantom is DELIBERATE, not a residual
+  defect** — on a C# method whose opening brace sits on its own line, `_CBRACE_DEF_RE` never
+  sees the method, so the `foreach` record is the only measurement of that body (measured:
+  cyclomatic 5, cognitive 8); suppressing it unconditionally would take the file to
+  `class_lines` alone and turn a real reading into a silent pass. An over-count is the one
+  direction this heuristic is permitted to move. Known, documented residuals: a pure-Allman
+  C# file (every brace on its own line, the Visual Studio default) still extracts nothing at
+  all, because `_CBRACE_DEF_RE` requires the `{` on the signature line — deferred to its own
+  run; and `foreach` is still absent from `_BRANCH_WORDS`, so a C# `foreach` adds no
+  cyclomatic branch.
 
 ## [2.5.0] - 2026-09-09
 ### Added
