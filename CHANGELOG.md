@@ -23,16 +23,16 @@ All notable changes to the spec-loop plugin are documented here. The format is
   `TestTabIndentedPython`, pinning tab/space parity and the helper itself, including a
   tab-indented method whose own `def` header is indented (not just a top-level function at
   column 0), which is the shape that exercises `_function_metrics`'s `base_indent` call
-  specifically. **This changes
-  existing `.py` results upward**: a tab-indented python function that passes the gate today
-  can fail after this change. That is the safe direction under the never-under-count rule and
-  is the intended effect, but it is an observable behaviour change, not merely internal.
-  It can also move a result down where a tab-indented `def` header is combined with
-  space-indented body lines: `_function_metrics`'s `base_indent` now expands the header's tab
-  while the body lines' indent (already space-only) is unchanged, so the gap between them can
-  shrink and retire an existing nesting/cognitive violation on that mixed-indent shape — the
-  new values are closer to truth in both directions, a reduction in over-count rather than a
-  new under-count.
+  specifically. **This changes existing `.py` results in both directions, most often
+  upward**: a tab-indented python function that passes the gate today can fail after this
+  change. That is the safe direction under the never-under-count rule and is the intended
+  effect, but it is an observable behaviour change, not merely internal. It also moves
+  results DOWN where a tab-indented `def` header is combined with space-indented body lines:
+  `_function_metrics`'s `base_indent` now expands the header's tab while the body lines'
+  indent (already space-only) is unchanged, so the gap between them can shrink (measured on
+  one such method: nesting_depth 10 -> 9, cognitive 21 -> 18), retiring an existing violation
+  on that mixed-indent shape — the new values are closer to truth in both directions, a
+  reduction in over-count rather than a new under-count.
   Known, documented residuals: `_extract_functions_python` still measures indent with a bare
   `lstrip()` and is deliberately left alone — it compares a header against its own body with
   one consistent measure, so it already spans a tab-indented file correctly, and expanding
