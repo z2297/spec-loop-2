@@ -8,7 +8,12 @@ All notable changes to the spec-loop plugin are documented here. The format is
 ## [Unreleased]
 ### Fixed
 - **A tab-indented python file was measured as if it had no nesting at all, and now
-  measures the same as the identical space-indented file.** `_nesting_depth_python` and the
+  measures the same as the identical space-indented file.** Parity now survives the
+  literal mask too: the python mask's own continuation-row fill started at `lstrip(" ")` and
+  overwrote a tab-indented row's leading tabs, so a tab body holding a multi-line string
+  whose closing row carries branch operators measured cognitive 10 against the space body's
+  13 -- an under-count, now fixed in `_token_mask_spans` and pinned by
+  `TestTabIndentedPython`. `_nesting_depth_python` and the
   python arm of `_cognitive_approx` in `plugins/spec-loop/scripts/quality_gate.py` stripped
   leading SPACES only (`lstrip(" ")`) before dividing by the model's 4-column step, so every
   line of a tab-indented file read as indent 0 and the whole file collapsed to
@@ -39,10 +44,17 @@ All notable changes to the spec-loop plugin are documented here. The format is
   there was measured to SHRINK a mixed tab-and-space function's span (a four-line method
   dropping to one), which would be a new under-count. The 4-column tab step is HARDCODED,
   deliberately: the indent step stays at 4 and is not parameterised, since no 2-space
-  language is routed to this model. A file mixing tabs and spaces inconsistently is measured
-  by column width alone, which can disagree with python's own tokenizer (tabs at 8); no such
-  file exists in this repo and none is handled specially. The mask-span helper's own
-  `lstrip(" ")` is left as-is on purpose: it picks a raw column index, not a width.
+  language is routed to this model. Parity is against the 4-column space form specifically,
+  because the `// 4` step is hardcoded: MEASURED on a six-level body indented at TWO spaces
+  per level, the space form reports cognitive 11 / nesting_depth 3 and its tab-converted twin
+  reports cognitive 20 / nesting_depth 6. That is an over-count on the tab side, the
+  permitted direction, but it is not parity. A row whose own leading whitespace mixes tabs
+  and spaces is likewise measured by column width at a 4-column tab, which can disagree with
+  python's own tokenizer at 8. The python mask helper `_token_mask_spans` measures a
+  continuation row's leading whitespace with the same bare `lstrip()` `_py_indent_width`
+  uses, so a masked row keeps its tab indent; it previously used `lstrip(" ")` and
+  under-counted a tab-indented body holding a multi-line string (see the parity note
+  above).
 - **The quality gate's C-family control-keyword guard is now scoped to the language that
   reserves the word, and suppresses a phantom record only when the real enclosing method was
   itself measured.** `plugins/spec-loop/scripts/quality_gate.py` keys the new
@@ -61,7 +73,7 @@ All notable changes to the spec-loop plugin are documented here. The format is
   direction this heuristic is permitted to move. That safety argument is PER-METRIC, not
   blanket: an enclosed phantom's cyclomatic, cognitive, method_lines and nesting_depth are
   all dominated by the enclosing record whose body contains it, but its `parameter_count` is
-  read from its own header and is NOT — see the `_phantom_has_more_params` entry below.
+  read from its own header and is NOT — see the `_phantom_is_redundant` entry below.
   Known, documented residuals: a pure-Allman C# file (every brace on its own line, the
   Visual Studio default) still extracts nothing at all, because `_CBRACE_DEF_RE` requires
   the `{` on the signature line — deferred to its own run. (A related residual — `foreach`
@@ -81,7 +93,7 @@ All notable changes to the spec-loop plugin are documented here. The format is
   it. Both are deferred, not fixed here.
 - **The control-keyword suppression could itself under-count, on two separate paths, and both
   are closed.** `plugins/spec-loop/scripts/quality_gate.py`'s `_encloses_line` (now
-  `_strictly_encloses_line`) tested only `fn["start"] <= line_no <= fn["end"]`; because `.cs`
+  `_strictly_enclosing_record`) tested only `fn["start"] <= line_no <= fn["end"]`; because `.cs`
   and `.java` are excluded from `_JS_MASK_EXTS`, `_match_brace_end` counts a `}` inside a
   string or char literal on the enclosing method's own header line — e.g.
   `raw.Split('}')` — as a real close, ending the enclosing record's span exactly AT the
@@ -92,14 +104,16 @@ All notable changes to the spec-loop plugin are documented here. The format is
   `foreach` record. Separately, suppression assumed an enclosed phantom's own metrics were
   always dominated by the enclosing record, which is false for `parameter_count`: a C#
   `using (a, b, c, d, e)` can declare more comma-separated items than the enclosing method's
-  own signature. The new PURE `_phantom_has_more_params` compares the phantom's own header
-  against the enclosing record's header and keeps the phantom whenever its count is higher;
+  own signature. The new PURE `_phantom_is_redundant` compares the phantom's own header
+  against the enclosing record's header, and the guard keeps the phantom whenever its own
+  count is higher;
   `test_an_enclosed_multi_declaration_using_keeps_its_own_finding` pins a 5-parameter `using`
   surviving inside a 1-parameter `Import` method (5 > `DEFAULT_THRESHOLDS["parameter_count"]`
   == 4). Both are the same failure family the run's NEVER-UNDER-COUNT constraint names.
   Known, documented residuals: the parameter_count guarantee is an ARGUMENT the code does
-  not assert. `_phantom_has_more_params` keeps a phantom only when its own count is strictly
-  higher, so a phantom whose count is equal or lower is still dropped; that is safe only
+  not assert. `_phantom_is_redundant` reports a phantom redundant when its own count is less
+  than or equal to the enclosing header's, and only a redundant phantom is dropped; a phantom
+  whose count is strictly higher is kept. That is safe only
   because the enclosing record's own count is then at least as high AND is always emitted
   alongside — the enclosing span strictly contains the phantom's, so any changed range that
   reaches the phantom reaches the enclosing record too. Measured both halves on `.cs`:

@@ -670,6 +670,50 @@ DEEP_PY_METHOD_TABS = "\n".join(
     line.replace("    ", "\t")
     for line in DEEP_PY_METHOD_SPACES.split("\n"))
 
+# A tab-indented body that CONTAINS a triple-quoted string whose CLOSING
+# row carries branch operators, and the byte-identical space-indented
+# body. No existing TestTabIndentedPython fixture holds a string literal,
+# which is why the mask defect below went uncaught; and the operators
+# after the closing quotes are what make it visible in a metric rather
+# than only in the mask's column arithmetic. MEASURED before this fix:
+# the tab form reported cognitive 10 against the space form's 13 -- the
+# python mask overwrote the tab row's leading tabs with the sentinel, so
+# _cognitive_approx read that continuation row at indent 0. After this
+# fix both report 13 and the full metrics dicts are equal.
+STRINGY_PY_SPACES = (
+    "def stringy(a, b, c):\n"
+    "    if a:\n"
+    "        for i in b:\n"
+    "            note = \"\"\"a long\n"
+    "            note\"\"\" if c and b else \"\"\n"
+    "            if c and note:\n"
+    "                return i\n"
+    "    return 0\n"
+)
+STRINGY_PY_TABS = "\n".join(
+    line.replace("    ", "\t") for line in STRINGY_PY_SPACES.split("\n"))
+
+# The DOWN direction, which no other fixture here pins: a class whose
+# `def` header is TAB-indented while its body lines are SPACE-indented.
+# base_indent now expands the header's tab to 4 columns while the body's
+# space widths are unchanged, so the gap between them SHRINKS. MEASURED
+# pre-s3 (26adcad) cognitive 25 / nesting_depth 7; head cognitive
+# 20 / nesting_depth 6. That is a reduction in over-count, not a new
+# under-count -- head cognitive 20 is still above the cognitive
+# threshold of 15, so this shape does NOT change its verdict; it changes
+# its number, and this fixture exists so that direction is never silent.
+MIXED_INDENT_PY = (
+    "class C:\n"
+    "\tdef mixed(self, a, b, c):\n"
+    "        if a:\n"
+    "            for i in b:\n"
+    "                if c:\n"
+    "                    while a:\n"
+    "                        if b and c:\n"
+    "                            return i\n"
+    "        return 0\n"
+)
+
 
 class TestTabIndentedPython(unittest.TestCase):
     """The indent model must read a tab as one nesting step. Before this
@@ -715,6 +759,39 @@ class TestTabIndentedPython(unittest.TestCase):
         self.assertEqual(qg._py_indent_width("\t    if a:"), 8)
         self.assertEqual(qg._py_indent_width("if a:"), 0)
         self.assertEqual(qg._py_indent_width(""), 0)
+
+    def test_a_tab_indented_string_literal_keeps_its_indent_through_the_mask(
+            self):
+        # F1: _token_mask_spans started each continuation row's sentinel fill
+        # at lstrip(" "), which is 0 on a tab-indented row, so the fill erased
+        # the leading TABS that _py_indent_width now reads. MEASURED before
+        # the fix: cognitive 10 for the tab body against 13 for the identical
+        # space body -- an under-count, the one direction this heuristic is
+        # never allowed to move.
+        self.assertEqual(
+            self.metrics(STRINGY_PY_TABS),
+            self.metrics(STRINGY_PY_SPACES))
+
+    def test_the_mask_leaves_a_tab_continuation_rows_indent_alone(self):
+        # The mechanism behind the test above, pinned directly: every masked
+        # row must report the same _py_indent_width as its raw counterpart.
+        # MEASURED before the fix: row index 4 read 12 raw and 0 masked.
+        masked = qg._mask_python_literals(STRINGY_PY_TABS)
+        self.assertIsNotNone(masked)
+        for raw, got in zip(STRINGY_PY_TABS.split("\n"), masked.split("\n")):
+            self.assertEqual(
+                qg._py_indent_width(got), qg._py_indent_width(raw))
+
+    def test_a_mixed_indent_method_pins_the_downward_direction(self):
+        # F3: the CHANGELOG documents that this change can move results DOWN
+        # and nothing pinned it. Tab-indented `def` header, space-indented
+        # body: MEASURED pre-s3 (26adcad) cognitive 25 / nesting_depth
+        # 7, head cognitive 20 / nesting_depth 6. Both head values
+        # are pinned exactly so a future indent change cannot move this shape
+        # again without a test saying so.
+        got = self.metrics(MIXED_INDENT_PY)
+        self.assertEqual(got["cognitive_complexity"], 20)
+        self.assertEqual(got["nesting_depth"], 6)
 
 
 class TestCrapScore(unittest.TestCase):
@@ -1222,6 +1299,44 @@ class TestAnalyzeBuiltinPython(unittest.TestCase):
         findings, cls = qg.analyze_builtin("data.txt", "whatever\n", [(1, 1)])
         self.assertEqual(findings, [])
         self.assertIsNone(cls)
+
+
+# A two-record list where the OUTER record is listed first, exactly as
+# _extract_functions_cbrace appends them (headers in source order). F4:
+# the bound `fn['start'] <= line_no < fn['end']` used to be written twice
+# -- once as a predicate and once re-derived inside a bare next() -- so a
+# drift between them would raise StopIteration inside analyze_builtin,
+# which has no try/except around it in measure()'s file loop and would
+# abort the gate for EVERY file rather than one. MEASURED: behaviour is
+# unchanged; next() selected the OUTERMOST enclosing record and so does
+# the helper. The 1-based-inclusive boundary cases live with
+# TestExtensionScopedControlWords, which owns them already.
+ENCLOSING_FUNCS = [
+    {"name": "outer", "start": 1, "end": 20, "header_idx": 0},
+    {"name": "inner", "start": 5, "end": 12, "header_idx": 4},
+]
+
+
+class TestEnclosingRecord(unittest.TestCase):
+    def test_it_selects_the_outermost_enclosing_record(self):
+        got = qg._strictly_enclosing_record(ENCLOSING_FUNCS, 7)
+        self.assertEqual(got["name"], "outer")
+
+    def test_a_phantom_with_more_params_is_not_redundant(self):
+        lines = ["void outer(int a) {"] + [""] * 19
+        self.assertFalse(
+            qg._phantom_is_redundant(
+                ENCLOSING_FUNCS[0], "using (a, b, c, d, e) {", lines))
+
+    def test_a_phantom_with_no_more_params_is_redundant(self):
+        lines = ["void outer(int a, int b) {"] + [""] * 19
+        self.assertTrue(
+            qg._phantom_is_redundant(
+                ENCLOSING_FUNCS[0], "using (x) {", lines))
+
+    def test_no_enclosing_record_means_not_redundant(self):
+        self.assertFalse(
+            qg._phantom_is_redundant(None, "using (x) {", []))
 
 
 class TestAnalyzeBuiltinCbrace(unittest.TestCase):
@@ -2096,7 +2211,7 @@ CS_MULTI_DECL_USING_SOURCE = (
 
 # r1-F1 follow-up (s2): the same shape with the DOMINANCE reversed. The
 # `using` header declares 5 comma items, the enclosing Go declares 6, so
-# _phantom_has_more_params does NOT keep the phantom and it is dropped.
+# _phantom_is_redundant DOES report the phantom redundant, so it is dropped.
 # Measured: {'Go': 6} for a full [(1, 400)] range and for a narrow
 # [(4, 6)] range covering only the using block -- the dropped count is
 # never the file's highest, and the enclosing record is always emitted
@@ -2195,13 +2310,15 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         # line produces (see test_a_literal_brace_on_the_header_line_...
         # below), so treating it as enclosure silently drops a real
         # violation.
+        # r1-F4: the helper now returns the enclosing record or None; the
+        # bound is unchanged.
         funcs = [{"name": "Import", "start": 3, "end": 11, "header_idx": 2}]
-        self.assertFalse(qg._strictly_encloses_line(funcs, 2))
-        self.assertTrue(qg._strictly_encloses_line(funcs, 3))
-        self.assertTrue(qg._strictly_encloses_line(funcs, 10))
-        self.assertFalse(qg._strictly_encloses_line(funcs, 11))
-        self.assertFalse(qg._strictly_encloses_line(funcs, 12))
-        self.assertFalse(qg._strictly_encloses_line([], 3))
+        self.assertIsNone(qg._strictly_enclosing_record(funcs, 2))
+        self.assertIsNotNone(qg._strictly_enclosing_record(funcs, 3))
+        self.assertIsNotNone(qg._strictly_enclosing_record(funcs, 10))
+        self.assertIsNone(qg._strictly_enclosing_record(funcs, 11))
+        self.assertIsNone(qg._strictly_enclosing_record(funcs, 12))
+        self.assertIsNone(qg._strictly_enclosing_record([], 3))
 
     def test_the_reserved_words_are_scoped_to_their_own_extensions(self):
         self.assertEqual(
@@ -2315,7 +2432,7 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         # i.e. Import's measured end EQUALS foreach's header line_no. Under
         # the old inclusive `_encloses_line` that equality counted as
         # enclosure and foreach vanished entirely (measured: only "Import"
-        # remained). Under the new strict `_strictly_encloses_line` equality
+        # remained). Under the new strict `_strictly_enclosing_record` equality
         # no longer enclose, so foreach is retained.
         funcs = qg._extract_functions_cbrace(
             CS_LITERAL_BRACE_HEADER_SOURCE.splitlines(), ".cs")

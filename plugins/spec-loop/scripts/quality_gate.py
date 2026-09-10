@@ -584,17 +584,21 @@ def _token_mask_spans(tok, rows):
     """The (row_index, start_col, end_col) spans one masked token covers, one per
     physical line it reaches. Row indexes are 0-based into `rows`. On the
     opening physical line, masking starts at the token's own start column. On
-    every later physical line, masking starts after that row's own leading
-    spaces rather than at column 0, so the sentinel fill never erases the
-    leading whitespace a downstream nesting-level reader derives from that
-    row: leading whitespace carries no branch words or operator punctuation,
-    so leaving it unmasked is measurement-neutral. (PURE)"""
+    every later physical line, masking starts after that row's whole
+    leading-whitespace run -- spaces AND tabs, the same bare lstrip()
+    _py_indent_width uses -- so the sentinel fill never erases the indent a
+    downstream nesting-level reader derives from that row. It measured that
+    run with lstrip(" ") until the tab fix made _py_indent_width expand
+    tabs: a tab-indented continuation row then had its tabs overwritten and
+    read as indent 0, UNDER-counting _cognitive_approx. Leading whitespace
+    carries no branch words or operator punctuation, so leaving all of it
+    unmasked is measurement-neutral for the scan itself. (PURE)"""
     (first_row, first_col), (last_row, last_col) = tok.start, tok.end
     spans = []
     for row in range(first_row, last_row + 1):
         line = rows[row - 1]
         start = first_col if row == first_row else (
-            len(line) - len(line.lstrip(" ")))
+            len(line) - len(line.lstrip()))
         end = len(line)
         if row == last_row:
             end = last_col
@@ -938,14 +942,18 @@ def _extract_functions_python(lines):
 def _cbrace_name_at(lines, ext, funcs, i):
     """The function name detected at 0-based line `i` (else None), tried as a
     brace signature first and an arrow form second. `funcs` is the record list
-    collected so far, needed by the control-keyword guard. Extracted out of
-    _extract_functions_cbrace purely to keep that loop's own nesting shallow;
-    carries no state across calls. (PURE)"""
+    collected so far; this is where the control-keyword guard's enclosure
+    question is resolved, by _strictly_enclosing_record then
+    _phantom_is_redundant, so the guard itself takes a plain boolean.
+    Extracted out of _extract_functions_cbrace purely to keep that loop's own
+    nesting shallow; carries no state across calls. (PURE)"""
     line = lines[i]
     m = _CBRACE_DEF_RE.search(line)
-    state = {"funcs": funcs, "lines": lines}
-    if m and not _looks_like_call_or_control(ext, m, i + 1, state):
-        return m.group(1)
+    if m:
+        enclosing = _strictly_enclosing_record(funcs, i + 1)
+        redundant = _phantom_is_redundant(enclosing, line, lines)
+        if not _looks_like_call_or_control(ext, m, redundant):
+            return m.group(1)
     am = _CBRACE_ARROW_RE.search(line)
     if am:
         return am.group(1)
@@ -996,11 +1004,14 @@ def _control_words_for(ext):
     return _CONTROL_WORDS_BY_EXT.get((ext or "").lower(), frozenset())
 
 
-def _strictly_encloses_line(funcs, line_no):
-    """True if any already-collected function record STRICTLY contains
-    `line_no`, i.e. `line_no` is not the record's own last line. `funcs` is a
-    list of {name, start, end, header_idx} records whose start/end are
-    1-BASED INCLUSIVE; `line_no` is 1-based.
+def _strictly_enclosing_record(funcs, line_no):
+    """The already-collected function record that STRICTLY contains
+    `line_no`, or None. `funcs` is a list of
+    {name, start, end, header_idx} records whose start/end are 1-BASED
+    INCLUSIVE; `line_no` is 1-based. Records arrive in header order, so the
+    first match is the OUTERMOST enclosing one -- the selection the bare
+    next() this helper replaces already made, preserved deliberately:
+    whichever record encloses the phantom is always emitted alongside it.
 
     The upper bound is exclusive on purpose: a record's span can only reach
     exactly the phantom's header line when a non-JS-masked brace language
@@ -1010,42 +1021,47 @@ def _strictly_encloses_line(funcs, line_no):
     dominate the phantom's body, so equality must not count as enclosure --
     otherwise the phantom (and the real violation it measures) is suppressed
     while the record kept in its place covers almost none of it. (PURE)"""
-    return any(fn["start"] <= line_no < fn["end"] for fn in funcs)
+    for fn in funcs:
+        if fn["start"] <= line_no < fn["end"]:
+            return fn
+    return None
 
 
-def _phantom_has_more_params(funcs, line_no, lines):
-    """True if a control-keyword phantom's own header declares more
-    comma-separated items than the real function record enclosing it -- e.g. a
-    C# `using (a, b, c, d, e)` inside a method whose own signature takes one
-    argument. When true the phantom must be kept despite being a control
-    keyword: collapsing it into the enclosing record would silently drop a
-    parameter_count violation the enclosing record's own header does not
-    carry, the exact under-count this heuristic must never introduce. Assumes
-    an enclosing record exists (only called once one has been confirmed).
-    (PURE)"""
-    enclosing = next(
-        fn for fn in funcs if fn["start"] <= line_no < fn["end"])
-    phantom_params = _count_params(lines[line_no - 1])
+def _phantom_is_redundant(enclosing, phantom_header, lines):
+    """True when a control-keyword phantom adds no parameter_count reading
+    its enclosing record does not already carry. `enclosing` is the record
+    from _strictly_enclosing_record (None when nothing encloses the
+    phantom, in which case the phantom is the sole measurement of that body
+    and is never redundant). `phantom_header` is the phantom's own raw
+    source line; `lines` is the file's raw source lines, used only to read
+    the enclosing record's header.
+
+    A phantom declaring MORE comma-separated items than the enclosing
+    method -- e.g. a C# `using (a, b, c, d, e)` inside a one-argument
+    method -- is kept, because collapsing it would silently drop a
+    parameter_count violation the enclosing header does not carry: the
+    exact under-count this heuristic must never introduce. (PURE)"""
+    if enclosing is None:
+        return False
+    phantom_params = _count_params(phantom_header)
     enclosing_params = _count_params(lines[enclosing["header_idx"]])
-    return phantom_params > enclosing_params
+    return phantom_params <= enclosing_params
 
 
-def _looks_like_call_or_control(ext, match, line_no, state):
+def _looks_like_call_or_control(ext, match, phantom_is_redundant):
     """True if the C-family signature match is really a control keyword
     (`if (...) {`) rather than a definition, so the caller should not record it
     as a function. `ext` is the file's extension, `match` the _CBRACE_DEF_RE
-    match and `line_no` the match's 1-based line. `state` bundles the two
-    pieces of scan-so-far context the redundancy check below needs together --
-    {"funcs": the records collected so far, "lines": the file's raw source
-    lines} -- kept as one parameter rather than two positional ones.
+    match, and `phantom_is_redundant` the caller's already-resolved answer to
+    "does a real record enclose this phantom and already carry every metric it
+    would measure" (see _strictly_enclosing_record and _phantom_is_redundant).
+    Resolving it once at the call site keeps the enclosure bound written in
+    exactly one place.
 
     A globally reserved word is always rejected. A per-extension word is
-    rejected ONLY when an already-collected record strictly encloses
-    `line_no` (see _strictly_encloses_line) AND the phantom's own header does
-    not declare more parameters than that enclosing record's header (see
-    _phantom_has_more_params) -- i.e. when the real enclosing method was
-    itself extracted and the phantom is redundant on every metric it would
-    have measured. When nothing encloses it the phantom is the sole
+    rejected ONLY when `phantom_is_redundant` -- i.e. when the real enclosing
+    method was itself extracted and the phantom is redundant on every metric
+    it would have measured. When nothing encloses it the phantom is the sole
     measurement of that method body -- measured on a C# method whose brace
     sits on its own line, dropping it takes the file from a reported
     cyclomatic 5 / cognitive 8 to no function measurement at all -- so it is
@@ -1056,10 +1072,7 @@ def _looks_like_call_or_control(ext, match, line_no, state):
         return True
     if word not in _control_words_for(ext):
         return False
-    funcs = state["funcs"]
-    if not _strictly_encloses_line(funcs, line_no):
-        return False
-    return not _phantom_has_more_params(funcs, line_no, state["lines"])
+    return phantom_is_redundant
 
 
 def _match_brace_end(lines, header_idx):
@@ -1169,8 +1182,10 @@ def _scan_lines_for(source, scan_lang, lines):
 
 def _function_metrics(lines, scan_lines, fn, lang):
     """Measured metric values for one extracted function. `lines` is raw source;
-    `scan_lines` is its masked counterpart, read by the two branch scans alone,
-    so span, indentation and length metrics all stay on raw text. (PURE)"""
+    `scan_lines` is its masked counterpart. Span and length metrics stay on raw
+    text, as does `base_indent`; `_cognitive_approx` reads BOTH branch hits and
+    per-line indent off the masked body, which is why _token_mask_spans must
+    preserve each row's whole leading-whitespace run. (PURE)"""
     body_lines = lines[fn["header_idx"]:fn["end"]]
     scan_body = scan_lines[fn["header_idx"]:fn["end"]]
     header_line = lines[fn["header_idx"]]
