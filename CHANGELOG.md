@@ -20,7 +20,10 @@ All notable changes to the spec-loop plugin are documented here. The format is
   matching the `// 4` the nesting and cognitive models divide by, so one tab is exactly one
   level — and the three space-only sites (`_nesting_depth_python`, the `_cognitive_approx`
   python arm, and `_function_metrics`' `base_indent`) call it. `test_quality_gate.py` gains
-  `TestTabIndentedPython`, pinning tab/space parity and the helper itself. **This changes
+  `TestTabIndentedPython`, pinning tab/space parity and the helper itself, including a
+  tab-indented method whose own `def` header is indented (not just a top-level function at
+  column 0), which is the shape that exercises `_function_metrics`'s `base_indent` call
+  specifically. **This changes
   existing `.py` results upward**: a tab-indented python function that passes the gate today
   can fail after this change. That is the safe direction under the never-under-count rule and
   is the intended effect, but it is an observable behaviour change, not merely internal.

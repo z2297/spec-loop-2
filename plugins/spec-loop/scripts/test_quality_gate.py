@@ -650,6 +650,26 @@ DEEP_PY_SPACES = (
 DEEP_PY_TABS = "\n".join(
     line.replace("    ", "\t") for line in DEEP_PY_SPACES.split("\n"))
 
+# The same six-level-deep body, but as a method: the `def` header itself is
+# indented one level inside a class. This pins _function_metrics's own
+# base_indent = _py_indent_width(header_line) line, which DEEP_PY_SPACES /
+# DEEP_PY_TABS above never exercise -- their top-level `def deep` sits at
+# column 0 in both variants, so base_indent is 0 under the old formula too.
+DEEP_PY_METHOD_SPACES = (
+    "class C:\n"
+    "    def deep(self, a, b, c):\n"
+    "        if a:\n"
+    "            for i in b:\n"
+    "                if c:\n"
+    "                    while a:\n"
+    "                        if b and c:\n"
+    "                            return i\n"
+    "        return 0\n"
+)
+DEEP_PY_METHOD_TABS = "\n".join(
+    line.replace("    ", "\t")
+    for line in DEEP_PY_METHOD_SPACES.split("\n"))
+
 
 class TestTabIndentedPython(unittest.TestCase):
     """The indent model must read a tab as one nesting step. Before this
@@ -673,6 +693,21 @@ class TestTabIndentedPython(unittest.TestCase):
     def test_tabs_and_spaces_measure_identically(self):
         self.assertEqual(
             self.metrics(DEEP_PY_TABS), self.metrics(DEEP_PY_SPACES))
+
+    def test_a_tab_indented_method_header_reports_real_nesting_depth(self):
+        """Pins _function_metrics's base_indent line: a tab-indented `def`
+        header that is itself indented (a method, not a top-level function)
+        must still measure the real nesting depth of its body."""
+        got = self.metrics(DEEP_PY_METHOD_TABS)
+        self.assertEqual(got["nesting_depth"], 6)
+        self.assertGreater(
+            got["nesting_depth"],
+            qg.DEFAULT_THRESHOLDS["nesting_depth"])
+
+    def test_tabs_and_spaces_measure_identically_for_a_method(self):
+        self.assertEqual(
+            self.metrics(DEEP_PY_METHOD_TABS),
+            self.metrics(DEEP_PY_METHOD_SPACES))
 
     def test_the_helper_expands_a_tab_to_one_indent_step(self):
         self.assertEqual(qg._py_indent_width("\tif a:"), 4)
