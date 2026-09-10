@@ -594,6 +594,22 @@ class TestBranchCount(unittest.TestCase):
         # 'ifield' / 'forum' must not be counted as if/for
         self.assertEqual(qg._branch_count("ifield = forum + whilehouse\n"), 1)
 
+    def test_csharp_foreach_counts_exactly_one_branch(self):
+        # D2: `foreach` was not a branch word. Measured before: 1 (base only).
+        # After: 2. The tuple's earlier "for" alternative fails its trailing
+        # \b inside `foreach`, so the engine backtracks to the `foreach`
+        # alternative and the keyword is counted ONCE, not twice.
+        self.assertEqual(
+            qg._branch_count("foreach (var r in rows) { }\n"), 2)
+
+    def test_camel_case_for_each_is_not_a_branch_word(self):
+        # The match must stay case-sensitive and \b-anchored: JS/Java/Kotlin
+        # `arr.forEach(...)` is a method call, not a loop keyword, and the
+        # differential harness floors are pinned at EQUALITY against files
+        # that contain it.
+        self.assertEqual(qg._branch_count("arr.forEach(x => x);\n"), 1)
+        self.assertEqual(qg._BRANCH_WORD_RE.findall("arr.forEach(x)"), [])
+
 
 class TestNesting(unittest.TestCase):
     def test_python_nesting_by_indent(self):
@@ -2017,6 +2033,26 @@ JS_RESERVED_NAME_METHODS = (
     "}\n"
 )
 
+# D2: `foreach` was absent from _BRANCH_WORDS, so a C# foreach loop added no
+# cyclomatic branch. Measured on this fixture BEFORE the fix: Go scored
+# cyclomatic_complexity 4 (1 base + if + && + case) and cognitive 8, with
+# the foreach contributing nothing. AFTER: 5 and 10. K&R braces, so the
+# real enclosing method IS extracted and the branch is attributed to Go
+# rather than to a phantom (s1's enclosure suppression drops the phantom
+# here, which is why this slice was ordered after s1).
+CS_FOREACH_CONTROL_SOURCE = (
+    "public class C\n"
+    "{\n"
+    "    public void Go(List<Row> rows) {\n"
+    "        foreach (var r in rows) {\n"
+    "            if (r.A && r.B) { X(r); }\n"
+    "        }\n"
+    "        switch (rows.Count) { case 1: Y(); break; }\n"
+    "    }\n"
+    "}\n"
+)
+
+
 FULL = [(1, 400)]
 
 
@@ -2080,16 +2116,19 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         # Measured before: 4 records -- Import (3-11, cc 2, cog 3) plus
         # foreach (4-6, cc 2), using (7-9, cc 1) and lock (10-10, cc 1), all
         # three inside Import's span. After: Import alone, metrics unchanged.
+        # s2: adding `foreach` to _BRANCH_WORDS raises Import's own count --
+        # cyclomatic 2 -> 3, cognitive 3 -> 5 (the foreach is at brace depth 1,
+        # so _cognitive_approx weights it x2). The extraction list is unchanged.
         self.assertEqual(
             qg._extract_functions_cbrace(CS_KR_SOURCE.splitlines(), ".cs"),
             [{"name": "Import", "start": 3, "end": 11, "header_idx": 2}])
         found = self.by_name("Importer.cs", CS_KR_SOURCE)
         self.assertEqual(sorted(found), ["Import"])
         self.assertEqual(found["Import"]["metrics"], {
-            "cyclomatic_complexity": 2,
+            "cyclomatic_complexity": 3,
             "method_lines": 9,
             "parameter_count": 2,
-            "cognitive_complexity": 3,
+            "cognitive_complexity": 5,
             "nesting_depth": 2,
         })
 
@@ -2112,16 +2151,18 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         # Measured: unconditional suppression collapses this file to
         # class_lines alone. Nothing extracted encloses line 5, so the
         # record is KEPT, before and after, with every metric identical.
+        # s2: the retained record's own body now counts its `foreach` too --
+        # cyclomatic 5 -> 6, cognitive 8 -> 9. Retention itself is unchanged.
         self.assertEqual(
             qg._extract_functions_cbrace(CS_MIXED_SOURCE.splitlines(), ".cs"),
             [{"name": "foreach", "start": 5, "end": 9, "header_idx": 4}])
         found = self.by_name("Importer.cs", CS_MIXED_SOURCE)
         self.assertEqual(sorted(found), ["foreach"])
         self.assertEqual(found["foreach"]["metrics"], {
-            "cyclomatic_complexity": 5,
+            "cyclomatic_complexity": 6,
             "method_lines": 5,
             "parameter_count": 1,
-            "cognitive_complexity": 8,
+            "cognitive_complexity": 9,
             "nesting_depth": 1,
         })
 
@@ -2195,6 +2236,22 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         self.assertGreater(
             found["using"]["metrics"]["parameter_count"],
             qg.DEFAULT_THRESHOLDS["parameter_count"])
+
+    def test_a_csharp_foreach_adds_a_branch_to_its_enclosing_method(self):
+        # D2, end to end through analyze_builtin so a mis-wired routing fails
+        # here rather than passing on a hand-composed _branch_count call.
+        # Measured before: Go cyclomatic 4, cognitive 8. After: 5 and 10 --
+        # the foreach sits at brace depth 1, so _cognitive_approx weights it
+        # x2. Every other metric is unchanged.
+        found = self.by_name("C.cs", CS_FOREACH_CONTROL_SOURCE)
+        self.assertEqual(sorted(found), ["Go"])
+        self.assertEqual(found["Go"]["metrics"], {
+            "cyclomatic_complexity": 5,
+            "method_lines": 6,
+            "parameter_count": 1,
+            "cognitive_complexity": 10,
+            "nesting_depth": 2,
+        })
 
 
 # --------------------------------------------------------------------------

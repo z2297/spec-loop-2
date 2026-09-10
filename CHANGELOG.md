@@ -25,8 +25,8 @@ All notable changes to the spec-loop plugin are documented here. The format is
   direction this heuristic is permitted to move. Known, documented residuals: a pure-Allman
   C# file (every brace on its own line, the Visual Studio default) still extracts nothing at
   all, because `_CBRACE_DEF_RE` requires the `{` on the signature line — deferred to its own
-  run; and `foreach` is still absent from `_BRANCH_WORDS`, so a C# `foreach` adds no
-  cyclomatic branch.
+  run. (The second residual named here — `foreach` absent from `_BRANCH_WORDS` — is fixed
+  below in this same Unreleased section.)
 - **A changed file the quality gate could not measure can no longer vanish from the report.**
   `measure()` in `plugins/spec-loop/scripts/quality_gate.py` ended its skip chain in
   `elif _lang_for(path) is None`, so a file with a supported extension that yielded zero
@@ -78,6 +78,27 @@ All notable changes to the spec-loop plugin are documented here. The format is
   pre-existing cognitive_complexity/nesting_depth violations this slice did not introduce and
   does not fix here, and `class_lines` on both `quality_gate.py` and `test_quality_gate.py`
   remains accepted debt per standing ruling.
+- **A C# `foreach` now contributes a cyclomatic branch.** `_BRANCH_WORDS` in
+  `plugins/spec-loop/scripts/quality_gate.py:142` gains `foreach`, so both `_branch_count`
+  and `_cognitive_approx` see C#'s loop keyword. Measured on a K&R `.cs` method containing
+  one `foreach`, one `if` with `&&` and one `switch`/`case`: cyclomatic_complexity 4 → 5 and
+  cognitive_complexity 8 → 10, the foreach having contributed nothing before. The word set
+  stays GLOBAL rather than per-language, because a `foreach` in a language that does not
+  reserve it can only over-count, the one direction this heuristic is permitted to move.
+  The match stays case-sensitive and word-boundary-anchored, so JS/Java/Kotlin
+  `arr.forEach(...)` — a method call, not a loop — is not counted, and `for` inside
+  `foreach` fails its own trailing boundary so the keyword adds exactly one branch, not two.
+  `plugins/spec-loop/scripts/test_quality_gate.py` gains
+  `test_csharp_foreach_counts_exactly_one_branch`,
+  `test_camel_case_for_each_is_not_a_branch_word` and the end-to-end
+  `test_a_csharp_foreach_adds_a_branch_to_its_enclosing_method` over the new
+  `CS_FOREACH_CONTROL_SOURCE` fixture, whose enclosing method is genuinely extracted (the
+  phantom is suppressed there by the enclosure guard above, which is why this change is
+  sequenced after it); two pre-existing pinned metric dicts move with it, `Import` 2/3 → 3/5
+  and the deliberately retained `foreach` phantom 5/8 → 6/9. Known, documented residuals:
+  a `foreach` written in a language that does not reserve the word is counted as a branch by
+  design (an over-count); a pure-Allman C# file still extracts no method at all, so its
+  `foreach` is attributed to nothing — deferred to its own run.
 
 ## [2.5.0] - 2026-09-09
 ### Added
