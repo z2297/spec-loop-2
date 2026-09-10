@@ -1,0 +1,170 @@
+{
+  "schema_version": 2,
+  "run_id": "20260910-gate-language",
+  "base_ref": "spec-loop-run/20260910-gate-language",
+  "base_sha": "fa01826d50b011e0666b2d5ce36ea5dc1a684837",
+  "base_branch": "main",
+  "merge_mode": "single-branch",
+  "mode": "workflow",
+  "created_at": "2026-09-10T14:52:11Z",
+  "shared_constraints": [
+    "Stdlib-only Python, forever. No third-party imports. lizard/radon are detected read-only via shutil.which, never imported and never installed - README.md:53 states the zero-dependency guarantee, and that (not 'it isn't installed here') is why this run patches the heuristic instead of declaring a dependency.",
+    "No type hints anywhere in plugin scripts (quality_gate.py has zero). Describe shapes in the docstring instead. Docstring on every function; mark side-effect-free ones (PURE), trailing form, as the newer routing block at quality_gate.py:534-1075 does.",
+    "NO NEW MODULE. test_doctrine_run_docs.py:147 pins the literal string '**Scripts (14 runtime + tests)**' in plugins/spec-loop/README.md:167 against a live count of non-test .py files on disk, and the standing rule is that plugin scripts share no helper module. ALL work lands inside quality_gate.py itself.",
+    "THE RUN CANNOT MEASURE ITS OWN FIX. Every agent's quality_gate_cmd points at <plugin_root>/scripts/quality_gate.py - the frozen ~/.claude/plugins/cache/spec-loop/spec-loop/2.5.0 copy, sha256 dc9f231adf375dc4d6aebee0542452df9caefeee79c198f3b19593c97b2a6e52, byte-identical to the repo copy at intake. Editing the repo copy does NOT change the gate that measures this run's slices. The ONLY admissible evidence a defect is fixed is `python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_quality_gate.py'` against the repo copy. A green gate result is NOT evidence for this run, at any stage, for any slice.",
+    "NEVER UNDER-COUNT. quality_gate.py:116-132 argues with a measured counter-example that this heuristic may over-count but must never under-count: an over-count is a false alarm a human dismisses, an under-count is a real violation that ships. Every change must move counts in the safe direction or leave them unchanged. This is the premise both intake safety flags were raised against.",
+    "Coverage: quality_gate.py floored at 86% (scripts/measure_coverage.py:151), TOTAL floored at 90 (:160). Measured baseline at intake: 93.9%, 841/896 lines, TOTAL 97.1%. Only the 2-line __main__ shim is omitted and test_measure_coverage_manifest.py:23 pins it at exactly 2 lines. Do not touch scripts/coverage_omit.txt. Do not lean on the boundary: evaluate() at measure_coverage.py:418 compares pct + 1e-9 < floor with no rounding.",
+    "The function-record contract is load-bearing and unenforced: both extractors return {name, start, end, header_idx} with start/end 1-BASED INCLUSIVE and header_idx 0-BASED, always start-1. _function_metrics slices lines[header_idx:end] (quality_gate.py:1062-1064) and that 0-based/1-based mix is what makes the slice inclusive of the last line. A new extractor that gets this wrong corrupts every metric silently. Assert the record shape directly in the extractor's own unit test, not only through analyze_builtin.",
+    "Tests are stdlib unittest, never pytest. Fixtures go at MODULE level, never inside a test method - test_quality_gate.py:43-47 explains why: this suite is graded by the gate it tests, so a fixture inside a method is measured as that method's own branching. Use 4-space hanging indents; paren-aligned continuations read as real nesting to the metric under test.",
+    "New language-routing tests come in PAIRS - one unit assertion on the helper, one end-to-end analyze_builtin(path, SOURCE, [(start,end)]) assertion. Doctrine at test_quality_gate.py:896-906: 'this drives the routing through the product entry point, so a mis-wired analyze_builtin fails here rather than passing on hand-composed calls.' Open each with a # comment naming the defect and the MEASURED before/after numbers, per test_quality_gate.py:874-884. Full-sentence test names.",
+    "The differential harness covers only .py/.js/.mjs (test_quality_gate.py:1751 SCANNED_SUFFIXES), so any NEW language family lands with zero regression coverage and must ship its own golden-value pin over real source of that language. Existing floors sit at EQUALITY - globToRe cognitive exactly 17, stageFixLoop 13, runSliceError 12, and unmasked stageFixLoop cognitive exactly 15 (:1827-1836) - so any change that lowers one by 1 fails CI.",
+    "Commit shape: code + its tests + the prose surfaces that describe it, in ONE commit. Conventional-commit subject. Add a CHANGELOG.md [Unreleased] entry: a bold one-sentence claim, then prose naming exact files/keys and explicit 'Known, documented residuals'. NO version bump - scripts/release.py owns plugin.json and marketplace.json exclusively.",
+    "class_lines will FAIL on every slice in this run. quality_gate.py is 1403 non-blank lines and test_quality_gate.py 1629, against a 300 threshold. This is pre-existing debt accepted by standing ruling (see the run's accepted-violations decision event); do NOT refactor to chase it and do NOT weaken the threshold. A NEW function-level violation your own code introduces remains a genuine block."
+  ],
+  "scope_ceiling": [
+    "Installing, vendoring, or requiring lizard or radon, or any third-party dependency.",
+    "Weakening any threshold, or adding anything to scripts/coverage_omit.txt, to make a gate result green.",
+    "Reworking the string/comment scan mask for non-JS brace languages (_JS_MASK_EXTS, quality_gate.py:132). The over-count for C#/Java/Go/Rust/C++/JSX is a deliberate documented safety choice.",
+    "Tightening _CBRACE_DEF_RE (quality_gate.py:149-151), or implementing the function-call detection its guard's docstring falsely advertises. Shared by all 15 brace extensions; no measured defect motivates it; its failure mode is dropping real definitions - the same under-count risk this run exists to avoid. Correcting the misleading docstring IS in scope.",
+    "Per-language BRANCH-word sets. _BRANCH_WORDS is already mixed-family by design (elif is Python-only) and _branch_count takes no lang; adding a language axis for one word contradicts the file's established shape. Global is correct here - the worst case of a global foreach is an over-count, the permitted direction.",
+    "Adding coverage-report formats such as jacoco XML. CRAP parses cobertura and lcov only.",
+    "Refactoring quality_gate.py or test_quality_gate.py to get under the 300-line class_lines threshold.",
+    "Wiring summary.vacuous into the per-slice pipeline. Only references/phase-5-integration.md:14 tells any reader to check it; that is a real gap but a different change to a different file, and folding it in would double this run's blast radius. Logged DEFERRED.",
+    "Routing .swift or .scala into _EXT_LANG. Measured at intake: _CBRACE_DEF_RE matches neither 'func f(a: Int) -> Int {' nor 'def f(a: Int): Int = {' because its trailing class lacks '-' and '='. Routing them would yield zero extracted functions AND no skip record - silent non-measurement, strictly worse than today's honest 'unsupported file type'.",
+    "Adding ANY new language to _EXT_LANG - .rb, .kt, .swift, .scala or otherwise. The human answered the intake ambiguity with 'Neither, defects only': the indent-model EXTENSION is out. Only the tab-handling defect in the existing Python model is in.",
+    "Parameterising the indent step size out of _nesting_depth_python / _cognitive_approx. With no 2-space language routed it serves nothing; the hardcoded // 4 stays.",
+    "A generic indent fallback for unsupported extensions (reading B) - rejected on the merits and logged DEFERRED."
+  ],
+  "slices": [
+    {
+      "id": "s1",
+      "goal": "Language-scope the C-family control-keyword guard WITH COVERAGE-CONDITIONAL SUPPRESSION, and stop a supported file from vanishing.\n\n(a) Thread the file extension from analyze_builtin (quality_gate.py:1088) through _extract_functions_for (:1031) into _extract_functions_cbrace (:918) and _looks_like_call_or_control (:948, whose accepted-but-unused `line` parameter is the free slot). Keep today's 9 reserved words global; add foreach/using/lock/fixed for C# (.cs) and synchronized for Java (.java) in a per-extension map.\n\n(b) HUMAN RULING - the suppression is CONDITIONAL ON COVERAGE, never unconditional. Suppress a per-extension keyword match ONLY when an already-collected function record's [start, end] span encloses the match line. Otherwise KEEP today's record: that is an over-count, the permitted direction, and it is the only measurement that code has. Put the enclosure test in a NEW PURE helper called from the loop. Do NOT inline it into _extract_functions_cbrace: that function's cognitive complexity is EXACTLY 15 and test_quality_gate.py:1827-1836 pins that exact value, so inlining fails CI.\n\n(c) Replace the skip chain's terminal `elif _lang_for(path) is None:` (:1300) with an unconditional else-arm carrying a distinguishing reason, so a supported-extension file that yields zero functions leaves a record instead of disappearing from the report.\n\n(d) Correct the :948-951 docstring, which claims function-call detection the one-line set-membership body does not implement.\n\nDO NOT add any language to _EXT_LANG - Kotlin, Ruby, Swift and Scala are all explicitly out per the human's intake answer.\n\nCONTROLLER-MEASURED EVIDENCE (reproduce and pin; all three shapes measured first-hand against the repo copy):\n  1. K&R C# ('void Import(...) {' brace on the signature line) extracts [('Import', cc 3, cog 6), ('foreach', cc 3, cog 4)] - the real method IS measured, so the phantom is genuinely redundant and MUST be dropped.\n  2. MIXED C# (method brace on its own line, control brace on the same line) extracts exactly ONE record, [('foreach', cc 6, cog 15, method_lines 7, nesting 3)], end-to-end checks 6 / vacuous False - the phantom is the SOLE measurement of the method body and MUST be kept. Unconditional gating collapses this to checks 1 (class_lines only) and exit 0; the council measured a richer example going from cyclomatic 11 / cognitive 20 / exit 1 to a silent pass.\n  3. PURE ALLMAN C# (every brace on its own line, the Microsoft/VS default) extracts [] TODAY - not the method, not a phantom - because _CBRACE_DEF_RE needs the { on the signature line. Nothing to suppress; clause (c) at least gives it a record.\n  4. A .js class with methods named lock/fixed/using yields [('lock',3),('fixed',2),('using',3)] today and [] if the words are added GLOBALLY. This is the safety regression the extension-scoping exists to prevent.\n\nREQUIRED TESTS (paired unit + analyze_builtin per test_quality_gate.py:896-906, module-level fixtures, full-sentence names, each opening with a # comment carrying the measured before/after numbers):\n  - K&R .cs fixture: foreach/using/lock are NO LONGER extracted when the enclosing method IS extracted.\n  - Mixed-brace .cs golden fixture: the phantom record IS RETAINED and the FAIL survives, because no extracted function encloses it.\n  - .js class with methods named lock/fixed/using: still extracted with every metric intact. This test does not exist today and is the one that catches the safety regression.\n  - The first-ever qg.measure()-level test, covering the new skip record - no test calls qg.measure( at all today.\n\nCHANGELOG: name the retained-phantom behaviour as DELIBERATE, not as a residual defect.",
+      "files": [
+        "plugins/spec-loop/scripts/quality_gate.py",
+        "plugins/spec-loop/scripts/test_quality_gate.py",
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "quality-gate",
+        "language-routing",
+        "gate-reporting"
+      ],
+      "deps": [],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s2",
+      "goal": "Count C#'s foreach as a branch. Append `foreach` to _BRANCH_WORDS (quality_gate.py:136) - global, no lang threading, since a global foreach can only over-count (the permitted direction) and the only lowercase collision in any routed language is Scala's .foreach, which is not routed. Verified at intake: the alternation matches foreach exactly once with no double count, and camelCase forEach in JS/Java/Kotlin does not match the case-sensitive \\bforeach\\b - which the existing exact-equality floors in test_quality_gate.py:1827-1836 depend on, so the fix must stay case-sensitive and boundary-anchored.\n\nADDITIONALLY, fold in three non-blocking residuals the s1 review recorded (s1's own fix loop correctly did not act on them - they are below the Tier-3 blocking bar of P0+P1 - but this slice already edits all three files, so correcting them here is free rather than shipping known-inaccurate prose):\n  (i) CHANGELOG.md: the s1 entry's blanket safety claim - that suppressing an enclosed phantom only ever moves counts in the over-count-or-unchanged direction - is FALSE for parameter_count. Correct the claim to state the actual, narrower guarantee.\n  (ii) CHANGELOG.md: name the parameter_count non-monotonicity under 'Known, documented residuals'. The reviewer measured it: `.cs` containing `using (Stream p = A(), q = B(), r = C(), s = D(), t = E()) {` inside a K&R method `Go(int a)` reported `using` with parameter_count 5 against a threshold of 4 BEFORE s1, and after s1 only `Go` with parameter_count 1 survives, so that violation disappears. No genuine defect ships - the dropped number was never a real parameter list, it was _count_params reading a control keyword's parentheses - but this run's standard is that a count moving in the forbidden direction is NAMED, not left for a reader to find. Note the nested-call form `foreach (var x in Zip(a, b, c))` does NOT reproduce it: _count_params splits commas only at paren depth 0, so it measures 1. The multi-declarator `using` is the shape that actually reaches it.\n  (iii) test_quality_gate.py: update the module docstring's coverage summary to mention the test classes s1 added, in particular the suite's FIRST qg.measure()-level test.",
+      "files": [
+        "plugins/spec-loop/scripts/quality_gate.py",
+        "plugins/spec-loop/scripts/test_quality_gate.py",
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "quality-gate",
+        "branch-counting"
+      ],
+      "deps": [
+        "s1"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "s3",
+      "goal": "Fix the tab-indentation under-count in the EXISTING Python indent model. _extract_functions_python measures indent with bare lstrip() (quality_gate.py:904) while _nesting_depth_python uses lstrip(' ') - spaces only (:979) - and _cognitive_approx repeats the latter (:1011). Every line of a tab-indented file therefore reads as indent 0 and nesting_depth collapses to 0 for the whole file at any real depth. Measured through analyze_builtin on one six-level-deep body: 4-space scores nesting_depth 5 / cognitive 14 (FAILS threshold 3); the identical structure tab-indented scores 0 / 4 (PASSES). Unify tab handling across all three sites, expanding tabs before the divide, and pin it with a named regression test asserting tab-indented Python reports depth > 0. Counts move UP - the safe direction - but this is an observable change to existing .py results and needs its own CHANGELOG line. EXPLICITLY NOT IN THIS SLICE per the human's intake answer: no Ruby, no .rb, no _EXT_LANG change, no new language family, and no step-size parameterisation (the hardcoded // 4 stays, since no 2-space language is routed).\n\nADDITIONALLY, one carried residual from s2's review - the LAST prose correction this run will make. s2 rewrote the s1 CHANGELOG bullet and left a dangling reference: the bullet still says \"The second residual named here - `foreach` absent from `_BRANCH_WORDS` - is fixed below\", but after that rewrite the sentence names only ONE residual (pure-Allman), so the phrase points at a residual no longer named anywhere in the bullet. Fix the reference so the shipped CHANGELOG is not self-contradictory. This is a one-sentence edit; do NOT restructure the entry, and do NOT chase further wording nits - s2's two remaining P3s (a blank-line inconsistency around CS_FOREACH_CONTROL_SOURCE, and a ragged docstring paragraph wrap) ship as recorded residuals by controller decision and are explicitly NOT in scope.",
+      "files": [
+        "plugins/spec-loop/scripts/quality_gate.py",
+        "plugins/spec-loop/scripts/test_quality_gate.py",
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "quality-gate",
+        "indent-model"
+      ],
+      "deps": [
+        "s2"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "r1",
+      "goal": "REMEDIATION slice for the four actionable findings of the Phase 5 integration review. Nothing here is at or above the blocking bar; this slice exists because two of them are measurably FALSE claims in prose this run is shipping, and this run's standard is that the direction of any observable change is named honestly.\n\nF1 - COMPLETE THE TAB FIX SO IT SURVIVES LITERAL-MASKING (the substantive one).\n_cognitive_approx's python arm reads MASKED lines (_function_metrics passes scan_body) while _nesting_depth_python reads RAW. _token_mask_spans starts its sentinel fill at `len(line) - len(line.lstrip(' '))`, which is 0 on a tab-indented row, so leading TABS are overwritten with the sentinel and s3's new tab-expanding width never sees them. Before s3 this was measurement-neutral because the reader also used lstrip(' '); s3 changed the reader, so it is neutral no longer. MEASURED by the reviewer on byte-identical bodies: raw '\\t\\t\\t\\\"\\\"\\\" if a else \\\"z\\\"' masks to 'xxxxxx if a else xxx', raw width 12 versus masked width 0; head scores cognitive 6 for the tab body and 9 for the space body. NOT a regression - base scored 3 - but the fix is incomplete in the UNDER-COUNT direction, which is the direction this codebase forbids. Fix it by EITHER masking continuation rows from the row's full leading-whitespace width (consistent with _py_indent_width) OR having _cognitive_approx take its indent from the RAW line and its hits from the masked line. Then correct the docstring near quality_gate.py:588-590, which still asserts the sentinel fill never erases leading whitespace a nesting reader derives - an invariant s3 made false. Add a tab-indented multi-line-string fixture to TestTabIndentedPython; none of its current fixtures contain a string literal, which is why nothing caught this.\n\nF2 - CORRECT TWO FALSE SHIPPED CLAIMS in CHANGELOG.md. (a) The s3 bullet's bolded claim that a tab-indented file 'measures the same as the identical space-indented file' is refuted by F1's 6-versus-9 measurement; qualify it. (b) The residual paragraph states that lstrip(' ') in the mask helper 'is left as-is on purpose: it picks a raw column index, not a width' - that argues the helper is irrelevant when it is exactly the mechanism that defeats the fix. Replace it with the real residual. A release note that names the one residual and then dismisses it for the wrong reason is worse than not naming it.\n\nF3 - PIN THE DOWNWARD DIRECTION WITH A TEST. The CHANGELOG openly documents that s3 can move results DOWN, and NO fixture pins it: all four TestTabIndentedPython fixtures indent header and body consistently, so all four move up. The reviewer reproduced the down case on valid python - a class with a tab-indented `def` header and an 8-space body - scoring base cognitive 18 / nesting 6 versus head cognitive 14 / nesting 5, which crosses the cognitive threshold of 15 and turns a FAIL into a PASS. Add a module-level mixed-indent fixture pinning the exact post-change numbers, with the measured before/after in the leading comment.\n\nF4 - COLLAPSE THE DUPLICATED ENCLOSURE BOUND. _phantom_has_more_params re-derives `fn['start'] <= line_no < fn['end']` inside a bare `next(...)`, duplicating _strictly_encloses_line. If the two bounds ever drift, next() raises StopIteration, and there is no try/except between analyze_builtin and measure()'s file loop, so it would abort the gate for EVERY file rather than one. Replace both with a single helper returning the record or None, resolved once in _cbrace_name_at and passed down, which also retires the stringly-keyed `state` bag that exists only to keep _looks_like_call_or_control at four parameters. PRESERVE BEHAVIOUR EXACTLY: the reviewer verified next() currently selects the OUTERMOST enclosing record, not the innermost, and that this is safe because whichever record it picks encloses the phantom and is always emitted alongside. Keep that selection identical unless a test proves otherwise.\n\nOUT OF SCOPE - ship as recorded residuals: F5 (_has_any_callable duplicating analyze_builtin's preamble), F6 (two missing (PURE) markers), F7 (_py_indent_width called on non-python headers, verified harmless), F8 (a CHANGELOG bullet naming _encloses_line, since renamed _strictly_encloses_line).\n\nTHE INVARIANT THAT MUST SURVIVE: the reviewer verified the composed never-under-count property across 62 real repo files, 8 adversarial C#/Java fixtures and 4000 randomised mixed tab/space python shapes, finding ZERO metric drops and zero lost function records. Re-establish that this still holds after F1 and F4.",
+      "files": [
+        "plugins/spec-loop/scripts/quality_gate.py",
+        "plugins/spec-loop/scripts/test_quality_gate.py",
+        "CHANGELOG.md"
+      ],
+      "subsystems": [
+        "quality-gate",
+        "indent-model",
+        "gate-reporting"
+      ],
+      "deps": [
+        "s1",
+        "s2",
+        "s3"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "remediation": true,
+      "status": "complete"
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "slice_ids": [
+        "s1"
+      ],
+      "workflow_run_id": "wf_fc67caf5-70a",
+      "status": "collected",
+      "prior_workflow_run_ids": [
+        "wf_6a76e9fa-39c"
+      ],
+      "attempts": 3
+    },
+    {
+      "index": 2,
+      "slice_ids": [
+        "s2"
+      ],
+      "workflow_run_id": "wf_693a1596-508",
+      "status": "collected"
+    },
+    {
+      "index": 3,
+      "slice_ids": [
+        "s3"
+      ],
+      "workflow_run_id": "wf_daf0edf6-fa6",
+      "status": "collected",
+      "prior_workflow_run_ids": [
+        "wf_92459297-b9e",
+        "wf_87a2c356-706"
+      ],
+      "attempts": 3
+    },
+    {
+      "index": 4,
+      "slice_ids": [
+        "r1"
+      ],
+      "workflow_run_id": "wf_1652c8e0-cf5",
+      "status": "collected",
+      "prior_workflow_run_ids": [
+        "wf_2f25bb1a-9ba"
+      ],
+      "attempts": 2
+    }
+  ]
+}

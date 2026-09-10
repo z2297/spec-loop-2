@@ -1,0 +1,104 @@
+{
+  "schema_version": 2,
+  "id": "r1",
+  "status": "DONE",
+  "branch": "spec-loop/20260910-gate-language/r1",
+  "commits": {
+    "base": "892a2aab98f10174fc296a8c8cd56a92a71a304c",
+    "head": "7aba97ea7d05498a264b6378854d04f49025d206"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "SKIPPED",
+    "concerns": 0
+  },
+  "tasks_completed": 4,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 0,
+    "residual": [],
+    "open": []
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p 'test_*.py' ; python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_*.py' ; python3 scripts/measure_coverage.py ; node --test --experimental-test-coverage plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs plugins/spec-loop/scripts/slice_wave_radius.test.mjs plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs plugins/spec-loop/scripts/slice_wave_reentry.test.mjs plugins/spec-loop/scripts/slice_wave_accepted.test.mjs plugins/spec-loop/scripts/slice_wave_replan.test.mjs ; claude plugin validate .",
+    "result": "All 7 segments passed. Segment 1 (validate_marketplace): OK. Segment 2 (scripts unit tests): 126 tests passed. Segment 3 (spec-loop scripts tests): 1825 tests passed. Segment 4 (coverage): 1951 tests passed, all per-file and total floors met (TOTAL 97.2% at 90% floor). Segment 5 (dashboard assets test): 48 tests passed. Segment 6 (wave slice behavior tests): 136 tests passed. Segment 7 (claude plugin validate): passed.",
+    "passed": true,
+    "scope": "full",
+    "tree_sha": "2665062c5b0a642de129ff0c06163736cc2dd2d0"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "Gate produced JSON with exit code 1. Configuration loaded. 77 checks run, vacuous=false. 2 failures reported in summary.failures, both class_lines violations: plugins/spec-loop/scripts/quality_gate.py (measured 1599 vs threshold 300) and plugins/spec-loop/scripts/test_quality_gate.py (measured 2237 vs threshold 300). Both violations marked source='builtin-heuristic'. These are the accepted pre-existing debt identified in shared constraints; the controller re-measured at head 7aba97ea7d05498a264b6378854d04f49025d206 and confirmed exactly these two failures with zero function-level violation.",
+    "head_sha": "7aba97ea7d05498a264b6378854d04f49025d206",
+    "tree_sha": "2665062c5b0a642de129ff0c06163736cc2dd2d0",
+    "measured_at": "verify:1",
+    "violations": 0,
+    "accepted": [
+      {
+        "metric": "class_lines",
+        "file": "plugins/spec-loop/scripts/quality_gate.py",
+        "function": null,
+        "value": 1599,
+        "threshold": 300
+      },
+      {
+        "metric": "class_lines",
+        "file": "plugins/spec-loop/scripts/test_quality_gate.py",
+        "function": null,
+        "value": 2237,
+        "threshold": 300
+      }
+    ]
+  },
+  "escalations": [],
+  "agents_used": 1,
+  "wave": 4,
+  "events": [
+    {
+      "scope": "r1",
+      "type": "decision",
+      "payload": {
+        "summary": "2 accepted violation fingerprint(s) supplied for r1: class_lines plugins/spec-loop/scripts/quality_gate.py, class_lines plugins/spec-loop/scripts/test_quality_gate.py",
+        "rationale": "controller-recorded acceptances (redispatch.py accept-violations); matched violations stop blocking the gate and are listed under quality.accepted",
+        "reversibility": "moderate"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "re-entry",
+      "payload": {
+        "summary": "re-entered at verify from head 7aba97e (0 order(s), 0 fix round(s) already spent)",
+        "stage": "verify",
+        "head": "7aba97e",
+        "fix_rounds": 0,
+        "orders": []
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "r1",
+      "type": "quality-gate",
+      "payload": {
+        "summary": "measured at verify:1 on 7aba97e: 0 violation(s), 2 accepted",
+        "status": "FAIL",
+        "violations": 0,
+        "accepted": 2,
+        "head_sha": "7aba97ea7d05498a264b6378854d04f49025d206",
+        "tree_sha": "2665062c5b0a642de129ff0c06163736cc2dd2d0",
+        "stage": "verify:1"
+      }
+    }
+  ]
+}
