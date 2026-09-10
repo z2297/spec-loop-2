@@ -7,6 +7,33 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 ### Fixed
+- **A tab-indented python file was measured as if it had no nesting at all, and now
+  measures the same as the identical space-indented file.** `_nesting_depth_python` and the
+  python arm of `_cognitive_approx` in `plugins/spec-loop/scripts/quality_gate.py` stripped
+  leading SPACES only (`lstrip(" ")`) before dividing by the model's 4-column step, so every
+  line of a tab-indented file read as indent 0 and the whole file collapsed to
+  `nesting_depth` 0 at any real depth. Measured on one six-level-deep body: space-indented it
+  reports cognitive 20 / nesting_depth 6 and FAILS the nesting threshold of 3; the
+  byte-identical tab-indented body reported cognitive 5 / nesting_depth 0 and PASSED, on the
+  same branch count (cyclomatic 6 either way). The new PURE `_py_indent_width` is now the
+  single place leading whitespace becomes a column count — it expands tabs at 4 columns,
+  matching the `// 4` the nesting and cognitive models divide by, so one tab is exactly one
+  level — and the three space-only sites (`_nesting_depth_python`, the `_cognitive_approx`
+  python arm, and `_function_metrics`' `base_indent`) call it. `test_quality_gate.py` gains
+  `TestTabIndentedPython`, pinning tab/space parity and the helper itself. **This changes
+  existing `.py` results upward**: a tab-indented python function that passes the gate today
+  can fail after this change. That is the safe direction under the never-under-count rule and
+  is the intended effect, but it is an observable behaviour change, not merely internal.
+  Known, documented residuals: `_extract_functions_python` still measures indent with a bare
+  `lstrip()` and is deliberately left alone — it compares a header against its own body with
+  one consistent measure, so it already spans a tab-indented file correctly, and expanding
+  there was measured to SHRINK a mixed tab-and-space function's span (a four-line method
+  dropping to one), which would be a new under-count. The 4-column tab step is HARDCODED,
+  deliberately: the indent step stays at 4 and is not parameterised, since no 2-space
+  language is routed to this model. A file mixing tabs and spaces inconsistently is measured
+  by column width alone, which can disagree with python's own tokenizer (tabs at 8); no such
+  file exists in this repo and none is handled specially. The mask-span helper's own
+  `lstrip(" ")` is left as-is on purpose: it picks a raw column index, not a width.
 - **The quality gate's C-family control-keyword guard is now scoped to the language that
   reserves the word, and suppresses a phantom record only when the real enclosing method was
   itself measured.** `plugins/spec-loop/scripts/quality_gate.py` keys the new
