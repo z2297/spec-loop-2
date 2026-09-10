@@ -69,3 +69,4 @@ Rendered from the run's events; append-only, and nothing parses it back.
 [phase5] PHASE5-GATE: PASS — Phase 5 attempt 2 PASSES on both halves. The reviewer verified rather than trusted: F1 closed, with the tab-versus-space metric dict now EQUAL at head where pre-r1 read cognitive 10 versus 13, and ta… — AT: 2026-09-10T18:52:47Z
 [run] DECISION: N1-N3 from Phase 5 attempt 2 ship as recorded residuals; no third remediation — AT: 2026-09-10T18:52:47Z
 [run] DECISION: CONTROLLER RECORDING GAP, corrected retroactively: no slice-merged or wave-collected events were appended during the run — AT: 2026-09-10T18:54:42Z
+[run] DECISION: PUBLISHED: merged to main, released 2.5.1, pushed with tag — AT: 2026-09-10T19:05:58Z
