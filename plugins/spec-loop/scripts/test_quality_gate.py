@@ -1968,6 +1968,28 @@ CS_MIXED_SOURCE = (
     "}\n"
 )
 
+CS_LITERAL_BRACE_HEADER_SOURCE = (
+    "public class Importer\n"
+    "{\n"
+    "    public void Import(string raw) {\n"
+    "        foreach (var part in raw.Split('}')) {\n"
+    "            if (part.Length > 0) { Accept(part); }\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
+CS_MULTI_DECL_USING_SOURCE = (
+    "public class Importer\n"
+    "{\n"
+    "    public void Import(List<Row> rows) {\n"
+    "        using (var a = Foo(), b = Bar(), c = Baz(), d = Qux(), e = Zap()) {\n"
+    "            a.Write(b);\n"
+    "        }\n"
+    "    }\n"
+    "}\n"
+)
+
 JAVA_SYNCHRONIZED_SOURCE = (
     "public class Cache\n"
     "{\n"
@@ -2024,13 +2046,20 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         self.assertEqual((record["start"], record["end"]), (3, 11))
         self.assertEqual(record["header_idx"], record["start"] - 1)
 
-    def test_the_enclosure_helper_reads_one_based_inclusive_spans(self):
+    def test_the_enclosure_helper_reads_one_based_inclusive_spans_strictly(self):
+        # r0-F1: the upper bound is EXCLUSIVE now -- a record whose own end
+        # equals the phantom's header line does not strictly enclose it. That
+        # equality is exactly what a stray brace-in-a-literal on the header
+        # line produces (see test_a_literal_brace_on_the_header_line_...
+        # below), so treating it as enclosure silently drops a real
+        # violation.
         funcs = [{"name": "Import", "start": 3, "end": 11, "header_idx": 2}]
-        self.assertFalse(qg._encloses_line(funcs, 2))
-        self.assertTrue(qg._encloses_line(funcs, 3))
-        self.assertTrue(qg._encloses_line(funcs, 11))
-        self.assertFalse(qg._encloses_line(funcs, 12))
-        self.assertFalse(qg._encloses_line([], 3))
+        self.assertFalse(qg._strictly_encloses_line(funcs, 2))
+        self.assertTrue(qg._strictly_encloses_line(funcs, 3))
+        self.assertTrue(qg._strictly_encloses_line(funcs, 10))
+        self.assertFalse(qg._strictly_encloses_line(funcs, 11))
+        self.assertFalse(qg._strictly_encloses_line(funcs, 12))
+        self.assertFalse(qg._strictly_encloses_line([], 3))
 
     def test_the_reserved_words_are_scoped_to_their_own_extensions(self):
         self.assertEqual(
@@ -2132,6 +2161,41 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         self.assertNotIn("if", self.names("Importer.cs", CS_KR_SOURCE))
         self.assertNotIn("if", self.names("store.js", JS_RESERVED_NAME_METHODS))
 
+    def test_a_literal_brace_on_the_control_header_line_keeps_its_phantom(self):
+        # r0-F1: .cs is excluded from _JS_MASK_EXTS, so _match_brace_end reads
+        # raw text and the char literal '}' inside `raw.Split('}')` balances
+        # Import's own scan to depth 0 exactly on the foreach header line,
+        # i.e. Import's measured end EQUALS foreach's header line_no. Under
+        # the old inclusive `_encloses_line` that equality counted as
+        # enclosure and foreach vanished entirely (measured: only "Import"
+        # remained). Under the new strict `_strictly_encloses_line` equality
+        # no longer enclose, so foreach is retained.
+        funcs = qg._extract_functions_cbrace(
+            CS_LITERAL_BRACE_HEADER_SOURCE.splitlines(), ".cs")
+        names = [fn["name"] for fn in funcs]
+        self.assertIn("foreach", names)
+        found = self.by_name("Importer.cs", CS_LITERAL_BRACE_HEADER_SOURCE)
+        self.assertIn("foreach", found)
+
+    def test_an_enclosed_multi_declaration_using_keeps_its_own_finding(self):
+        # r1-F1: `using (a, b, c, d, e)`'s own header declares 5 comma
+        # items -- more than the enclosing Import(rows) method's 1 parameter
+        # -- so suppressing it as "redundant" would drop a real
+        # parameter_count violation (5 > DEFAULT_THRESHOLDS["parameter_count"]
+        # == 4) that the enclosing record's own header never carries. Measured
+        # before this guard: the phantom was unconditionally suppressed once
+        # enclosed, at parameter_count 5.
+        funcs = qg._extract_functions_cbrace(
+            CS_MULTI_DECL_USING_SOURCE.splitlines(), ".cs")
+        names = [fn["name"] for fn in funcs]
+        self.assertIn("using", names)
+        found = self.by_name("Importer.cs", CS_MULTI_DECL_USING_SOURCE)
+        self.assertIn("using", found)
+        self.assertEqual(found["using"]["metrics"]["parameter_count"], 5)
+        self.assertGreater(
+            found["using"]["metrics"]["parameter_count"],
+            qg.DEFAULT_THRESHOLDS["parameter_count"])
+
 
 # --------------------------------------------------------------------------
 # D3: measure()'s skip chain ended in `elif _lang_for(path) is None`, so a
@@ -2172,16 +2236,19 @@ class TestMeasureSkipRecord(unittest.TestCase):
             changed, self._tmp, [])
         return funcs, classes, skipped, backends
 
-    def test_the_two_skip_reasons_are_distinguishable(self):
+    def test_the_three_skip_reasons_are_distinguishable(self):
         self.assertEqual(
-            qg._skip_reason("notes.md"),
+            qg._skip_reason("notes.md", "# notes\n"),
             "unsupported file type for analysis")
         self.assertEqual(
-            qg._skip_reason("I.cs"),
+            qg._skip_reason("I.cs", CS_PURE_ALLMAN_SOURCE),
             "no callable found by the builtin heuristic")
         self.assertEqual(
-            qg._skip_reason("conf.py"),
+            qg._skip_reason("conf.py", "x = 1\n"),
             "no callable found by the builtin heuristic")
+        self.assertEqual(
+            qg._skip_reason("m.py", "def a(x):\n    return x\n"),
+            "no changed callable found by the builtin heuristic")
 
     def test_a_supported_file_with_no_callables_leaves_a_skip_record(self):
         # Measured before: skipped == [{"file": "notes.md", ...}] only -- the
@@ -2219,6 +2286,24 @@ class TestMeasureSkipRecord(unittest.TestCase):
         self.assertEqual(
             {c["file"]: c["class_lines"] for c in classes},
             {"I.cs": 7, "conf.py": 1})
+
+    def test_an_import_only_edit_does_not_falsely_claim_no_callable_exists(self):
+        # r0-F2: before this fix, measure() reached _skip_reason whenever a
+        # file yielded zero IN-RANGE findings, so an import-only edit to a
+        # file that DOES define real callables -- they just aren't in the
+        # diff -- reported the same "no callable found by the builtin
+        # heuristic" text as a genuinely callable-less file. Measured before:
+        # skipped == [{"file": "m.py",
+        # "reason": "no callable found by the builtin heuristic"}], a false
+        # claim since `def a(x)` is right there, just outside line (1, 1).
+        Path(self._tmp, "m.py").write_text(
+            "import os\ndef a(x):\n    return os.path.join(x)\n",
+            encoding="utf-8")
+        funcs, _, skipped, _ = qg.measure({"m.py": [(1, 1)]}, self._tmp, [])
+        self.assertEqual(funcs, [])
+        self.assertEqual(
+            {s["file"]: s["reason"] for s in skipped},
+            {"m.py": "no changed callable found by the builtin heuristic"})
 
 
 if __name__ == "__main__":

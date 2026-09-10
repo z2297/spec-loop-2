@@ -40,6 +40,44 @@ All notable changes to the spec-loop plugin are documented here. The format is
   no threshold and no exit code, and `summary.vacuous` is still read by nothing in the
   per-slice pipeline — only `references/phase-5-integration.md:14` tells any reader to check
   it. Both are deferred, not fixed here.
+- **The control-keyword suppression could itself under-count, on two separate paths, and both
+  are closed.** `plugins/spec-loop/scripts/quality_gate.py`'s `_encloses_line` (now
+  `_strictly_encloses_line`) tested only `fn["start"] <= line_no <= fn["end"]`; because `.cs`
+  and `.java` are excluded from `_JS_MASK_EXTS`, `_match_brace_end` counts a `}` inside a
+  string or char literal on the enclosing method's own header line — e.g.
+  `raw.Split('}')` — as a real close, ending the enclosing record's span exactly AT the
+  phantom's header line. That equality used to count as enclosure, suppressing the phantom
+  even though the enclosing record measures almost none of its body; the bound is now
+  exclusive (`line_no < fn["end"]`), and `TestExtensionScopedControlWords` gains
+  `test_a_literal_brace_on_the_control_header_line_keeps_its_phantom` pinning the retained
+  `foreach` record. Separately, suppression assumed an enclosed phantom's own metrics were
+  always dominated by the enclosing record, which is false for `parameter_count`: a C#
+  `using (a, b, c, d, e)` can declare more comma-separated items than the enclosing method's
+  own signature. The new PURE `_phantom_has_more_params` compares the phantom's own header
+  against the enclosing record's header and keeps the phantom whenever its count is higher;
+  `test_an_enclosed_multi_declaration_using_keeps_its_own_finding` pins a 5-parameter `using`
+  surviving inside a 1-parameter `Import` method (5 > `DEFAULT_THRESHOLDS["parameter_count"]`
+  == 4). Both are the same failure family the run's NEVER-UNDER-COUNT constraint names.
+- **A skip record could itself misreport why a file went unmeasured.** `measure()`'s new
+  unconditional `else` arm (see above) reached `_skip_reason(path)` whenever a file yielded
+  zero IN-RANGE findings — which also fires for an import-only edit, a docstring tweak, or any
+  changed hunk that simply falls outside every callable in an otherwise fully-measurable file.
+  Such a file got the same `"no callable found by the builtin heuristic"` text as a file with
+  no callables at all, a false claim on the common path. `_skip_reason` now takes the file's
+  `source` too and calls the new PURE `_has_any_callable` (a changed-range-free extraction) to
+  tell the two apart, returning `"no changed callable found by the builtin heuristic"` when
+  callables exist outside the diff. `measure()` is also refactored into `_read_changed_source`,
+  `_backend_records_for`, `_measurements_for_file`, `_heuristic_measurement`,
+  `_class_measurement`, `_python_only`, `_detect_backend_records` and `_used_backend_names`,
+  which brings its own cyclomatic/cognitive/method_lines/nesting_depth back under threshold
+  (measured before: 14/36/66/5 against 10/15/50/3; after: 5/11/40/3) without changing its
+  return contract; `_extract_functions_cbrace` is similarly split out into `_cbrace_name_at`,
+  bringing its nesting_depth from 5 to 3. `TestMeasureSkipRecord` gains
+  `test_an_import_only_edit_does_not_falsely_claim_no_callable_exists`. Known, documented
+  residuals: `_extract_functions_python`, `_match_brace_end` and `_match_changed` carry
+  pre-existing cognitive_complexity/nesting_depth violations this slice did not introduce and
+  does not fix here, and `class_lines` on both `quality_gate.py` and `test_quality_gate.py`
+  remains accepted debt per standing ruling.
 
 ## [2.5.0] - 2026-09-09
 ### Added
