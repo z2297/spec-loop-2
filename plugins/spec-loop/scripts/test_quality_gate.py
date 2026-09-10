@@ -2287,8 +2287,10 @@ class TestExtensionScopedControlWords(unittest.TestCase):
         for ranges in ([(1, 400)], [(4, 6)]):
             findings, _ = qg.analyze_builtin(
                 "C.cs", CS_DOMINATED_USING_SOURCE, ranges)
-            counts = {f["function"]: f["metrics"]["parameter_count"]
-                      for f in findings}
+            counts = {
+                f["function"]: f["metrics"]["parameter_count"]
+                for f in findings
+            }
             self.assertEqual(counts, {"Go": 6})
             self.assertGreater(
                 counts["Go"], qg.DEFAULT_THRESHOLDS["parameter_count"])
