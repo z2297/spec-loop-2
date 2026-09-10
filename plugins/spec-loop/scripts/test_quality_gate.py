@@ -670,6 +670,29 @@ DEEP_PY_METHOD_TABS = "\n".join(
     line.replace("    ", "\t")
     for line in DEEP_PY_METHOD_SPACES.split("\n"))
 
+# A tab-indented body that CONTAINS a triple-quoted string whose CLOSING
+# row carries branch operators, and the byte-identical space-indented
+# body. No existing TestTabIndentedPython fixture holds a string literal,
+# which is why the mask defect below went uncaught; and the operators
+# after the closing quotes are what make it visible in a metric rather
+# than only in the mask's column arithmetic. MEASURED before this fix:
+# the tab form reported cognitive 10 against the space form's 13 -- the
+# python mask overwrote the tab row's leading tabs with the sentinel, so
+# _cognitive_approx read that continuation row at indent 0. After this
+# fix both report 13 and the full metrics dicts are equal.
+STRINGY_PY_SPACES = (
+    "def stringy(a, b, c):\n"
+    "    if a:\n"
+    "        for i in b:\n"
+    "            note = \"\"\"a long\n"
+    "            note\"\"\" if c and b else \"\"\n"
+    "            if c and note:\n"
+    "                return i\n"
+    "    return 0\n"
+)
+STRINGY_PY_TABS = "\n".join(
+    line.replace("    ", "\t") for line in STRINGY_PY_SPACES.split("\n"))
+
 
 class TestTabIndentedPython(unittest.TestCase):
     """The indent model must read a tab as one nesting step. Before this
@@ -715,6 +738,28 @@ class TestTabIndentedPython(unittest.TestCase):
         self.assertEqual(qg._py_indent_width("\t    if a:"), 8)
         self.assertEqual(qg._py_indent_width("if a:"), 0)
         self.assertEqual(qg._py_indent_width(""), 0)
+
+    def test_a_tab_indented_string_literal_keeps_its_indent_through_the_mask(
+            self):
+        # F1: _token_mask_spans started each continuation row's sentinel fill
+        # at lstrip(" "), which is 0 on a tab-indented row, so the fill erased
+        # the leading TABS that _py_indent_width now reads. MEASURED before
+        # the fix: cognitive 10 for the tab body against 13 for the identical
+        # space body -- an under-count, the one direction this heuristic is
+        # never allowed to move.
+        self.assertEqual(
+            self.metrics(STRINGY_PY_TABS),
+            self.metrics(STRINGY_PY_SPACES))
+
+    def test_the_mask_leaves_a_tab_continuation_rows_indent_alone(self):
+        # The mechanism behind the test above, pinned directly: every masked
+        # row must report the same _py_indent_width as its raw counterpart.
+        # MEASURED before the fix: row index 4 read 12 raw and 0 masked.
+        masked = qg._mask_python_literals(STRINGY_PY_TABS)
+        self.assertIsNotNone(masked)
+        for raw, got in zip(STRINGY_PY_TABS.split("\n"), masked.split("\n")):
+            self.assertEqual(
+                qg._py_indent_width(got), qg._py_indent_width(raw))
 
 
 class TestCrapScore(unittest.TestCase):

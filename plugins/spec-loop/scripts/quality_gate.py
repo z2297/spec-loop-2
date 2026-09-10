@@ -584,17 +584,21 @@ def _token_mask_spans(tok, rows):
     """The (row_index, start_col, end_col) spans one masked token covers, one per
     physical line it reaches. Row indexes are 0-based into `rows`. On the
     opening physical line, masking starts at the token's own start column. On
-    every later physical line, masking starts after that row's own leading
-    spaces rather than at column 0, so the sentinel fill never erases the
-    leading whitespace a downstream nesting-level reader derives from that
-    row: leading whitespace carries no branch words or operator punctuation,
-    so leaving it unmasked is measurement-neutral. (PURE)"""
+    every later physical line, masking starts after that row's whole
+    leading-whitespace run -- spaces AND tabs, the same bare lstrip()
+    _py_indent_width uses -- so the sentinel fill never erases the indent a
+    downstream nesting-level reader derives from that row. It measured that
+    run with lstrip(" ") until the tab fix made _py_indent_width expand
+    tabs: a tab-indented continuation row then had its tabs overwritten and
+    read as indent 0, UNDER-counting _cognitive_approx. Leading whitespace
+    carries no branch words or operator punctuation, so leaving all of it
+    unmasked is measurement-neutral for the scan itself. (PURE)"""
     (first_row, first_col), (last_row, last_col) = tok.start, tok.end
     spans = []
     for row in range(first_row, last_row + 1):
         line = rows[row - 1]
         start = first_col if row == first_row else (
-            len(line) - len(line.lstrip(" ")))
+            len(line) - len(line.lstrip()))
         end = len(line)
         if row == last_row:
             end = last_col
@@ -1169,8 +1173,10 @@ def _scan_lines_for(source, scan_lang, lines):
 
 def _function_metrics(lines, scan_lines, fn, lang):
     """Measured metric values for one extracted function. `lines` is raw source;
-    `scan_lines` is its masked counterpart, read by the two branch scans alone,
-    so span, indentation and length metrics all stay on raw text. (PURE)"""
+    `scan_lines` is its masked counterpart. Span and length metrics stay on raw
+    text, as does `base_indent`; `_cognitive_approx` reads BOTH branch hits and
+    per-line indent off the masked body, which is why _token_mask_spans must
+    preserve each row's whole leading-whitespace run. (PURE)"""
     body_lines = lines[fn["header_idx"]:fn["end"]]
     scan_body = scan_lines[fn["header_idx"]:fn["end"]]
     header_line = lines[fn["header_idx"]]

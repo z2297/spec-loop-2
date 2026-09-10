@@ -8,7 +8,12 @@ All notable changes to the spec-loop plugin are documented here. The format is
 ## [Unreleased]
 ### Fixed
 - **A tab-indented python file was measured as if it had no nesting at all, and now
-  measures the same as the identical space-indented file.** `_nesting_depth_python` and the
+  measures the same as the identical space-indented file.** Parity now survives the
+  literal mask too: the python mask's own continuation-row fill started at `lstrip(" ")` and
+  overwrote a tab-indented row's leading tabs, so a tab body holding a multi-line string
+  whose closing row carries branch operators measured cognitive 10 against the space body's
+  13 -- an under-count, now fixed in `_token_mask_spans` and pinned by
+  `TestTabIndentedPython`. `_nesting_depth_python` and the
   python arm of `_cognitive_approx` in `plugins/spec-loop/scripts/quality_gate.py` stripped
   leading SPACES only (`lstrip(" ")`) before dividing by the model's 4-column step, so every
   line of a tab-indented file read as indent 0 and the whole file collapsed to
@@ -39,9 +44,13 @@ All notable changes to the spec-loop plugin are documented here. The format is
   there was measured to SHRINK a mixed tab-and-space function's span (a four-line method
   dropping to one), which would be a new under-count. The 4-column tab step is HARDCODED,
   deliberately: the indent step stays at 4 and is not parameterised, since no 2-space
-  language is routed to this model. A file mixing tabs and spaces inconsistently is measured
-  by column width alone, which can disagree with python's own tokenizer (tabs at 8); no such
-  file exists in this repo and none is handled specially. The mask-span helper's own
+  language is routed to this model. Parity is against the 4-column space form specifically,
+  because the `// 4` step is hardcoded: MEASURED on a six-level body indented at TWO spaces
+  per level, the space form reports cognitive 11 / nesting_depth 3 and its tab-converted twin
+  reports cognitive 20 / nesting_depth 6. That is an over-count on the tab side, the
+  permitted direction, but it is not parity. A row whose own leading whitespace mixes tabs
+  and spaces is likewise measured by column width at a 4-column tab, which can disagree with
+  python's own tokenizer at 8. The mask-span helper's own
   `lstrip(" ")` is left as-is on purpose: it picks a raw column index, not a width.
 - **The quality gate's C-family control-keyword guard is now scoped to the language that
   reserves the word, and suppresses a phantom record only when the real enclosing method was
