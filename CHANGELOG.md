@@ -6,6 +6,8 @@ All notable changes to the spec-loop plugin are documented here. The format is
 [v1 repository](https://github.com/z2297/spec-loop).
 
 ## [Unreleased]
+
+## [2.5.1] - 2026-09-10
 ### Fixed
 - **A tab-indented python file was measured as if it had no nesting at all, and now
   measures the same as the identical space-indented file.** Parity now survives the
@@ -816,7 +818,8 @@ schemas, agents, and internals redesigned; see
   and the `--budget` flag (cost control is structural: caps + bounds; the
   Workflow token ceiling activates when the session sets a token target).
 
-[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.5.1...HEAD
+[2.5.1]: https://github.com/z2297/spec-loop-2/releases/tag/v2.5.1
 [2.5.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.5.0
 [2.4.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.4.0
 [2.3.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.3.0
