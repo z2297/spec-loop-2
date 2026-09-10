@@ -55,9 +55,8 @@ All notable changes to the spec-loop plugin are documented here. The format is
   read from its own header and is NOT — see the `_phantom_has_more_params` entry below.
   Known, documented residuals: a pure-Allman C# file (every brace on its own line, the
   Visual Studio default) still extracts nothing at all, because `_CBRACE_DEF_RE` requires
-  the `{` on the signature line — deferred to its own run. (The second residual named here
-  — `foreach` absent from `_BRANCH_WORDS` — is fixed below in this same Unreleased
-  section.)
+  the `{` on the signature line — deferred to its own run. (A related residual — `foreach`
+  absent from `_BRANCH_WORDS` — is fixed below in this same Unreleased section.)
 - **A changed file the quality gate could not measure can no longer vanish from the report.**
   `measure()` in `plugins/spec-loop/scripts/quality_gate.py` ended its skip chain in
   `elif _lang_for(path) is None`, so a file with a supported extension that yielded zero
