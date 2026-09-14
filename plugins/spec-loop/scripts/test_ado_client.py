@@ -67,16 +67,19 @@ class TestWorkItemIdValidation(unittest.TestCase):
 
 class TestOrgUrlValidation(unittest.TestCase):
     def test_the_modern_form_yields_the_org_qualified_api_root(self):
-        self.assertEqual(ac.validate_org_url("https://dev.azure.com/contoso"),
-                         ("https://dev.azure.com/contoso", "contoso"))
+        expected = ("https://dev.azure.com/contoso", "contoso")
+        self.assertEqual(
+            ac.validate_org_url("https://dev.azure.com/contoso"), expected)
 
     def test_a_trailing_slash_is_tolerated(self):
-        self.assertEqual(ac.validate_org_url("https://dev.azure.com/contoso/"),
-                         ("https://dev.azure.com/contoso", "contoso"))
+        expected = ("https://dev.azure.com/contoso", "contoso")
+        self.assertEqual(
+            ac.validate_org_url("https://dev.azure.com/contoso/"), expected)
 
     def test_the_legacy_visualstudio_form_yields_the_bare_origin(self):
-        self.assertEqual(ac.validate_org_url("https://contoso.visualstudio.com"),
-                         ("https://contoso.visualstudio.com", "contoso"))
+        expected = ("https://contoso.visualstudio.com", "contoso")
+        self.assertEqual(
+            ac.validate_org_url("https://contoso.visualstudio.com"), expected)
 
     def test_http_is_rejected(self):
         with self.assertRaises(ac.AdoUsageError):
