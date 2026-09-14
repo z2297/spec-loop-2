@@ -262,6 +262,122 @@ def validate_org_url(raw):
     return (f"https://{host}", org)
 
 
+# Three api-versions, three constants, and they differ ON PURPOSE (verified on
+# Microsoft Learn, 2026-09-14). Do not "modernize" or unify them: the comment
+# list's newest documented version is a 7.1 preview and the comment add's is a
+# 7.0 preview. TestApiVersionsAreThreeDistinctConstants fails if they collapse.
+API_VERSION_WORK_ITEM = "7.1"            # GET .../_apis/wit/workitems/{id}
+API_VERSION_COMMENTS_READ = "7.1-preview.4"  # GET .../workItems/{id}/comments
+# Referenced by no code path in THIS read lane -- it is the documented version
+# for the bounded comment-add lane, which lives in THIS module and POSTs with
+# THIS constant, so pinning it here beside its siblings keeps the value the
+# write lane uses under the not-all-equal test rather than letting a second
+# copy drift.
+API_VERSION_COMMENT_ADD = "7.0-preview.3"
+
+PROJECT_ENV_VAR = "ADO_PROJECT"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every 3xx. ADO_ORG_URL is user-supplied, so pr_resolver's
+    hardcoded-origin property is gone: following a redirect could replay the
+    Authorization header to another origin. Returning None makes urllib raise
+    the HTTPError instead of following it."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Return None so urllib treats the 3xx as a terminal error."""
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+CRED_VARS = ("ADO_ORG_URL", "ADO_PAT")
+
+
+def credentials():
+    """Read the Azure DevOps credentials from the ENVIRONMENT ONLY and fail
+    closed with an actionable message when either is unset. Never read from
+    argv: argv is visible in `ps` and lands in shell history.
+
+    Only ADO_ORG_URL and ADO_PAT are required. ADO_PROJECT is deliberately
+    OPTIONAL -- the project comes from the work item's own System.TeamProject
+    -- and the message says so, because demanding a variable the design says
+    to leave unset would push operators into the wrong-target failure mode
+    that optionality exists to close."""
+    values = {name: (os.environ.get(name) or "").strip() for name in CRED_VARS}
+    missing = [name for name in CRED_VARS if not values[name]]
+    if missing:
+        raise AdoUsageError(
+            "Azure DevOps access requires the environment variable(s) "
+            + ", ".join(missing)
+            + f". Set ADO_ORG_URL to {_SUPPORTED_FORMS}, and ADO_PAT to a "
+            "personal access token with the 'Work Items (Read)' scope. "
+            f"{PROJECT_ENV_VAR} is OPTIONAL: the project is read from the "
+            "work item itself, and setting this variable only asserts that "
+            "the work item lives in that project. Pass these in the "
+            "environment, never on the command line."
+        )
+    api_root, org = validate_org_url(values["ADO_ORG_URL"])
+    return (api_root, org, values["ADO_PAT"])
+
+
+def _auth_header(pat):
+    """Build the Azure DevOps Basic auth header: base64(":" + pat), i.e. a PAT
+    with an EMPTY username. Verified against Microsoft Learn's own sample,
+    which is `curl -u :{PAT}` (read 2026-09-14). Microsoft now recommends
+    Entra tokens where possible; PATs remain supported and are the only auth
+    flow in scope for this connector."""
+    raw = f":{pat}".encode("utf-8")
+    return "Basic " + base64.b64encode(raw).decode("ascii")
+
+
+def _http_get(url, pat):
+    """HTTP GET via the no-redirect opener. THE ONLY network entry point in
+    this module, and it is READ-ONLY BY CONSTRUCTION: there is no `data`
+    parameter for a caller to pass a body through and no `method` parameter
+    for a caller to widen, so a mutating verb is not expressible here.
+    urllib.request.Request infers POST from a non-None `data`, which is
+    exactly why `data` is absent from the signature rather than defaulted to
+    None.
+
+    Errors reference only the URL -- the credential rides in a header, so
+    neither the PAT nor the composed base64(":" + PAT) can appear in an
+    exception message."""
+    headers = {
+        "Authorization": _auth_header(pat),
+        "Accept": "application/json",
+    }
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with _OPENER.open(req, timeout=30) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise AdoError(f"HTTP {exc.code} fetching {url}: {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise AdoError(f"network error fetching {url}: {exc.reason}") from exc
+    except OSError as exc:
+        # urllib only wraps an OSError raised by h.request() into a URLError
+        # (see CPython's AbstractHTTPHandler.do_open); an OSError out of
+        # h.getresponse() or resp.read() -- a timeout or a reset while reading
+        # the response body -- propagates unwrapped and would otherwise slip
+        # past the AdoError handling above and past main()'s exit-1 JSON
+        # contract as a raw traceback. Caught here, terminally, so every
+        # transport failure is an AdoError. The message names only the URL, so
+        # no credential can ride out in it.
+        raise AdoError(f"network error fetching {url}: {exc}") from exc
+
+
+def _parse_json(raw, what):
+    """json.loads with an actionable AdoError, so a malformed response fails
+    with a clear message rather than a raw traceback."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise AdoError(
+            f"Azure DevOps returned a {what} response that is not valid JSON "
+            f"({exc})") from exc
+
+
 def main(argv=None):
     """Placeholder completed in the CLI task; see build_parser/_dispatch."""
     raise NotImplementedError

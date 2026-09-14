@@ -121,3 +121,179 @@ class TestOrgUrlValidation(unittest.TestCase):
     def test_a_query_string_is_rejected(self):
         with self.assertRaises(ac.AdoUsageError):
             ac.validate_org_url("https://dev.azure.com/contoso?x=1")
+
+
+class TestApiVersionsAreThreeDistinctConstants(unittest.TestCase):
+    """The work-item read, the comment list and the comment add document
+    DIFFERENT api-versions on purpose. A well-meaning 'consistency' edit that
+    collapses them to one string must fail here rather than silently break
+    either the comment sweep or the write."""
+
+    def test_the_three_api_versions_are_not_all_equal(self):
+        versions = {ac.API_VERSION_WORK_ITEM,
+                    ac.API_VERSION_COMMENTS_READ,
+                    ac.API_VERSION_COMMENT_ADD}
+        self.assertEqual(len(versions), 3)
+
+    def test_each_api_version_is_the_documented_literal(self):
+        self.assertEqual(ac.API_VERSION_WORK_ITEM, "7.1")
+        self.assertEqual(ac.API_VERSION_COMMENTS_READ, "7.1-preview.4")
+        self.assertEqual(ac.API_VERSION_COMMENT_ADD, "7.0-preview.3")
+
+
+class TestCredentialsComeFromTheEnvironmentOnly(unittest.TestCase):
+    def test_the_org_url_and_pat_resolve_to_an_api_root(self):
+        env = {"ADO_ORG_URL": "https://dev.azure.com/contoso", "ADO_PAT": "tok"}
+        with mock.patch.dict(ac.os.environ, env, clear=True):
+            self.assertEqual(
+                ac.credentials(),
+                ("https://dev.azure.com/contoso", "contoso", "tok"))
+
+    def test_a_missing_variable_is_named_in_a_fail_closed_message(self):
+        with mock.patch.dict(ac.os.environ, {}, clear=True):
+            with self.assertRaises(ac.AdoUsageError) as ctx:
+                ac.credentials()
+        message = str(ctx.exception)
+        self.assertIn("ADO_ORG_URL", message)
+        self.assertIn("ADO_PAT", message)
+
+    def test_the_message_describes_ado_project_as_optional_not_required(self):
+        with mock.patch.dict(ac.os.environ, {}, clear=True):
+            with self.assertRaises(ac.AdoUsageError) as ctx:
+                ac.credentials()
+        message = str(ctx.exception)
+        self.assertIn("ADO_PROJECT", message)
+        # Case-insensitive on purpose: the message says "is OPTIONAL".
+        self.assertIn("optional", message.lower())
+
+    def test_only_the_org_url_and_pat_are_required_credentials(self):
+        self.assertEqual(ac.CRED_VARS, ("ADO_ORG_URL", "ADO_PAT"))
+
+    def test_no_cli_flag_can_supply_a_credential(self):
+        """Deliberately MODULE-WIDE, and one of only three scans here that
+        is (the others are import subprocess and renderedText): a credential
+        flag must not exist on ANY lane, including the bounded write lane a
+        later slice adds, and these exact spellings appear in no docstring in
+        this module -- the prose names the ENV VARS (ADO_PAT, ADO_ORG_URL),
+        never a flag. Task 7 adds the stronger companion assertion against
+        the parser's real option strings."""
+        source = inspect.getsource(ac)
+        for forbidden in ("--pat", "--token", "--password", "--org-url"):
+            self.assertNotIn(forbidden, source, forbidden)
+
+
+class TestHttpGetIsStructurallyIncapableOfWriting(unittest.TestCase):
+    def test_http_get_has_no_data_parameter(self):
+        """urllib.request.Request infers POST from a non-None `data`, so
+        omitting the parameter from the signature ENTIRELY -- rather than
+        passing data=None -- means this function has no expressible write
+        path. That absence is the proof."""
+        params = list(inspect.signature(ac._http_get).parameters)
+        self.assertEqual(params, ["url", "pat"])
+
+    def test_http_get_has_no_method_parameter_for_a_caller_to_widen(self):
+        self.assertNotIn("method", inspect.signature(ac._http_get).parameters)
+
+    def test_the_get_helper_names_no_mutating_verb(self):
+        """Scoped to _http_get's OWN source, not the whole module -- exactly
+        as test_jira_client.py:1544-1552 does. A later slice adds a bounded
+        writer to this module; that must not be able to loosen THIS
+        guarantee, and this test must not have to be deleted to allow it."""
+        source = inspect.getsource(ac._http_get)
+        for verb in ('"POST"', '"PUT"', '"PATCH"', '"DELETE"',
+                     "'POST'", "'PUT'", "'PATCH'", "'DELETE'"):
+            self.assertNotIn(verb, source, verb)
+
+    def test_the_get_helper_sets_no_body_and_pins_get(self):
+        source = inspect.getsource(ac._http_get)
+        self.assertNotIn("data=", source)
+        self.assertIn('method="GET"', source)
+
+    # NOTE: the companion assertion that no READ FUNCTION can reach a writer
+    # needs fetch_comments and resolve_work_item to exist, so it lands in
+    # Task 6 as TestTheReadLaneStaysReadOnly. Do not add it here; the
+    # functions it iterates are not defined yet and it would AttributeError.
+
+    def test_the_module_never_imports_subprocess(self):
+        """Module-wide on purpose (test_jira_client.py:1560 makes the same
+        exception for this exact token): no subprocess anywhere means no `az`
+        CLI, on any lane, now or later. The word appears in no docstring in
+        this module -- the prose says "No subprocess", not "import
+        subprocess"."""
+        source = inspect.getsource(ac)
+        self.assertNotIn("import subprocess", source)
+        self.assertNotIn("shutil.which", source)
+
+    def test_the_request_is_a_get_with_no_body(self):
+        captured = {}
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def _open(req, timeout=None):
+            captured["req"] = req
+            captured["timeout"] = timeout
+            return _Resp()
+
+        with mock.patch.object(ac._OPENER, "open", _open):
+            self.assertEqual(
+                ac._http_get("https://dev.azure.com/x", "tok"), b"{}")
+        self.assertEqual(captured["req"].get_method(), "GET")
+        self.assertIsNone(captured["req"].data)
+        self.assertEqual(captured["timeout"], 30)
+
+
+class TestRedirectsAreRefused(unittest.TestCase):
+    def test_redirect_request_returns_none(self):
+        handler = ac._NoRedirect()
+        self.assertIsNone(handler.redirect_request(
+            None, None, 302, "Found", {}, "https://evil.example.com/"))
+
+    def test_the_module_opener_installs_the_no_redirect_handler(self):
+        self.assertTrue(any(isinstance(h, ac._NoRedirect)
+                            for h in ac._OPENER.handlers))
+
+
+class TestTheSecretNeverLeaks(unittest.TestCase):
+    def test_the_auth_header_is_basic_with_an_empty_username(self):
+        expected = "Basic " + base64.b64encode(b":tok").decode("ascii")
+        self.assertEqual(ac._auth_header("tok"), expected)
+
+    def test_an_http_error_message_names_only_the_url(self):
+        url = "https://dev.azure.com/contoso/_apis/wit/workitems/1"
+        error = urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+        with mock.patch.object(ac._OPENER, "open", side_effect=error):
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac._http_get(url, "sekrit-pat")
+        message = str(ctx.exception)
+        self.assertIn("401", message)
+        self.assertNotIn("sekrit-pat", message)
+        self.assertNotIn(
+            base64.b64encode(b":sekrit-pat").decode("ascii"), message)
+
+    def test_a_url_error_is_an_ado_error_not_a_traceback(self):
+        error = urllib.error.URLError("no route to host")
+        with mock.patch.object(ac._OPENER, "open", side_effect=error):
+            with self.assertRaises(ac.AdoError):
+                ac._http_get("https://dev.azure.com/x", "tok")
+
+    def test_a_bare_oserror_while_reading_is_also_an_ado_error(self):
+        with mock.patch.object(ac._OPENER, "open",
+                               side_effect=OSError("connection reset")):
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac._http_get("https://dev.azure.com/x", "sekrit-pat")
+        self.assertNotIn("sekrit-pat", str(ctx.exception))
+
+
+class TestJsonParseFailsClosed(unittest.TestCase):
+    def test_a_malformed_response_is_an_actionable_ado_error(self):
+        with self.assertRaises(ac.AdoError) as ctx:
+            ac._parse_json("{not json", "work item")
+        self.assertIn("work item", str(ctx.exception))
