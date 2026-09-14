@@ -601,15 +601,26 @@ def render_comment(triple, kind, payload, ts):
     ])
 
 
+def _criterion_line(item):
+    """One acceptance-criterion bullet, escaped. (PURE)"""
+    return "- %s" % escape_for_comment(item)
+
+
+def _risk_line(risk):
+    """One risk bullet, escaped. (PURE)"""
+    return "- [%s] %s: %s" % (
+        escape_for_comment(risk["severity"]),
+        escape_for_comment(risk["id"]),
+        escape_for_comment(risk["risk"]),
+    )
+
+
 def _understanding_payload(refinement):
     """The confirmed-understanding comment's payload, escaped. (PURE)"""
-    criteria = "\n".join("- %s" % escape_for_comment(item)
-                         for item in refinement["acceptance_criteria"])
-    risks = "\n".join(
-        "- [%s] %s: %s" % (escape_for_comment(risk["severity"]),
-                           escape_for_comment(risk["id"]),
-                           escape_for_comment(risk["risk"]))
-        for risk in refinement["risks"])
+    criteria = "\n".join(
+        _criterion_line(item) for item in refinement["acceptance_criteria"]
+    )
+    risks = "\n".join(_risk_line(risk) for risk in refinement["risks"])
     blocks = ["Description", escape_for_comment(refinement["description"]),
               "Acceptance criteria", criteria or "- (none stated)",
               "Risks", risks or "- (none identified)"]
@@ -651,10 +662,10 @@ def _duplicate_marker_errors(entries):
     seen = set()
     errors = []
     for entry in entries:
-        if entry["marker"] in seen:
-            errors.append("two comments share the dedupe marker %s"
-                          % entry["marker"])
-        seen.add(entry["marker"])
+        marker = entry["marker"]
+        if marker in seen:
+            errors.append("two comments share the dedupe marker %s" % marker)
+        seen.add(marker)
     return errors
 
 
@@ -861,17 +872,20 @@ def _render_payload(args):
     record = _load_json(args.record, "record")
     refinement = _load_json(args.refinement, "refinement")
     _require_valid_record(record)
-    org, project, work_item_id = record_triple(record)
-    return {"ok": True,
-            "work_item_org": org,
-            "work_item_project": project,
-            "work_item_id": work_item_id,
-            "artifact_path": artifact_path(
-                (org, project, work_item_id), args.artifact_root),
-            "artifact": render_artifact(record, refinement, args.ts),
-            "comments": build_comment_bodies(record, refinement, args.ts),
-            "ranked_gaps": rank_gaps(refinement["gaps"]),
-            "posted": False}
+    triple = record_triple(record)
+    org, project, work_item_id = triple
+    path = artifact_path(triple, args.artifact_root)
+    return {
+        "ok": True,
+        "work_item_org": org,
+        "work_item_project": project,
+        "work_item_id": work_item_id,
+        "artifact_path": path,
+        "artifact": render_artifact(record, refinement, args.ts),
+        "comments": build_comment_bodies(record, refinement, args.ts),
+        "ranked_gaps": rank_gaps(refinement["gaps"]),
+        "posted": False,
+    }
 
 
 def main(argv=None):

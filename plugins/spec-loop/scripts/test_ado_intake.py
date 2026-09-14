@@ -65,9 +65,7 @@ class TestWorkItemIdValidation(unittest.TestCase):
         bad = ("../1", "1/../..", "1 ", "1\n", "", "0" * 11, "12a",
                "-1", 1234, None)
         for value in bad:
-            with self.subTest(value=value), \
-                    self.assertRaises(intake.IntakeUsageError):
-                intake.validate_work_item_id(value)
+            assert_refused(self, intake.validate_work_item_id, value)
 
 
 class TestProjectNameIsRefusedNotRewritten(unittest.TestCase):
@@ -83,15 +81,11 @@ class TestProjectNameIsRefusedNotRewritten(unittest.TestCase):
 
     def test_a_control_character_or_break_is_refused(self):
         for bad in ("a\nb", "a\rb", "a\tb", "a\x00b", "", "   ", 7, None):
-            with self.subTest(bad=bad), \
-                    self.assertRaises(intake.IntakeUsageError):
-                intake.validate_project_name(bad)
+            assert_refused(self, intake.validate_project_name, bad)
 
     def test_an_org_with_a_path_segment_is_refused(self):
         for bad in ("../org", "org/x", "", "org name", None):
-            with self.subTest(bad=bad), \
-                    self.assertRaises(intake.IntakeUsageError):
-                intake.validate_org(bad)
+            assert_refused(self, intake.validate_org, bad)
 
 
 TRIPLE = ("contoso", "My Team – Platform", "1234")
@@ -193,18 +187,33 @@ class TestArtifactPathGuard(unittest.TestCase):
         self.assertEqual(intake.target_dir(TRIPLE), discriminated + "/1234")
 
 
+RISK_R1 = {
+    "id": "R1",
+    "risk": "No migration for existing rows.",
+    "severity": "high",
+}
+
+GAP_G1 = {
+    "id": "G1",
+    "question": "Which roles see the toggle?",
+    "impact": "high",
+    "blocking": True,
+}
+
+ANSWER_G1_DECISION = {
+    "G1": {"answer": "Admins only.", "logged_as": "decision"}
+}
+
+
 def make_refinement(**over):
     """A minimal valid refinement dict; keyword args override one key."""
     base = {
         "description": "Add a widget toggle to the settings pane.",
         "acceptance_criteria": ["Toggle persists across reload."],
-        "risks": [{"id": "R1", "risk": "No migration for existing rows.",
-                   "severity": "high"}],
-        "gaps": [{"id": "G1", "question": "Which roles see the toggle?",
-                  "impact": "high", "blocking": True}],
+        "risks": [RISK_R1],
+        "gaps": [GAP_G1],
         "injection_findings": [],
-        "answers": {"G1": {"answer": "Admins only.",
-                           "logged_as": "decision"}},
+        "answers": dict(ANSWER_G1_DECISION),
     }
     base.update(over)
     return base
@@ -217,51 +226,55 @@ class TestRefinementValidation(unittest.TestCase):
     def test_a_missing_key_is_reported_by_name(self):
         bad = make_refinement()
         del bad["risks"]
-        self.assertEqual(intake.validate_refinement(bad),
-                         ["missing required key: risks"])
+        errors = intake.validate_refinement(bad)
+        self.assertEqual(errors, ["missing required key: risks"])
 
     def test_a_non_object_refinement_is_reported(self):
-        self.assertEqual(intake.validate_refinement(["x"]),
-                         ["refinement must be a JSON object"])
+        errors = intake.validate_refinement(["x"])
+        self.assertEqual(errors, ["refinement must be a JSON object"])
 
     def test_a_bad_impact_severity_and_blocking_are_each_reported(self):
-        bad = make_refinement(
-            gaps=[{"id": "G1", "question": "q", "impact": "urgent",
-                   "blocking": "yes"}],
-            risks=[{"id": "R1", "risk": "r", "severity": "fatal"}],
-            answers={})
+        bad_gap = {
+            "id": "G1", "question": "q", "impact": "urgent", "blocking": "yes"
+        }
+        bad_risk = {"id": "R1", "risk": "r", "severity": "fatal"}
+        bad = make_refinement(gaps=[bad_gap], risks=[bad_risk], answers={})
         errors = intake.validate_refinement(bad)
         self.assertIn("gaps[0].impact must be one of high|medium|low", errors)
         self.assertIn("gaps[0].blocking must be a boolean", errors)
-        self.assertIn("risks[0].severity must be one of high|medium|low",
-                      errors)
+        self.assertIn(
+            "risks[0].severity must be one of high|medium|low", errors)
 
     def test_a_newline_in_an_id_is_refused(self):
-        bad = make_refinement(
-            gaps=[{"id": "G\n1", "question": "q", "impact": "low",
-                   "blocking": False}], answers={})
-        self.assertIn("gaps[0].id must not contain a newline",
-                      intake.validate_refinement(bad))
+        bad_gap = {
+            "id": "G\n1", "question": "q", "impact": "low", "blocking": False
+        }
+        bad = make_refinement(gaps=[bad_gap], answers={})
+        errors = intake.validate_refinement(bad)
+        self.assertIn("gaps[0].id must not contain a newline", errors)
 
     def test_a_duplicate_gap_id_makes_an_answer_unattributable(self):
-        gap = {"id": "G1", "question": "q", "impact": "low",
-               "blocking": False}
+        gap = {
+            "id": "G1", "question": "q", "impact": "low", "blocking": False
+        }
         bad = make_refinement(gaps=[gap, dict(gap)], answers={})
-        self.assertIn("gaps have duplicate id: G1",
-                      intake.validate_refinement(bad))
+        errors = intake.validate_refinement(bad)
+        self.assertIn("gaps have duplicate id: G1", errors)
 
     def test_an_answer_with_no_matching_gap_is_reported(self):
-        bad = make_refinement(
-            answers={"G9": {"answer": None, "logged_as": "open-question"}})
-        self.assertIn("answers has no matching gap for id G9",
-                      intake.validate_refinement(bad))
+        stray = {"G9": {"answer": None, "logged_as": "open-question"}}
+        bad = make_refinement(answers=stray)
+        errors = intake.validate_refinement(bad)
+        self.assertIn("answers has no matching gap for id G9", errors)
 
     def test_a_bad_logged_as_is_reported(self):
-        bad = make_refinement(answers={"G1": {"answer": "a",
-                                              "logged_as": "note"}})
-        self.assertIn(
-            "answers[G1].logged_as must be one of decision|open-question",
-            intake.validate_refinement(bad))
+        bad_answer = {"G1": {"answer": "a", "logged_as": "note"}}
+        bad = make_refinement(answers=bad_answer)
+        errors = intake.validate_refinement(bad)
+        expected = (
+            "answers[G1].logged_as must be one of decision|open-question"
+        )
+        self.assertIn(expected, errors)
 
 
 class TestGapRanking(unittest.TestCase):
@@ -272,8 +285,8 @@ class TestGapRanking(unittest.TestCase):
             {"id": "G2", "impact": "high", "blocking": True},
             {"id": "G0", "impact": "high", "blocking": False},
         ]
-        self.assertEqual([g["id"] for g in intake.rank_gaps(gaps)],
-                         ["G2", "G1", "G0", "G3"])
+        ranked_ids = [g["id"] for g in intake.rank_gaps(gaps)]
+        self.assertEqual(ranked_ids, ["G2", "G1", "G0", "G3"])
 
     def test_ranking_does_not_mutate_the_input(self):
         gaps = [{"id": "G2", "impact": "low", "blocking": False},
@@ -316,37 +329,40 @@ class TestRecordValidation(unittest.TestCase):
     def test_a_missing_key_is_reported_by_name(self):
         bad = make_record()
         del bad["repro_steps"]
-        self.assertEqual(intake.validate_record(bad),
-                         ["record is missing required key: repro_steps"])
+        errors = intake.validate_record(bad)
+        self.assertEqual(
+            errors, ["record is missing required key: repro_steps"])
 
     def test_a_none_scalar_is_reported_not_rendered(self):
-        self.assertIn("record key title must be a string",
-                      intake.validate_record(make_record(title=None)))
+        errors = intake.validate_record(make_record(title=None))
+        self.assertIn("record key title must be a string", errors)
 
     def test_comments_must_be_a_list(self):
-        self.assertIn("record key comments must be a list",
-                      intake.validate_record(make_record(comments={})))
+        errors = intake.validate_record(make_record(comments={}))
+        self.assertIn("record key comments must be a list", errors)
+
+    def assert_empty_field_reported(self, field):
+        errors = intake.validate_record(make_record(**{field: ""}))
+        self.assertIn("record key %s must not be empty" % field, errors)
 
     def test_an_empty_triple_field_is_a_half_resolve(self):
         for field in ("org", "project", "id"):
             with self.subTest(field=field):
-                self.assertIn(
-                    "record key %s must not be empty" % field,
-                    intake.validate_record(make_record(**{field: ""})))
+                self.assert_empty_field_reported(field)
 
     def test_a_numeric_id_is_refused(self):
-        self.assertIn("record key id must be a string",
-                      intake.validate_record(make_record(id=1234)))
+        errors = intake.validate_record(make_record(id=1234))
+        self.assertIn("record key id must be a string", errors)
 
     def test_require_valid_record_raises_with_every_error_joined(self):
         with self.assertRaises(intake.IntakeError) as caught:
             intake._require_valid_record(make_record(title=None))
-        self.assertIn("refusing to render from an invalid record",
-                      str(caught.exception))
+        message = str(caught.exception)
+        self.assertIn("refusing to render from an invalid record", message)
 
     def test_record_triple_is_the_validated_target(self):
-        self.assertEqual(intake.record_triple(make_record()),
-                         ("contoso", "My Team – Platform", "1234"))
+        triple = intake.record_triple(make_record())
+        self.assertEqual(triple, ("contoso", "My Team – Platform", "1234"))
 
 
 class TestTheBodyCarriesNoActiveMarkup(unittest.TestCase):
@@ -467,12 +483,15 @@ class TestCommentBodiesAreBuiltNotPosted(unittest.TestCase):
         self.assertEqual(built[0]["kind"], "understanding")
         self.assertIsNone(built[0]["gap_id"])
 
+    def assert_entry_shape(self, entry):
+        self.assertEqual(set(entry), {"kind", "gap_id", "marker", "body"})
+        self.assertTrue(entry["body"].startswith(entry["marker"]))
+
     def test_each_entry_has_exactly_the_pinned_keys(self):
-        for entry in intake.build_comment_bodies(
-                make_record(), make_refinement(), TS):
-            self.assertEqual(set(entry),
-                             {"kind", "gap_id", "marker", "body"})
-            self.assertTrue(entry["body"].startswith(entry["marker"]))
+        built = intake.build_comment_bodies(
+            make_record(), make_refinement(), TS)
+        for entry in built:
+            self.assert_entry_shape(entry)
 
     def test_an_answered_gap_is_a_decision(self):
         built = intake.build_comment_bodies(
@@ -483,9 +502,8 @@ class TestCommentBodiesAreBuiltNotPosted(unittest.TestCase):
         self.assertIn("Admins only.", gap_entry["body"])
 
     def test_an_unanswered_gap_is_an_open_question(self):
-        refinement = make_refinement(
-            answers={"G1": {"answer": None,
-                            "logged_as": "open-question"}})
+        open_answer = {"G1": {"answer": None, "logged_as": "open-question"}}
+        refinement = make_refinement(answers=open_answer)
         built = intake.build_comment_bodies(make_record(), refinement, TS)
         self.assertEqual(built[1]["kind"], "open-question")
         self.assertIn("Open question (G1", built[1]["body"])
@@ -534,8 +552,9 @@ class TestCommentBodiesAreBuiltNotPosted(unittest.TestCase):
 
 class TestArtifactRendering(unittest.TestCase):
     def artifact(self, record=None, refinement=None):
-        return intake.render_artifact(record or make_record(),
-                                      refinement or make_refinement(), TS)
+        record = record or make_record()
+        refinement = refinement or make_refinement()
+        return intake.render_artifact(record, refinement, TS)
 
     def test_the_front_matter_holds_every_pinned_field_in_order(self):
         lines = self.artifact().split("\n")
@@ -553,15 +572,15 @@ class TestArtifactRendering(unittest.TestCase):
 
     def test_counts_are_bare_numbers_not_strings(self):
         art = self.artifact()
-        self.assertIn("schema_version: %d" % intake.ARTIFACT_SCHEMA_VERSION,
-                      art)
+        version_line = "schema_version: %d" % intake.ARTIFACT_SCHEMA_VERSION
+        self.assertIn(version_line, art)
         self.assertIn("gap_count: 1", art)
         self.assertIn("open_question_count: 0", art)
 
     def test_an_open_question_is_counted(self):
-        art = self.artifact(refinement=make_refinement(
-            answers={"G1": {"answer": None,
-                            "logged_as": "open-question"}}))
+        open_answer = {"G1": {"answer": None, "logged_as": "open-question"}}
+        refinement = make_refinement(answers=open_answer)
+        art = self.artifact(refinement=refinement)
         self.assertIn("open_question_count: 1", art)
 
     def test_a_colon_space_project_name_stays_a_single_scalar(self):
@@ -570,8 +589,8 @@ class TestArtifactRendering(unittest.TestCase):
 
     def test_every_section_heading_is_present_in_order(self):
         art = self.artifact()
-        positions = [art.index(section)
-                     for section in intake.ARTIFACT_SECTIONS]
+        sections = intake.ARTIFACT_SECTIONS
+        positions = [art.index(section) for section in sections]
         self.assertEqual(positions, sorted(positions))
 
     def test_work_item_text_cannot_forge_the_front_matter_delimiter(self):
