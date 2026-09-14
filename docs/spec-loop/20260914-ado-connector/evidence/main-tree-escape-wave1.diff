@@ -1,0 +1,32 @@
+diff --git a/scripts/coverage_omit.txt b/scripts/coverage_omit.txt
+index 97b11a2..8fdcca1 100644
+--- a/scripts/coverage_omit.txt
++++ b/scripts/coverage_omit.txt
+@@ -31,6 +31,7 @@
+ # scripts/<name>.py because measure_coverage.normalize_key canonicalizes either
+ # scripts dir.
+ 
++scripts/ado_intake.py:__main__           # process-entry shim; the module is imported, not run as __main__, under unittest
+ scripts/dag.py:__main__                  # process-entry shim; the module is imported, not run as __main__, under unittest
+ scripts/dashboard_launcher.py:__main__   # process-entry shim; the module is imported, not run as __main__, under unittest
+ scripts/dashboard_server.py:__main__     # process-entry shim; the module is imported, not run as __main__, under unittest
+diff --git a/scripts/measure_coverage.py b/scripts/measure_coverage.py
+index 2b53cb8..26eb68e 100644
+--- a/scripts/measure_coverage.py
++++ b/scripts/measure_coverage.py
+@@ -99,6 +99,7 @@ _MAIN_SHIM_RE = re.compile(r"^if\s+__name__\s*==\s*['\"]__main__['\"]\s*:")
+ 
+ # Product modules that count toward coverage (basename -> relpath key).
+ TARGET_FILES = (
++    "scripts/ado_intake.py",
+     "scripts/dag.py",
+     "scripts/dashboard_launcher.py",
+     "scripts/dashboard_server.py",
+@@ -141,6 +142,7 @@ TARGET_MODULES = tuple(Path(t).stem for t in TARGET_FILES)
+ # and not chased in this slice), not from the optimistic local 100%. The TOTAL floor
+ # likewise sits well under the py3.12 aggregate that pr_resolver drags down.
+ PER_FILE_FLOORS = {
++    "scripts/ado_intake.py": 90,           # local XX% (2026-09-14) - TBD
+     "scripts/dag.py": 94,                  # local 99.8% (2026-07-30) - 5
+     "scripts/dashboard_launcher.py": 95,   # local 100% - 5
+     "scripts/dashboard_server.py": 94,     # local 99.5% (2026-07-30) - 5

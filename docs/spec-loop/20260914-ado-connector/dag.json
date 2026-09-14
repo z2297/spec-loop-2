@@ -1,0 +1,179 @@
+{
+  "schema_version": 2,
+  "run_id": "20260914-ado-connector",
+  "base_ref": "spec-loop-run/20260914-ado-connector",
+  "base_sha": "ca497d23d221b8cb671fe7bc9d66be61b4283639",
+  "base_branch": "main",
+  "merge_mode": "single-branch",
+  "mode": "workflow",
+  "created_at": "2026-09-14T13:47:55Z",
+  "shared_constraints": [
+    "Never modify jira_client.py, jira_intake.py, or jira-intake.md: the Jira connector's behaviour must be unchanged at the end of this run.",
+    "No shared RUNTIME module between the ADO and Jira connectors - duplication over coupling. A shared TEST asserting cross-provider safety prose is the one sanctioned exception.",
+    "stdlib only: no new dependency, no requirements.txt, no third-party import, and no dependency on the Azure CLI.",
+    "The read lane stays structurally incapable of a mutating verb: the GET helper takes NO `data` parameter and hardcodes method='GET'.",
+    "No URL taken from a response body is ever fetched. Every request URL is composed locally from the validated origin plus a literal path; continuationToken is regex-validated, percent-encoded, and fails closed.",
+    "Credentials are read from the environment ONLY, never from argv, and never appear in an artifact, a rendered comment body, or an error message.",
+    "Any value that would silently SHRINK the dedupe haystack must raise, never default to empty (missing/empty comment text, missing or non-numeric totalCount, an unmatched continuationToken).",
+    "Baseline stays green: all six CI gates, including the coverage floors (per-file and TOTAL 90%).",
+    "Every new product module MUST carry a <=5-line `if __name__ == \"__main__\":` shim. COVERAGE-GATE REGISTRATION RULE: the slice that registers a module in TARGET_FILES / PER_FILE_FLOORS / coverage_omit.txt is the LAST slice that modifies that module, because a floor must be measured on the module's final content. Concretely: ado_intake.py is registered by a3 (no later slice touches it) and ado_client.py is registered by a2 (a2 extends what a1 created) - NOT by a1 and NOT by a5. Set the floor from a fresh local measurement minus >=5 points, rounded down, with the measured figure and date in a trailing comment. Never leave a placeholder like 'XX%' or 'TBD' in PER_FILE_FLOORS.",
+    "Command prose must not claim a safety property this repo has not verified; an overstated guarantee on the mutating lane is a defect, not a nit.",
+    "HUMAN-ANSWERED SCOPE: the bounded comment-WRITE lane IS in scope this run (slice a2). Every blocking council finding must be implemented, never deferred.",
+    "HUMAN-ANSWERED: Azure DevOps SERVICES only. The host allow-list stays a FIXED regex over dev.azure.com and the legacy *.visualstudio.com form, with deliberately NO opt-in extra-hosts variable. A Server/on-prem host must produce a clear refusal naming the supported forms, never a partially working path.",
+    "The command's prose must NOT assert marker round-trip fidelity until live evidence is recorded in this run. The operator has agreed to run one live round trip; until then the limit is stated, not claimed away.",
+    "WORKTREE CONTAINMENT: edit ONLY files inside your own slice worktree. conventions.md cites repo-root-relative and absolute main-repo paths when it points at existing code - those are READING references. Every WRITE must go to <your worktree>/<same relative path>. Writing to the main checkout contaminates the controller's integration branch."
+  ],
+  "scope_ceiling": [
+    "ADO Repos / pull-request support: no ADO lane added to pr_resolver.py, review-pr, or peer-review.",
+    "Any generalization or refactor of the Jira connector into a shared provider abstraction.",
+    "Azure DevOps Server / on-prem hosts: Azure DevOps Services only (HUMAN-CONFIRMED at intake).",
+    "Any ADO write beyond adding one work-item comment: no state transition, no field edit or PATCH, no assignee change, no work-item or child creation, no relation/link edit, no attachment, no comment edit, no comment delete, no reaction.",
+    "WIQL / query / board / pipeline surfaces: no searching or listing of work items.",
+    "Entra ID / OAuth / service-principal / managed-identity auth flows: PAT only.",
+    "Any dependency on the Azure CLI (`az`), including `az devops invoke`.",
+    "Changes to the wave loop, dag, run-state, quality gate, or dashboard."
+  ],
+  "slices": [
+    {
+      "id": "a1",
+      "goal": "ado_client.py read lane: resolve ONE Azure DevOps work item read-only to the normalized record (org/project/id, HTML-to-text description, acceptance-criteria resolution order, repro steps), plus the fail-closed paginated comment sweep the dedupe gate depends on.",
+      "files": [
+        "plugins/spec-loop/scripts/ado_client.py",
+        "plugins/spec-loop/scripts/test_ado_client.py"
+      ],
+      "subsystems": [
+        "ado-connector",
+        "external-provider",
+        "transport"
+      ],
+      "deps": [],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "a3",
+      "goal": "ado_intake.py pure renderer: normalized record + refinement -> pinned-schema intake artifact under .spec-loop-ado/ and the comment bodies it WOULD post, with the org+project+id-scoped in-body dedupe marker and slug-based artifact path.",
+      "files": [
+        "plugins/spec-loop/scripts/ado_intake.py",
+        "plugins/spec-loop/scripts/test_ado_intake.py"
+      ],
+      "subsystems": [
+        "ado-connector",
+        "rendering"
+      ],
+      "deps": [],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "a2",
+      "goal": "ado_client.py bounded comment WRITE lane: the sole POST, off by default behind --post, with target-triple verification before credentials, in-batch duplicate rejection, escaped inert bodies, and extraction-based marker dedupe. ALSO registers ado_client.py in the coverage gate (TARGET_FILES, PER_FILE_FLOORS from a fresh local measurement minus >=5, coverage_omit.txt __main__ entry, and the pinned shim block size in test_measure_coverage_manifest.py if it moved) - a2 is the LAST slice to modify ado_client.py, so the floor measured here is final. If a1 already added a placeholder floor, replace it with a real measurement.",
+      "files": [
+        "plugins/spec-loop/scripts/ado_client.py",
+        "plugins/spec-loop/scripts/test_ado_client.py",
+        "scripts/measure_coverage.py",
+        "scripts/coverage_omit.txt",
+        "scripts/test_measure_coverage_manifest.py"
+      ],
+      "subsystems": [
+        "ado-connector",
+        "external-provider",
+        "mutating-write"
+      ],
+      "deps": [
+        "a1"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "a4",
+      "goal": "The /spec-loop:ado-intake command with the locked allowed-tools and an accurate security boundary, its doctrine test, and the one shared cross-provider test pinning that both connector commands carry the same bounded-write claim set.",
+      "files": [
+        "plugins/spec-loop/commands/ado-intake.md",
+        "plugins/spec-loop/scripts/test_doctrine_ado_intake.py",
+        "plugins/spec-loop/scripts/test_doctrine_intake_parity.py",
+        "plugins/spec-loop/README.md"
+      ],
+      "subsystems": [
+        "commands",
+        "doctrine"
+      ],
+      "deps": [
+        "a2",
+        "a3"
+      ],
+      "risk_tier": 3,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    },
+    {
+      "id": "a5",
+      "goal": "Docs, containment, and FOUR CARRIED PROSE FIXES. (1) Add the .spec-loop-ado/ ignore entry to .gitignore and record the connector in CHANGELOG [Unreleased], plugins/spec-loop/README.md and the root README.md. (2) VERIFY (do not duplicate) that ado_intake.py and ado_client.py are both fully registered in the coverage gate with real measured floors and no placeholder; fix only if something is missing. (3) PROSE-ONLY fixes carried from slice a2, where the controller ordered them twice and both rounds were refuted by the finding-verifier's evidence-quote check before any fixer ran. These are DEFECTS, not nits: this module performs an irreversible external write with no delete lane, so documentation claiming it is read-only actively misleads an operator. Fix all four, change NO behaviour, add no assertions, keep every guard and test, and keep the suite green: (a) ado_client.py module SECURITY docstring still says 'This module issues GET only -- _http_get takes no `data` parameter, so a mutating verb is not expressible.' - now false, since _http_post exists; rewrite so GET-only is scoped to the READ lane and the one separate writer is named. (b) ado_client.py argparse description still reads 'Azure DevOps Services work-item reader (read-only).' - every `--help` user sees it and the CLI now exposes `comment --post`; name both lanes and say the write is off by default. (c) test_ado_client.py module docstring opens 'Tests for the read-only Azure DevOps work-item reader' and claims it covers 'the READ-ONLY guarantee', yet the same file now holds the whole write lane's tests; describe both lanes, keeping the accurate no-`data`-parameter clause scoped to the READ lane. (d) _assert_target_unchanged's docstring claims its environment check 'catches the org moving between the preview invocation and the armed one', but that branch is unreachable in production because resolve_work_item stamps record['org'] from the same credentials() read, so the first assert already proves it; say plainly that the record check catches both drift shapes and the environment comparison is belt-and-braces. Keep the check. NOTE: slice a4 already bumped the gate-counted '**Commands (N)**' line in plugins/spec-loop/README.md when it shipped the command - do NOT touch that line. a5's README work is the root README.md prose surfaces (intro paragraph and command list, which are NOT gate-enforced) plus any plugin-README prose OTHER than that counted line. (4) FOUR MORE PROSE-ACCURACY FIXES in plugins/spec-loop/commands/ado-intake.md, from a4's review residual. That file's '## The security boundary' section exists so a reviewer can enumerate every write surface, so an incomplete or self-contradicting accounting there is a defect: (e) the `Write` bullet says nothing but the artifact is ever written and the `Bash` bullet sanctions only two writes, yet Steps 2 and 5 write record.json, refinement.json and payload.json into the mktemp directory - and the file's own residue disclosure admits that temp copy holds the full work item. Account for those three writes honestly. (f) 'exactly three bundled script invocations' is false on the armed path: `ado_client.py comment` runs TWICE (Step 7 preview, Step 8 armed), so an armed run makes four invocations of three distinct commands - state it correctly even though the wording came from jira-intake.md. (g) Step 7 is the ONLY script invocation with no failure handling, while Steps 1/2/5/6/8 all name their exit shapes and say to surface and stop. This is safety-relevant: a failed preview leaves no title or web_url, which is exactly the data Step 8's pinned confirmation needs, so the operator could be walked into the arming question with the wrong-target defence degraded. Give Step 7 the same exit-shape handling as its siblings. (h) Step 5 attributes render's exit 1 solely to the refinement, but _require_valid_record runs BEFORE validate_refinement and an invalid record raises the same exit 1 - so an operator who passed the wrong --record file is told to fix the refinement; name both causes and say to surface the errors array verbatim. Change NO behaviour anywhere; keep every guard and test; keep the suite green; and do not touch jira-intake.md.",
+      "files": [
+        ".gitignore",
+        "CHANGELOG.md",
+        "README.md",
+        "plugins/spec-loop/scripts/ado_client.py",
+        "plugins/spec-loop/scripts/test_ado_client.py",
+        "plugins/spec-loop/commands/ado-intake.md"
+      ],
+      "subsystems": [
+        "ci-gates",
+        "docs"
+      ],
+      "deps": [
+        "a1",
+        "a2",
+        "a3",
+        "a4"
+      ],
+      "risk_tier": 2,
+      "depth": 0,
+      "parent": null,
+      "status": "complete"
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "slice_ids": [
+        "a1",
+        "a3"
+      ],
+      "workflow_run_id": "wf_c2685d66-cdf",
+      "status": "dispatched"
+    },
+    {
+      "index": 2,
+      "slice_ids": [
+        "a2"
+      ],
+      "workflow_run_id": "wf_7748bbf0-6c5",
+      "status": "dispatched"
+    },
+    {
+      "index": 3,
+      "slice_ids": [
+        "a4"
+      ],
+      "workflow_run_id": "wf_5cf136f3-d82",
+      "status": "dispatched"
+    },
+    {
+      "index": 4,
+      "slice_ids": [
+        "a5"
+      ],
+      "workflow_run_id": "wf_ed162ef8-891",
+      "status": "dispatched"
+    }
+  ]
+}

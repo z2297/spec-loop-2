@@ -1,0 +1,278 @@
+{
+  "schema_version": 2,
+  "id": "a4",
+  "status": "DONE",
+  "branch": "spec-loop/20260914-ado-connector/a4",
+  "commits": {
+    "base": "850a6cb2f5955e0e61bed18ac221b594d53d059c",
+    "head": "85c1e77a2b61337d5f492cb1ba9f0c8d87a8e2e9"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "ENDORSE_WITH_CONCERNS",
+    "concerns": 11,
+    "over_scope": {
+      "flag": false,
+      "reason": "Exactly four files, all inside the slice goal plus the granted ceiling exception: commands/ado-intake.md, scripts/test_doctrine_ado_intake.py, scripts/test_doctrine_intake_parity.py, and the single counted inventory line in plugins/spec-loop/README.md. The plan explicitly refuses the root README, CHANGELOG and the .gitignore entry (a5), adds no temp cleanup, does not touch jira-intake.md, and deliberately omits a TestTheArtifactRootIsGitignored class because that entry is a5's file. No runtime code, no shared runtime module, no new dependency."
+    }
+  },
+  "tasks_completed": 2,
+  "review": {
+    "confirmed": 7,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 1,
+    "residual": [
+      "P2: Step 7 is the only script invocation in the command with no failure handling. It runs `ado_client.py comment` in preview mode, which can exit 2 (missing ADO_ORG_URL/ADO_PAT, unreadable record or payload, a payload that is a bare comments array) or exit 1 (wrong-target refusal, invalid comment plan, a truncated or unreadable comment sweep), yet the step ends by instructing an unconditional `Nothing has been posted yet.` and Steps 1, 2, 5, 6 and 8 all name their exit shapes and say to surface and stop. A failed preview leaves no `title`/`web_url`, which is exactly the data Step 8's pinned confirmation requires, so the operator can be walked into the arming question with the wrong-target defence degraded.",
+      "P2: Step 5 attributes render's exit 1 solely to the refinement and tells the operator to fix it, but ado_intake._render_payload calls _require_valid_record BEFORE validate_refinement, and an invalid record raises IntakeError (\"refusing to render from an invalid record: ...\") which main() maps to exit 1 as well. An operator who passed the wrong file as --record is told to fix the refinement. Unlike Steps 2 and 8, this step also does not instruct surfacing the errors array verbatim, so the message that would have named the real cause can be dropped.",
+      "P2: The security boundary's write accounting is incomplete and internally contradictory. The `Write` bullet states absolutely that nothing but the artifact is ever written, and the `Bash` bullet sanctions only two writes (the .gitignore append and the POST) — yet Steps 2 and 5 require three files to be written into the mktemp directory (record.json, refinement.json, payload.json), and the file's own residue disclosure at line 105-110 says the temp directory \"retains `record.json` — the full work item\". Under the authored four-tool list only `Write` (or an unsanctioned Bash redirect) can create those files, so one of the two statements must be false. The whole function of this section is to let a reviewer enumerate every write surface, and the omitted surface is the one holding the full untrusted work item.",
+      "P3: \"exactly three bundled script invocations\" is false on the armed path: `ado_client.py comment` is invoked twice (Step 7's preview and Step 8's armed post), so an armed run makes four invocations of three distinct commands. The implementer flagged this and declined to change it because the wording is verbatim from the frozen jira-intake.md; the parenthetical does hint at the two modes, but the sentence a reviewer counts writes from still states the wrong number.",
+      "P3: Both dedupe bullets describe the gate as extracting the full `[spec-loop-intake:<kind>:<12 hex>]` marker from the read-back bodies, but ado_client.marker_tokens is two-tier — it also extracts any standalone 12-hex token (MARKER_DIGEST_RE) — and comment_haystack_tokens unions the stored `text` with its html_to_text rendering. So the \"a quoted marker reads as posted\" limitation understates its own trigger (a bare digest anywhere in any comment also suppresses), and the round-trip bullet omits the mitigation that exists precisely to survive a rewritten wrapper. Both discrepancies are in the fail-safe direction (they can only skip a write), so there is no operational risk, but the prose teaches a reader a narrower gate than the one that runs.",
+      "P2: The security-boundary section claims Bash 'runs exactly three bundled script invocations — ado_client.py resolve, ado_intake.py render, and ado_client.py comment', but the Steps section two paragraphs below shows ado_client.py comment invoked TWICE — once unconditionally in Step 7 (preview, no --post) and once conditionally in Step 8 (armed, --post). In any run that reaches an armed post, there are four script invocations across three distinct scripts, not three. The claim is literally false for the armed path and internally inconsistent with the Steps section of the same file.",
+      "P3: The module docstring says '(4) the five claims this connector cannot afford to overstate' and the test class is named TestTheFiveClaimsThisLaneCannotOverstate, but the class actually contains six distinct pinned claims: the confirmation naming the work-item title/web-URL (test_the_confirmation_names_the_title_and_the_web_url), plus the five enumerated in the docstring (target binding, web-UI-delete re-arm, body-format, marker round trip, temp-copy residue). The count in the docstring/class name undercounts the class's own test methods by one."
+    ],
+    "open": []
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p 'test_*.py' ; python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_*.py' ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs plugins/spec-loop/scripts/slice_wave_radius.test.mjs plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs plugins/spec-loop/scripts/slice_wave_reentry.test.mjs plugins/spec-loop/scripts/slice_wave_accepted.test.mjs plugins/spec-loop/scripts/slice_wave_replan.test.mjs",
+    "result": "All six suite segments passed. Segment 1: validate_marketplace.py (OK). Segment 2: 126 Python unit tests in scripts/ (OK). Segment 3: 2143 Python unit tests in plugins/spec-loop/scripts/ (OK). Segment 4: 2269 tests via measure_coverage.py with 3 skipped and coverage floor passed (TOTAL 97.3%, threshold 90%). Segment 5: 48 Node tests for dashboard_assets (all passed). Segment 6: 136 Node tests for wave behavior and slice wave modules (all passed).",
+    "passed": true,
+    "scope": "full",
+    "tree_sha": "d23ce1ce1e99aafe2975fb1c0e55cd61246f1d6b"
+  },
+  "quality": {
+    "status": "PASS",
+    "detail": "Quality gate JSON output confirmed. summary.pass=true, failures=[], checks=197, vacuous=false. All measurements passed builtin-heuristic thresholds. Skipped analyses: plugins/spec-loop/README.md (unsupported file type), plugins/spec-loop/commands/ado-intake.md (unsupported file type), crap_score metric (no coverage report).",
+    "head_sha": "85c1e77a2b61337d5f492cb1ba9f0c8d87a8e2e9",
+    "tree_sha": "d23ce1ce1e99aafe2975fb1c0e55cd61246f1d6b",
+    "measured_at": "verify:1",
+    "violations": 0
+  },
+  "escalations": [],
+  "agents_used": 13,
+  "wave": 3,
+  "events": [
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "plan",
+        "model": "inherit",
+        "effort": "low",
+        "agent_type": "spec-loop:slice-planner"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "refactor-radius",
+      "payload": {
+        "summary": "refactor radius WITHIN: every declared number is at or under its ceiling (compared: rewrite_ratio, touched_existing_files)",
+        "state": "WITHIN",
+        "exceeded": [],
+        "measured": {
+          "rewrite_ratio": 0.003,
+          "touched_existing_files": 1,
+          "rewritten_lines": 2
+        },
+        "thresholds": {
+          "enabled": true,
+          "max_rewrite_ratio": 0.5,
+          "max_touched_existing_files": 8,
+          "min_rewritten_lines": 150
+        },
+        "compared": [
+          "rewrite_ratio",
+          "touched_existing_files"
+        ],
+        "skipped": [],
+        "basis": "Counted from the final task list: the only pre-existing file modified is plugins/spec-loop/README.md, a 2-line inventory-line replacement, against roughly 640 total changed lines (about 200 for ado-intake.md, about 250 for test_doctrine_ado_intake.py, about 130 for test_doctrine_intake_parity.py, plus the 2 README lines)."
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:risk",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:guardian"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "critic:full-council",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:plan-critic"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "council-verdict",
+      "payload": {
+        "verdict": "ENDORSE_WITH_CONCERNS",
+        "panel": [
+          "full-council",
+          "risk"
+        ],
+        "safety": false,
+        "concerns_folded": 10,
+        "deferred": [
+          "THE ADO TWIN OF TestTheArtifactRootIsGitignored LANDS IN NEITHER SLICE. test_doctrine_jira_intake.py:153 pins that '.spec-loop-jira/' is in the repo's own .gitignore; .gitignore currently has only that line (:21) and no '.spec-loop-ado/'. a4 correctly omits the class (the entry does not exist on this branch and the test would fail), and a5 is assigned the .gitignore entry - but nothing in either slice's stated scope adds the assertion, so after a5 the ADO artifact root is gitignored by an unpinned line while the Jira one is pinned. Runtime blast radius is small (Step 1's containment append acts on the invoking repo regardless), but the repo-level pin should not silently disappear. Mitigation: record it as a5's obligation - add the TestTheArtifactRootIsGitignored analogue in the same commit as the '.spec-loop-ado/' .gitignore entry."
+        ],
+        "over_scope": {
+          "flag": false,
+          "reason": "Exactly four files, all inside the slice goal plus the granted ceiling exception: commands/ado-intake.md, scripts/test_doctrine_ado_intake.py, scripts/test_doctrine_intake_parity.py, and the single counted inventory line in plugins/spec-loop/README.md. The plan explicitly refuses the root README, CHANGELOG and the .gitignore entry (a5), adds no temp cleanup, does not touch jira-intake.md, and deliberately omits a TestTheArtifactRootIsGitignored class because that entry is a5's file. No runtime code, no shared runtime module, no new dependency."
+        }
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "deferred",
+      "payload": {
+        "summary": "THE ADO TWIN OF TestTheArtifactRootIsGitignored LANDS IN NEITHER SLICE. test_doctrine_jira_intake.py:153 pins that '.spec-loop-jira/' is in the repo's own .gitignore; .gitignore currently has only that line (:21) and no '.spec-loop-ado/'. a4 correctly omits the class (the entry does not exist on this branch and the test would fail), and a5 is assigned the .gitignore entry - but nothing in either slice's stated scope adds the assertion, so after a5 the ADO artifact root is gitignored by an unpinned line while the Jira one is pinned. Runtime blast radius is small (Step 1's containment append acts on the invoking repo regardless), but the repo-level pin should not silently disappear. Mitigation: record it as a5's obligation - add the TestTheArtifactRootIsGitignored analogue in the same commit as the '.spec-loop-ado/' .gitignore entry.",
+        "source": "plan-critique"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:a4-t1",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "task:a4-t2",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "gate",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:tests",
+        "model": "sonnet",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "review:correctness",
+        "model": "inherit",
+        "effort": "high",
+        "agent_type": "spec-loop:pr-reviewer"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "quality-gate",
+      "payload": {
+        "summary": "measured at gate on 1bfaca6: 5 violation(s), 0 accepted",
+        "status": "FAIL",
+        "violations": 5,
+        "accepted": 0,
+        "head_sha": "1bfaca66f977b18874f34d2bc58abde720a78ce9",
+        "tree_sha": "53ef6da814611062f1179aed7cf906a8ebe6eb84",
+        "stage": "gate"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify-findings",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:finding-verifier"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "fix:1",
+        "model": "sonnet",
+        "effort": "medium",
+        "agent_type": "spec-loop:implementer"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "re-review:1",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:re-reviewer"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "review-summary",
+      "payload": {
+        "findings": 9,
+        "confirmed": 7,
+        "refuted": 0,
+        "fix_rounds": 1,
+        "reviewers": 2
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "simplify",
+        "model": "sonnet",
+        "effort": "low",
+        "agent_type": "spec-loop:simplifier"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "a4",
+      "type": "quality-gate",
+      "payload": {
+        "summary": "measured at verify:1 on 85c1e77: 0 violation(s), 0 accepted",
+        "status": "PASS",
+        "violations": 0,
+        "accepted": 0,
+        "head_sha": "85c1e77a2b61337d5f492cb1ba9f0c8d87a8e2e9",
+        "tree_sha": "d23ce1ce1e99aafe2975fb1c0e55cd61246f1d6b",
+        "stage": "verify:1"
+      }
+    }
+  ]
+}
