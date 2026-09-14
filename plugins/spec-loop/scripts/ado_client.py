@@ -1445,13 +1445,28 @@ def _assert_target_unchanged(target, fresh, org):
     """Refuse unless `target` still names BOTH the work item the fresh read
     just returned AND the organization the current ADO_ORG_URL points at.
 
-    Two checks because there are two ways to drift. The record check catches
-    a comments payload rendered for a different item; the environment check
-    catches the org moving between the preview invocation and the armed one
-    -- a different shell tab, a re-sourced .env, a mistyped re-export. Both
-    land one item's refinement on another, and the read-back dedupe gate
-    SUCCEEDS on the wrong item (it carries no such marker), so the operator
-    would otherwise see a clean success."""
+    The RECORD check carries both drift shapes. `target` was agreed against
+    the record file the PREVIEW invocation resolved, while `fresh` is
+    resolved in THIS process from the current ADO_ORG_URL, so comparing the
+    agreed target to the freshly resolved triple already catches a comments
+    payload rendered for a different item AND an org that moved between the
+    preview invocation and this armed one -- a different shell tab, a
+    re-sourced .env, a mistyped re-export. Either lands one item's
+    refinement on another, and the read-back dedupe gate SUCCEEDS on the
+    wrong item (it carries no such marker), so the operator would otherwise
+    see a clean success.
+
+    The ENVIRONMENT comparison that follows is therefore belt-and-braces,
+    not a second catch: resolve_work_item stamps the fresh record's `org`
+    from its own credentials() read of the same process environment that
+    produced `org` here, and nothing between the two reads mutates that
+    environment, so in production its mismatch branch cannot be reached (a
+    test reaches it only by substituting resolve_work_item). It is kept
+    deliberately, so that a future change which stops deriving the fresh
+    record's org that way -- caching a record, accepting one resolved by
+    another process, taking the org from a flag or a second source -- is
+    caught here instead of silently mis-targeting a write. Do not delete it
+    as dead code."""
     assert_same_target(
         target, record_triple(fresh), "the freshly resolved work item")
     assert_same_target(
