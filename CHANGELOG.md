@@ -7,6 +7,7 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-09-14
 ### Added
 - **`/spec-loop:ado-intake` — an Azure DevOps Services work-item intake lane, the Jira
   lane's sibling.** Resolves one work-item id read-only through `ado_client.py` (stdlib
@@ -836,7 +837,8 @@ schemas, agents, and internals redesigned; see
   and the `--budget` flag (cost control is structural: caps + bounds; the
   Workflow token ceiling activates when the session sets a token target).
 
-[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.5.1...HEAD
+[Unreleased]: https://github.com/z2297/spec-loop-2/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.6.0
 [2.5.1]: https://github.com/z2297/spec-loop-2/releases/tag/v2.5.1
 [2.5.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.5.0
 [2.4.0]: https://github.com/z2297/spec-loop-2/releases/tag/v2.4.0
