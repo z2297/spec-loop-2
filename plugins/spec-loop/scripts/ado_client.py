@@ -937,53 +937,89 @@ MARKER_DIGEST_RE = re.compile(r"\b[0-9a-f]{12}\b")
 ACTIVE_MARKUP_CHARS = ("<", ">")
 
 
+def _entry_field_errors(item, where):
+    """Error strings for a comment entry missing one of its string fields.
+    Reported before any other check, because every later check indexes one
+    of these keys. (PURE)"""
+    template = "%s.%s is missing or not a string"
+    return [
+        template % (where, key)
+        for key in COMMENT_ENTRY_KEYS
+        if not isinstance(item.get(key), str) or not item.get(key)
+    ]
+
+
+def _entry_kind_errors(item, where):
+    """Error strings for an entry whose kind is not one this lane renders.
+    ado_intake.py builds only the three; anything else did not come from the
+    renderer. (PURE)"""
+    if item["kind"] in COMMENT_KINDS:
+        return []
+    template = "%s.kind %r is not one of %s"
+    kinds = ", ".join(COMMENT_KINDS)
+    return [template % (where, item["kind"], kinds)]
+
+
+def _entry_marker_errors(item, where):
+    """Error strings for a marker that is malformed or is not alone on line 1
+    of the body. (PURE)
+
+    Both halves are load-bearing. The marker must match MARKER_RE because the
+    dedupe gate EXTRACTS markers by regex rather than matching a substring.
+    And it must sit inside the body, on line 1, because the body is what the
+    POST writes: the marker being inside the posted body is exactly what makes
+    it written by, and only by, the call that performs the write, and line 1
+    maximizes its survival under truncation or a rendering change. A body that
+    lost its marker could never be deduped by a later run, so it is refused
+    here rather than posted."""
+    marker, body = item["marker"], item["body"]
+    if not MARKER_RE.fullmatch(marker):
+        template = "%s.marker %r does not match %s"
+        return [template % (where, marker, MARKER_RE.pattern)]
+    if body.splitlines()[0].strip() == marker:
+        return []
+    template = (
+        "%s.body must carry its marker %s alone on line 1; a comment whose "
+        "body lost its marker could never be deduped by a later run")
+    return [template % (where, marker)]
+
+
+def _entry_inertness_errors(body, where):
+    """Error strings for a body that still carries active markup. (PURE)
+
+    The body must be inert whether Azure DevOps stores it as markdown or as
+    HTML, and the Add call cannot declare the format. The renderer escaped
+    '&', '<' and '>' at render time, so a body still carrying '<' or '>' did
+    not come through that escaping and is REFUSED -- see ACTIVE_MARKUP_CHARS
+    for why it is not re-escaped here instead."""
+    found = [char for char in ACTIVE_MARKUP_CHARS if char in body]
+    if not found:
+        return []
+    template = (
+        "%s.body is not inert: it still contains %s. Azure DevOps' Add body "
+        "cannot declare its format, so a body is posted only when '&', '<' "
+        "and '>' were escaped at render time.")
+    chars = " and ".join(repr(char) for char in found)
+    return [template % (where, chars)]
+
+
 def _errors_for_comment_entry(item, index):
     """Error strings for ONE comment entry; [] means valid. (PURE)
 
     Entries come from ado_intake.py render's payload
     ({"kind", "gap_id", "marker", "body"}); this module NEVER builds a marker
-    of its own. Three properties are load-bearing:
-
-      - the marker must match MARKER_RE, because the dedupe gate extracts
-        markers by regex rather than by substring;
-      - the marker must appear inside the body AND on line 1, because the
-        body is what the POST writes -- the marker being inside the posted
-        body is exactly what makes it written by, and only by, the call that
-        performs the write, and line 1 maximizes its survival under
-        truncation or a rendering change;
-      - the body must carry no active markup, so it is inert whether Azure
-        DevOps stores it as markdown or as HTML.
-    """
+    of its own. A missing field short-circuits the rest, because every later
+    check indexes one of the keys it guards."""
     where = "comments[%d]" % index
     if not isinstance(item, dict):
-        return ["%s must be an object with the keys %s"
-                % (where, ", ".join(COMMENT_ENTRY_KEYS))]
-    errors = [
-        "%s.%s is missing or not a string" % (where, key)
-        for key in COMMENT_ENTRY_KEYS
-        if not isinstance(item.get(key), str) or not item.get(key)
-    ]
-    if errors:
-        return errors
-    if item["kind"] not in COMMENT_KINDS:
-        errors.append("%s.kind %r is not one of %s"
-                      % (where, item["kind"], ", ".join(COMMENT_KINDS)))
-    marker, body = item["marker"], item["body"]
-    if not MARKER_RE.fullmatch(marker):
-        errors.append("%s.marker %r does not match %s"
-                      % (where, marker, MARKER_RE.pattern))
-    elif body.splitlines()[0].strip() != marker:
-        errors.append(
-            "%s.body must carry its marker %s alone on line 1; a comment "
-            "whose body lost its marker could never be deduped by a later "
-            "run" % (where, marker))
-    found = [c for c in ACTIVE_MARKUP_CHARS if c in body]
-    if found:
-        errors.append(
-            "%s.body is not inert: it still contains %s. Azure DevOps' Add "
-            "body cannot declare its format, so a body is posted only when "
-            "'&', '<' and '>' were escaped at render time."
-            % (where, " and ".join(repr(c) for c in found)))
+        template = "%s must be an object with the keys %s"
+        return [template % (where, ", ".join(COMMENT_ENTRY_KEYS))]
+    missing = _entry_field_errors(item, where)
+    if missing:
+        return missing
+    errors = _entry_kind_errors(item, where)
+    errors += _entry_marker_errors(item, where)
+    errors += _entry_inertness_errors(item["body"], where)
     return errors
 
 

@@ -1128,8 +1128,8 @@ class TestAPostedBodyMustBeInertAndCarryItsMarker(unittest.TestCase):
         self.assertTrue(any("comments[0]" in e and "marker" in e for e in errors))
 
     def test_a_non_object_entry_is_reported(self):
-        self.assertTrue(any("comments[0]" in e
-                            for e in ac.validate_comment_entries(["x"])))
+        errors = ac.validate_comment_entries(["x"])
+        self.assertTrue(any("comments[0]" in e for e in errors))
 
     def test_a_marker_outside_the_marker_shape_is_refused(self):
         errors = ac.validate_comment_entries([entry("decision", "[nope]")])
@@ -1148,8 +1148,9 @@ class TestAPostedBodyMustBeInertAndCarryItsMarker(unittest.TestCase):
     def test_a_body_carrying_active_markup_is_refused(self):
         for bad in ("<b>x</b>", "a > b", "<script>"):
             with self.subTest(body=bad):
-                errors = ac.validate_comment_entries(
-                    [entry("decision", MARKER_B, body="%s\n\n%s" % (MARKER_B, bad))])
+                body = "%s\n\n%s" % (MARKER_B, bad)
+                entries = [entry("decision", MARKER_B, body=body)]
+                errors = ac.validate_comment_entries(entries)
                 self.assertTrue(any("inert" in e for e in errors), errors)
 
     def test_an_escaped_body_is_accepted(self):
