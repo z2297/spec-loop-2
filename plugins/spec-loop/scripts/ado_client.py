@@ -1335,10 +1335,11 @@ def _assert_target_unchanged(target, fresh, org):
     land one item's refinement on another, and the read-back dedupe gate
     SUCCEEDS on the wrong item (it carries no such marker), so the operator
     would otherwise see a clean success."""
-    assert_same_target(target, record_triple(fresh),
-                       "the freshly resolved work item")
-    assert_same_target(target, (org, target[1], target[2]),
-                       "the organization named by the current ADO_ORG_URL")
+    assert_same_target(
+        target, record_triple(fresh), "the freshly resolved work item")
+    assert_same_target(
+        target, (org, target[1], target[2]),
+        "the organization named by the current ADO_ORG_URL")
     return None
 
 
