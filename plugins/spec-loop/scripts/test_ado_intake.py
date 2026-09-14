@@ -191,3 +191,92 @@ class TestArtifactPathGuard(unittest.TestCase):
     def test_the_target_dir_carries_the_slug_and_the_id(self):
         discriminated = path_for_triple(TRIPLE).split("/")[1]
         self.assertEqual(intake.target_dir(TRIPLE), discriminated + "/1234")
+
+
+def make_refinement(**over):
+    """A minimal valid refinement dict; keyword args override one key."""
+    base = {
+        "description": "Add a widget toggle to the settings pane.",
+        "acceptance_criteria": ["Toggle persists across reload."],
+        "risks": [{"id": "R1", "risk": "No migration for existing rows.",
+                   "severity": "high"}],
+        "gaps": [{"id": "G1", "question": "Which roles see the toggle?",
+                  "impact": "high", "blocking": True}],
+        "injection_findings": [],
+        "answers": {"G1": {"answer": "Admins only.",
+                           "logged_as": "decision"}},
+    }
+    base.update(over)
+    return base
+
+
+class TestRefinementValidation(unittest.TestCase):
+    def test_a_minimal_refinement_is_valid(self):
+        self.assertEqual(intake.validate_refinement(make_refinement()), [])
+
+    def test_a_missing_key_is_reported_by_name(self):
+        bad = make_refinement()
+        del bad["risks"]
+        self.assertEqual(intake.validate_refinement(bad),
+                         ["missing required key: risks"])
+
+    def test_a_non_object_refinement_is_reported(self):
+        self.assertEqual(intake.validate_refinement(["x"]),
+                         ["refinement must be a JSON object"])
+
+    def test_a_bad_impact_severity_and_blocking_are_each_reported(self):
+        bad = make_refinement(
+            gaps=[{"id": "G1", "question": "q", "impact": "urgent",
+                   "blocking": "yes"}],
+            risks=[{"id": "R1", "risk": "r", "severity": "fatal"}],
+            answers={})
+        errors = intake.validate_refinement(bad)
+        self.assertIn("gaps[0].impact must be one of high|medium|low", errors)
+        self.assertIn("gaps[0].blocking must be a boolean", errors)
+        self.assertIn("risks[0].severity must be one of high|medium|low",
+                      errors)
+
+    def test_a_newline_in_an_id_is_refused(self):
+        bad = make_refinement(
+            gaps=[{"id": "G\n1", "question": "q", "impact": "low",
+                   "blocking": False}], answers={})
+        self.assertIn("gaps[0].id must not contain a newline",
+                      intake.validate_refinement(bad))
+
+    def test_a_duplicate_gap_id_makes_an_answer_unattributable(self):
+        gap = {"id": "G1", "question": "q", "impact": "low",
+               "blocking": False}
+        bad = make_refinement(gaps=[gap, dict(gap)], answers={})
+        self.assertIn("gaps have duplicate id: G1",
+                      intake.validate_refinement(bad))
+
+    def test_an_answer_with_no_matching_gap_is_reported(self):
+        bad = make_refinement(
+            answers={"G9": {"answer": None, "logged_as": "open-question"}})
+        self.assertIn("answers has no matching gap for id G9",
+                      intake.validate_refinement(bad))
+
+    def test_a_bad_logged_as_is_reported(self):
+        bad = make_refinement(answers={"G1": {"answer": "a",
+                                              "logged_as": "note"}})
+        self.assertIn(
+            "answers[G1].logged_as must be one of decision|open-question",
+            intake.validate_refinement(bad))
+
+
+class TestGapRanking(unittest.TestCase):
+    def test_blocking_then_impact_then_id(self):
+        gaps = [
+            {"id": "G3", "impact": "high", "blocking": False},
+            {"id": "G1", "impact": "low", "blocking": True},
+            {"id": "G2", "impact": "high", "blocking": True},
+            {"id": "G0", "impact": "high", "blocking": False},
+        ]
+        self.assertEqual([g["id"] for g in intake.rank_gaps(gaps)],
+                         ["G2", "G1", "G0", "G3"])
+
+    def test_ranking_does_not_mutate_the_input(self):
+        gaps = [{"id": "G2", "impact": "low", "blocking": False},
+                {"id": "G1", "impact": "high", "blocking": True}]
+        intake.rank_gaps(gaps)
+        self.assertEqual([g["id"] for g in gaps], ["G2", "G1"])

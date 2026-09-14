@@ -267,6 +267,179 @@ def artifact_path(triple, artifact_root):
     return path
 
 
+IMPACT_ORDER = {"high": 0, "medium": 1, "low": 2}
+LOGGED_AS_VALUES = ("decision", "open-question")
+REFINEMENT_KEYS = ("description", "acceptance_criteria", "risks", "gaps",
+                   "injection_findings", "answers")
+
+
+_ID_FORBIDDEN = ("\n", "\r")
+
+
+def _errors_for_id_newline(value, where):
+    """Error strings for an id containing a line break. (PURE)
+
+    risks[].id and gaps[].id are emitted inline into the artifact body
+    WITHOUT escaping, so a multi-line id can put a third line equal to
+    '---' into the file and forge the front-matter delimiter. An id is
+    also a dict key in `answers` and a component of `comment_marker`, so
+    it is refused rather than rewritten."""
+    if not isinstance(value, str):
+        return []
+    if any(bad in value for bad in _ID_FORBIDDEN):
+        return ["%s.id must not contain a newline" % where]
+    return []
+
+
+def _errors_for_gap(gap, index):
+    """Error strings for ONE gap entry. (PURE)"""
+    where = "gaps[%d]" % index
+    if not isinstance(gap, dict):
+        return ["%s must be an object" % where]
+    errors = []
+    for field in ("id", "question"):
+        if not isinstance(gap.get(field), str) or not gap.get(field):
+            errors.append("%s.%s must be a non-empty string" % (where, field))
+    errors += _errors_for_id_newline(gap.get("id"), where)
+    if gap.get("impact") not in IMPACT_ORDER:
+        errors.append("%s.impact must be one of high|medium|low" % where)
+    if not isinstance(gap.get("blocking"), bool):
+        errors.append("%s.blocking must be a boolean" % where)
+    return errors
+
+
+def _errors_for_risk(risk, index):
+    """Error strings for ONE risk entry. (PURE)"""
+    where = "risks[%d]" % index
+    if not isinstance(risk, dict):
+        return ["%s must be an object" % where]
+    errors = []
+    for field in ("id", "risk"):
+        if not isinstance(risk.get(field), str) or not risk.get(field):
+            errors.append("%s.%s must be a non-empty string" % (where, field))
+    errors += _errors_for_id_newline(risk.get("id"), where)
+    if risk.get("severity") not in IMPACT_ORDER:
+        errors.append("%s.severity must be one of high|medium|low" % where)
+    return errors
+
+
+def _errors_for_one_answer(gap_id, entry, gap_ids):
+    """Error strings for ONE answers-map entry, keyed by gap id. (PURE)"""
+    if gap_id not in gap_ids:
+        return ["answers has no matching gap for id %s" % gap_id]
+    if not isinstance(entry, dict):
+        return ["answers[%s] must be an object" % gap_id]
+    errors = []
+    if entry.get("logged_as") not in LOGGED_AS_VALUES:
+        errors.append(
+            "answers[%s].logged_as must be one of decision|open-question"
+            % gap_id)
+    answer = entry.get("answer")
+    if answer is not None and not isinstance(answer, str):
+        errors.append("answers[%s].answer must be a string or null" % gap_id)
+    return errors
+
+
+def _errors_for_answers(answers, gap_ids):
+    """Error strings for the answers map, keyed by gap id. (PURE)"""
+    if not isinstance(answers, dict):
+        return ["answers must be an object keyed by gap id"]
+    errors = []
+    for gap_id, entry in sorted(answers.items()):
+        errors += _errors_for_one_answer(gap_id, entry, gap_ids)
+    return errors
+
+
+def _errors_for_str_list(value, name):
+    """Error strings for a list-of-non-empty-strings field. (PURE)"""
+    if not isinstance(value, list):
+        return ["%s must be a list of strings" % name]
+    return ["%s[%d] must be a non-empty string" % (name, i)
+            for i, item in enumerate(value)
+            if not isinstance(item, str) or not item]
+
+
+def _typed_list(value, name, errors):
+    """Return `value` as a list, else [] plus a type error on `errors`. (PURE
+    in its return; appends to the caller's error list as a side effect, the
+    same shape validate_refinement's own accumulator already uses.)"""
+    if isinstance(value, list):
+        return value
+    errors.append("%s must be a list" % name)
+    return []
+
+
+def _errors_for_entries(entries, error_fn):
+    """Flatten one error-list-per-entry field down to a single list. (PURE)"""
+    errors = []
+    for index, entry in enumerate(entries):
+        errors += error_fn(entry, index)
+    return errors
+
+
+def _missing_keys(refinement):
+    """Required refinement keys absent from `refinement`, in REFINEMENT_KEYS
+    order. (PURE)"""
+    return [key for key in REFINEMENT_KEYS if key not in refinement]
+
+
+def _duplicate_gap_id_errors(gaps):
+    """Error strings for gap ids used more than once, in first-seen order.
+    (PURE)
+
+    answers is keyed by gap id, so a repeated id makes an answer
+    unattributable: both gaps resolve to the same entry. A gap with no
+    usable id is already reported by _errors_for_gap, so it is skipped here
+    rather than folded to a shared None sentinel."""
+    seen = set()
+    errors = []
+    for gap in gaps:
+        gap_id = gap.get("id") if isinstance(gap, dict) else None
+        if not isinstance(gap_id, str) or not gap_id:
+            continue
+        if gap_id in seen:
+            errors.append("gaps have duplicate id: %s" % gap_id)
+        seen.add(gap_id)
+    return errors
+
+
+def validate_refinement(refinement):
+    """Return a list of human-readable error strings; [] means valid. (PURE)"""
+    if not isinstance(refinement, dict):
+        return ["refinement must be a JSON object"]
+    missing_keys = _missing_keys(refinement)
+    if missing_keys:
+        return ["missing required key: %s" % key for key in missing_keys]
+    errors = []
+    description = refinement["description"]
+    if not isinstance(description, str) or not description:
+        errors.append("description must be a non-empty string")
+    errors += _errors_for_str_list(
+        refinement["acceptance_criteria"], "acceptance_criteria")
+    errors += _errors_for_str_list(
+        refinement["injection_findings"], "injection_findings")
+    gaps = _typed_list(refinement["gaps"], "gaps", errors)
+    risks = _typed_list(refinement["risks"], "risks", errors)
+    errors += _errors_for_entries(gaps, _errors_for_gap)
+    errors += _errors_for_entries(risks, _errors_for_risk)
+    errors += _duplicate_gap_id_errors(gaps)
+    gap_ids = {g.get("id") for g in gaps if isinstance(g, dict)}
+    errors += _errors_for_answers(refinement["answers"], gap_ids)
+    return errors
+
+
+def _gap_sort_key(gap):
+    """Total, deterministic ordering key for one gap. (PURE)"""
+    return (0 if gap.get("blocking") else 1,
+            IMPACT_ORDER.get(gap.get("impact"), len(IMPACT_ORDER)),
+            str(gap.get("id")))
+
+
+def rank_gaps(gaps):
+    """Blocking first, then impact, then id. Returns a new list. (PURE)"""
+    return sorted(list(gaps), key=_gap_sort_key)
+
+
 def main(argv=None):
     """Placeholder until the render subcommand lands (slice a3, task 8)."""
     raise NotImplementedError
