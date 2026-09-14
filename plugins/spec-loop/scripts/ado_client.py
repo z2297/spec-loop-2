@@ -1129,7 +1129,9 @@ def plan_comments(entries, tokens):
 # org and a project that come from OUTSIDE the id, so item 1234 exists in every
 # org and project -- a hazard Jira's self-describing ABC-123 key cannot even
 # express. The record names one triple, the rendered comments payload names the
-# triple it was rendered FOR, and the write happens only where the two agree.
+# triple it was rendered FOR, and agreed_target refuses unless the two are
+# EQUAL -- it is pure, so the comment lane can run it before it reads a
+# credential or issues a request.
 TRIPLE_FIELDS = ("org", "project", "id")
 PAYLOAD_TRIPLE_FIELDS = ("work_item_org", "work_item_project", "work_item_id")
 
@@ -1196,8 +1198,7 @@ def payload_triple(payload):
     comments array carries no triple and is refused here: the target must come
     from the rendered payload and the resolved record, never from ambient
     environment addressing."""
-    return _triple_from(payload, PAYLOAD_TRIPLE_FIELDS,
-                        _payload_triple_error)
+    return _triple_from(payload, PAYLOAD_TRIPLE_FIELDS, _payload_triple_error)
 
 
 def assert_same_target(expected, actual, what):

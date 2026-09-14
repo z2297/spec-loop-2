@@ -1257,18 +1257,33 @@ class TestTheDedupeGateExtractsMarkersIntoASet(unittest.TestCase):
 
 
 def ado_record(org="contoso", project="My Team", work_item_id="1234"):
-    return {"org": org, "project": project, "id": work_item_id,
-            "web_url": "https://dev.azure.com/contoso/_workitems/edit/1234",
-            "title": "T", "work_item_type": "Bug", "state": "Active",
-            "comments": []}
+    """One resolve record, as resolve_work_item returns it."""
+    return {
+        "org": org,
+        "project": project,
+        "id": work_item_id,
+        "web_url": "https://dev.azure.com/contoso/_workitems/edit/1234",
+        "title": "T",
+        "work_item_type": "Bug",
+        "state": "Active",
+        "comments": [],
+    }
 
 
-def render_payload(org="contoso", project="My Team", work_item_id="1234",
-                   comments=None):
-    return {"ok": True, "work_item_org": org, "work_item_project": project,
-            "work_item_id": work_item_id, "posted": False,
-            "comments": comments if comments is not None
-            else [entry("understanding", MARKER_A)]}
+def render_payload(
+        org="contoso", project="My Team", work_item_id="1234", comments=None):
+    """The whole payload object ado_intake.py render prints, which carries the
+    (org, project, id) triple the comments were rendered FOR."""
+    if comments is None:
+        comments = [entry("understanding", MARKER_A)]
+    return {
+        "ok": True,
+        "work_item_org": org,
+        "work_item_project": project,
+        "work_item_id": work_item_id,
+        "posted": False,
+        "comments": comments,
+    }
 
 
 class TestTheWriteRefusesAWrongTarget(unittest.TestCase):
@@ -1280,9 +1295,8 @@ class TestTheWriteRefusesAWrongTarget(unittest.TestCase):
     operator would see a clean success. There is no comment-delete lane."""
 
     def test_the_agreed_target_is_the_triple_both_sides_name(self):
-        self.assertEqual(
-            ac.agreed_target(ado_record(), render_payload()),
-            ("contoso", "My Team", "1234"))
+        target = ac.agreed_target(ado_record(), render_payload())
+        self.assertEqual(target, ("contoso", "My Team", "1234"))
 
     def test_a_payload_naming_another_org_is_refused(self):
         with self.assertRaises(ac.AdoError) as ctx:
@@ -1327,11 +1341,13 @@ class TestTheWriteRefusesAWrongTarget(unittest.TestCase):
             ac.payload_triple(render_payload(work_item_id="12/comments"))
 
     def test_assert_same_target_names_both_sides_and_prefers_neither(self):
+        what = "the freshly resolved work item"
+        expected = ("contoso", "A", "1")
+        actual = ("contoso", "B", "1")
         with self.assertRaises(ac.AdoError) as ctx:
-            ac.assert_same_target(("contoso", "A", "1"), ("contoso", "B", "1"),
-                                  "the freshly resolved work item")
+            ac.assert_same_target(expected, actual, what)
         message = str(ctx.exception)
-        self.assertIn("the freshly resolved work item", message)
+        self.assertIn(what, message)
         self.assertIn("'A'", message)
         self.assertIn("'B'", message)
 
