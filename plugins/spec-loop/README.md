@@ -165,9 +165,10 @@ sidecar closed rather than reading as clean.
   verifier, runbook-writer, peer-reviewer, slice-worker-fallback.
 - **Skills (5)**: escalation-gate, using-spec-loop, test-driven-development,
   systematic-debugging, verification-before-completion.
-- **Scripts (14 runtime + tests)**: dag, worktrees, run_state, redispatch, review_package,
+- **Scripts (15 runtime + tests)**: dag, worktrees, run_state, redispatch, review_package,
   quality_gate, knowledge_graph, run_metrics, pr_resolver, jira_client, jira_intake,
-  spec_loop_guard, dashboard_server, dashboard_launcher (+ dashboard_assets, and the
+  ado_intake, spec_loop_guard, dashboard_server, dashboard_launcher
+  (+ dashboard_assets, and the
   `slice_wave_contract_base` and `slice_wave_contract_radius_driver`
   test-support modules, which back six Node harness modules:
   `slice_wave_accepted`, `slice_wave_behaviour`, `slice_wave_radius`,
