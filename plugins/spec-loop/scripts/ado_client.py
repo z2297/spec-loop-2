@@ -1691,7 +1691,11 @@ def build_parser():
     resolved record and the rendered comments payload agreeing, never from a
     flag."""
     parser = argparse.ArgumentParser(
-        description="Azure DevOps Services work-item reader (read-only).")
+        description=(
+            "Azure DevOps Services work-item reader, plus ONE bounded "
+            "writer: `resolve` is read-only, and `comment` previews the "
+            "intake comments by default and adds them only when armed "
+            "with --post."))
     sub = parser.add_subparsers(dest="command", required=True)
     resolve = sub.add_parser(
         "resolve",
