@@ -197,8 +197,13 @@ the tool set and this section exact.
    You own the clock: pass the timestamp; the script never reads one. Exit 0 prints one JSON
    object with `ok`, `work_item_org`, `work_item_project`, `work_item_id`, `artifact_path`,
    `artifact`, `comments`, `ranked_gaps`, and `posted` (always `false` — this script never
-   posts; posting is Step 8's separate script). Exit 1 prints `{"ok": false, "errors": [...]}`
-   on stdout — the refinement failed validation, so fix the refinement and re-run the render.
+   posts; posting is Step 8's separate script). Exit 1 prints `{"ok": false, "errors": [...]}` on stdout, and it has **two possible
+   causes**: the `--record` file failed validation, which is checked **first**, or the
+   `--refinement` object failed validation. **Surface the `errors` array verbatim** and read it
+   to tell them apart — a record error means the wrong or a corrupted `<tmp>/record.json` was
+   passed and the fix is to re-resolve the work item (Step 2), while a refinement error means
+   the refinement object needs fixing and the render re-run. Do not assume the refinement is
+   at fault.
    Exit 2 prints the message alone on **stderr**: this script adds no prefix of its own the
    way `ado_client.py` does, though every one of its usage messages already begins with
    `error: `. That is a usage failure — surface it and stop. Save this **whole payload object** verbatim to `<tmp>/payload.json`;
