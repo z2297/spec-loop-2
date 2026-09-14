@@ -1640,6 +1640,127 @@ class TestTheResultsMergePreservesTheRequestedOrder(unittest.TestCase):
         self.assertEqual(results[0]["comment_id"], "9")
 
 
+class TestTheCommentSubcommandIsOffByDefault(unittest.TestCase):
+    def _files(self, tmp, record, payload):
+        record_path = Path(tmp) / "record.json"
+        comments_path = Path(tmp) / "comments.json"
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+        comments_path.write_text(json.dumps(payload), encoding="utf-8")
+        return str(record_path), str(comments_path)
+
+    def test_the_parser_arms_the_write_only_with_post(self):
+        parser = ac.build_parser()
+        args = parser.parse_args(
+            ["comment", "--record", "r.json", "--comments", "c.json"])
+        self.assertFalse(args.post)
+        armed = parser.parse_args(
+            ["comment", "--record", "r.json", "--comments", "c.json", "--post"])
+        self.assertTrue(armed.post)
+
+    def test_the_comment_subcommand_takes_exactly_three_options(self):
+        parser = ac.build_parser()
+        actions = [a for a in parser._actions
+                   if isinstance(a, argparse._SubParsersAction)]
+        options = {opt for action in actions[0].choices["comment"]._actions
+                   for opt in action.option_strings}
+        self.assertEqual(options - {"-h", "--help"},
+                         {"--record", "--comments", "--post"})
+
+    def test_there_is_no_id_flag_so_the_target_comes_from_the_record(self):
+        parser = ac.build_parser()
+        actions = [a for a in parser._actions
+                   if isinstance(a, argparse._SubParsersAction)]
+        options = {opt for action in actions[0].choices["comment"]._actions
+                   for opt in action.option_strings}
+        self.assertNotIn("--id", options)
+
+    def test_the_lane_runs_unarmed_through_the_cli(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            record_path, comments_path = self._files(
+                tmp, ado_record(), render_payload())
+            with mock.patch.object(ac, "run_comment_lane",
+                                   return_value={"ok": True}) as lane, \
+                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                code = ac.main(["comment", "--record", record_path,
+                                "--comments", comments_path])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue()), {"ok": True})
+        target, entries, arm = lane.call_args.args
+        self.assertEqual(target, ("contoso", "My Team", "1234"))
+        self.assertEqual(entries[0]["marker"], MARKER_A)
+        self.assertFalse(arm)
+
+    def test_post_passes_the_arm_flag_through(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            record_path, comments_path = self._files(
+                tmp, ado_record(), render_payload())
+            with mock.patch.object(ac, "run_comment_lane",
+                                   return_value={"ok": True}) as lane, \
+                 mock.patch("sys.stdout", new_callable=io.StringIO):
+                ac.main(["comment", "--record", record_path,
+                         "--comments", comments_path, "--post"])
+        self.assertTrue(lane.call_args.args[2])
+
+    def test_an_unreadable_file_is_exit_two_and_never_reaches_the_network(self):
+        with mock.patch.object(ac, "_http_post") as post, \
+             mock.patch.object(ac, "_http_get") as get, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            code = ac.main(["comment", "--record", "/nonexistent/r.json",
+                            "--comments", "/nonexistent/c.json"])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read", err.getvalue())
+        post.assert_not_called()
+        get.assert_not_called()
+
+    def test_malformed_json_is_exit_two(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.json"
+            path.write_text("{not json", encoding="utf-8")
+            with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                code = ac.main(["comment", "--record", str(path),
+                                "--comments", str(path)])
+        self.assertEqual(code, 2)
+        self.assertIn("not valid JSON", err.getvalue())
+
+    def test_a_mismatched_pair_refuses_before_any_request(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            record_path, comments_path = self._files(
+                tmp, ado_record(), render_payload(org="fabrikam"))
+            with mock.patch.object(ac, "credentials") as creds, \
+                 mock.patch.object(ac, "_http_get") as get, \
+                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                code = ac.main(["comment", "--record", record_path,
+                                "--comments", comments_path, "--post"])
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(out.getvalue())["ok"])
+        creds.assert_not_called()
+        get.assert_not_called()
+
+
+class TestTheDocstringStatesTheWriteBoundary(unittest.TestCase):
+    """The module docstring is load-bearing prose on a mutating lane: it must
+    name the bound and must not claim a property this repo has not verified."""
+
+    def test_it_names_the_one_write_and_the_off_by_default_rule(self):
+        doc = ac.__doc__
+        for phrase in ("--post", "one work-item comment", "_http_post"):
+            self.assertIn(phrase, doc)
+
+    def test_it_does_not_overclaim_the_round_trip(self):
+        doc = ac.__doc__.lower()
+        for overclaim in ("guarantees the marker survives",
+                          "re-run this command to recover",
+                          "verified against a live"):
+            self.assertNotIn(overclaim, doc)
+
+    def test_it_still_states_the_read_lanes_structural_guarantee(self):
+        self.assertIn("no `data` parameter", ac.__doc__)
+
+
 class TestMain(unittest.TestCase):
     ENV = {"ADO_ORG_URL": "https://dev.azure.com/contoso", "ADO_PAT": "tok"}
 

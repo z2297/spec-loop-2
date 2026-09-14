@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Azure DevOps Services work-item reader (stdlib only, READ-ONLY).
+"""Azure DevOps Services work-item reader with ONE bounded comment writer (stdlib only).
 
 Resolves one Azure DevOps work-item id to a normalized JSON record (org,
 project, id, web url, title, work item type, state, the HTML description
 rendered to text, acceptance criteria with the source that won, repro
 steps, and the full paginated comment list). Authenticates with HTTP Basic
 auth built from an EMPTY username and the PAT in ADO_PAT, against the org
-named by ADO_ORG_URL.
+named by ADO_ORG_URL. Also previews -- and, only under an explicit --post,
+adds -- the spec-loop intake comments on one work item.
 
 Design decisions:
   - Mirrors plugins/spec-loop/scripts/jira_client.py's transport doctrine by
@@ -98,6 +99,52 @@ Design decisions:
   - No subprocess, no filesystem writes, and no clock read anywhere in this
     module: the controller owns the clock. Azure DevOps' own createdDate /
     modifiedDate strings are echoed verbatim.
+  - THE WRITE IS OFF BY DEFAULT AND BOUNDED TO ONE VERB. `comment` previews
+    by default, issuing GETs only; `--post` is the only thing that arms the
+    HTTP verb. _http_post is the module's SOLE writer and adds one work-item comment
+    and nothing else: no state transition, no field edit or PATCH, no
+    assignee change, no work-item or child creation, no relation/link edit,
+    no attachment, no comment edit, no comment delete, no reaction. It is a
+    SEPARATE function from _http_get, which still takes no `data` parameter
+    and no `method` parameter -- that absence is the read lane's proof, so
+    the writer is added beside it rather than by widening it.
+  - THE WRONG-TARGET WRITE IS THE WRITE LANE'S DEFINING HAZARD. An Azure
+    DevOps work item is a bare integer plus an org and a project that come
+    from outside the id, so item 1234 exists in every org: if the org
+    changed between the preview and the armed post, the lane would put one
+    item's refinement on another AND the read-back dedupe gate would report a
+    clean success, with no comment-delete lane to retract it. So the comments
+    payload carries the (org, project, id) triple it was rendered for, the
+    record carries its own, both must agree BEFORE any credential is read,
+    and the armed lane then re-resolves the work item and refuses unless the
+    triple matches the fresh one and the org matches the current ADO_ORG_URL.
+    The target is never taken from a flag.
+  - IN-BATCH DUPLICATES ARE REFUSED AT VALIDATION, before the first request.
+    The read-back gate compares each entry to the work item and never to its
+    siblings, so two identical entries in one batch would both plan as
+    not-already-posted, both post, and collapse onto one reported comment id.
+  - THE DEDUPE GATE EXTRACTS MARKERS BY REGEX INTO A SET -- never a substring
+    scan -- from the stored `text` UNIONed with its html_to_text rendering,
+    and never from `renderedText`. The two sides of the union differ where it
+    matters: a marker forged inside an HTML comment is invisible to the
+    walker and visible in the raw text. A bare 12-hex digest matches as a
+    second tier, because suppression is the fail-safe direction.
+  - THE MARKER LIVES INSIDE THE POSTED BODY, so the one call that writes the
+    comment writes the marker: no local file is ever the dedupe gate and a
+    fresh clone cannot double-post. The work item is read ONCE PER
+    INVOCATION, not before every individual write.
+  - THE POSTED BODY MUST BE INERT. ADO's Add body carries only `text` and
+    there is no documented way to assert its `format`, so a body is posted
+    only when '&', '<' and '>' were already escaped at render time; a body
+    still carrying '<' or '>' is REFUSED rather than re-escaped, since
+    re-escaping would double-encode a legitimate '&amp;'. This module
+    guarantees only that the body contains no active markup -- it cannot
+    control how Azure DevOps interprets the body.
+  - NOT VERIFIED HERE: the marker's byte-survival across the write/read
+    api-version asymmetry (POST 7.0-preview.3, read back 7.1-preview.4) is an
+    assumption no faked-transport test can close; it needs one live round
+    trip. And a partial batch failure is disclosed, not recoverable by
+    re-running: an edited refinement renders a different marker.
 
 SECURITY: the work-item id and every Azure DevOps text field (title,
 description, acceptance criteria, repro steps, every comment body) are
@@ -118,6 +165,12 @@ Exit codes: 0 = ok; 1 = contract failure; 2 = usage / unreadable input
 Usage:
     ADO_ORG_URL=https://dev.azure.com/contoso ADO_PAT=... \\
         python3 scripts/ado_client.py resolve --id 1234
+    ADO_ORG_URL=https://dev.azure.com/contoso ADO_PAT=... \\
+        python3 scripts/ado_client.py comment --record record.json \\
+        --comments comments.json          # previews; posts nothing
+    ADO_ORG_URL=https://dev.azure.com/contoso ADO_PAT=... \\
+        python3 scripts/ado_client.py comment --record record.json \\
+        --comments comments.json --post   # ARMS the one bounded write
 """
 
 from __future__ import annotations
@@ -133,6 +186,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
+from pathlib import Path
 
 
 class AdoError(Exception):
@@ -1529,15 +1583,50 @@ def resolve_work_item(work_item_id):
     return record
 
 
+def _load_json_file(path, what):
+    """Read one JSON file, mapping any read or parse failure to a usage error
+    the caller can fix. No credential is read and no request is issued before
+    this succeeds."""
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AdoUsageError(
+            f"cannot read the {what} file {path}: {exc}") from exc
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        raise AdoUsageError(
+            f"the {what} file {path} is not valid JSON: {exc}") from exc
+
+
+def _comment_payload(args):
+    """Load the resolved record and the rendered comments, agree on ONE target
+    triple, and run the comment lane.
+
+    THE TARGET COMES FROM THE RESOLVED RECORD AND THE RENDERED PAYLOAD, never
+    from ambient environment addressing and never from a flag: there is no
+    --id, no --project and no --org on this subcommand. The two files must
+    name the same (org, project, id) or the lane refuses -- before a
+    credential is read and before the first request."""
+    record = _load_json_file(args.record, "record")
+    payload = _load_json_file(args.comments, "comments")
+    target = agreed_target(record, payload)
+    entries = payload.get("comments") if isinstance(payload, dict) else None
+    return run_comment_lane(target, entries, args.post)
+
+
 def build_parser():
-    """Build the CLI parser. The read lane exposes exactly one subcommand,
-    `resolve --id`, and it issues no write.
+    """Build the CLI parser. The read lane exposes `resolve --id`, which
+    issues no write, and the write lane exposes `comment`, which previews by
+    default and issues its one bounded POST only under --post.
 
     There is deliberately NO credential flag and NO --project flag on any
     subcommand: credentials are read from the environment only, so they
     cannot appear on a command line that `ps` can see, and the project is
     read from the work item's own System.TeamProject, so a flag could only
-    disagree with it."""
+    disagree with it. `comment` also has no --id: its target comes from the
+    resolved record and the rendered comments payload agreeing, never from a
+    flag."""
     parser = argparse.ArgumentParser(
         description="Azure DevOps Services work-item reader (read-only).")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1547,11 +1636,33 @@ def build_parser():
     resolve.add_argument(
         "--id", required=True, dest="work_item_id",
         help="Azure DevOps work-item id, e.g. 1234.")
+    comment = sub.add_parser(
+        "comment",
+        help=("Preview the spec-loop intake comments for one work item -- "
+              "or, with --post, actually add them."))
+    comment.add_argument(
+        "--record", required=True,
+        help=("path to this module's `resolve` output (JSON). The write "
+              "target comes from this record, never from the environment "
+              "alone."))
+    comment.add_argument(
+        "--comments", required=True,
+        help=("path to the whole payload object printed by ado_intake.py "
+              "render, which carries both the comment bodies and the "
+              "(org, project, id) triple they were rendered for"))
+    comment.add_argument(
+        "--post", action="store_true",
+        help=("ARM THE WRITE. Without this flag nothing is posted: the lane "
+              "issues GETs only and reports what it would post."))
     return parser
 
 
 def _dispatch(args):
-    """Run the requested subcommand and return the object to print."""
+    """Run the requested subcommand and return the object to print. The
+    comment lane is reached only through its own subcommand, and it previews
+    unless args.post armed it."""
+    if args.command == "comment":
+        return _comment_payload(args)
     return resolve_work_item(args.work_item_id)
 
 
