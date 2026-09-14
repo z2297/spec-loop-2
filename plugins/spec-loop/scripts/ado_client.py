@@ -1062,6 +1062,69 @@ def validate_comment_entries(entries):
     return _duplicate_marker_errors(entries)
 
 
+def marker_tokens(text):
+    """Every dedupe token visible in one blob of text, as a SET. (PURE)
+
+    Two tiers: the full marker, and the bare 12-hex digest as a standalone
+    token. EXTRACTION, NOT SUBSTRING MATCHING: pulling tokens out and
+    comparing sets survives HTML wrapping ('<div>[marker]</div>'), whitespace
+    and newline normalization, and entity-escaping of NEIGHBOURING characters
+    -- the plausible mutations across the write/read api-version asymmetry
+    (POST 7.0-preview.3, read back 7.1-preview.4). The second tier strictly
+    increases suppression, which is the FAIL-SAFE direction: a false
+    suppression skips a write, a false miss duplicates a comment on a live
+    work item that this connector has no lane to delete."""
+    return set(MARKER_RE.findall(text)) | set(MARKER_DIGEST_RE.findall(text))
+
+
+def comment_haystack_tokens(comments):
+    """The dedupe token set for a work item's FULL comment history. (PURE)
+
+    THE HAYSTACK IS THE STORED `text`, UNIONED WITH ITS html_to_text
+    RENDERING -- and never the optional HTML *rendering* Azure DevOps can
+    return alongside it, which a renderer may entity-encode or strip (see
+    _comment_text, which is where that field is refused as a data source).
+    Both sides of this union fail safe, and they differ exactly where it
+    matters: a marker forged inside an HTML comment is INVISIBLE to the
+    walker (which drops comments) and VISIBLE in the raw text, while a marker
+    split across markup is visible to the walker.
+
+    A comment with no usable `text` RAISES rather than contribute nothing:
+    silently shrinking the haystack is the failure mode that double-posts on
+    every run. (_comment_text already enforces this on the read path; this
+    call re-asserts it because the entries arrive here as plain dicts.)"""
+    tokens = set()
+    for raw in comments:
+        if not isinstance(raw, dict):
+            raise AdoError(_MISSING_TEXT_MSG)
+        text = _comment_text(raw)
+        tokens |= marker_tokens(text)
+        tokens |= marker_tokens(html_to_text(text))
+    return tokens
+
+
+def plan_comments(entries, tokens):
+    """Decide, per entry, whether it is already on the work item. (PURE)
+
+    `tokens` comes from comment_haystack_tokens over the work item's FULL
+    paginated comment list, read back over the network -- THE WORK ITEM'S OWN
+    COMMENT LIST IS THE DEDUPE GATE, never a local file, so a fresh clone
+    cannot double-post. An entry whose marker (or whose bare digest) is
+    already in the set is reported as already-posted rather than posted again
+    or silently dropped. IN-BATCH duplicates are not this function's job:
+    validate_comment_entries refuses them before the lane gets here, because
+    this gate compares each entry to the work item and never to its
+    siblings."""
+    planned = []
+    for item in entries:
+        marker = item["marker"]
+        digest = marker[-13:-1]
+        planned.append({
+            "kind": item["kind"], "marker": marker,
+            "already_posted": marker in tokens or digest in tokens})
+    return planned
+
+
 # A rendered heading is either html_to_text's HEADING_PREFIX (from an <h1>-<h6>
 # tag) or a bare 'Acceptance Criteria:' line, which is how the section is
 # commonly styled with <b>. KNOWN LOSSINESS, stated rather than claimed away: a

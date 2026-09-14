@@ -1186,6 +1186,76 @@ class TestAPostedBodyMustBeInertAndCarryItsMarker(unittest.TestCase):
         self.assertFalse(any("duplicates" in e for e in errors))
 
 
+class TestTheDedupeGateExtractsMarkersIntoASet(unittest.TestCase):
+    """Extract-and-compare-SETS, never substring, and over the raw stored
+    `text` UNIONed with its html_to_text rendering -- never the optional HTML
+    rendering ADO can return under $expand."""
+
+    def _comment(self, text):
+        return {"id": "1", "author": "a", "created": "", "modified": "",
+                "text": text}
+
+    def test_a_marker_wrapped_in_html_is_still_found(self):
+        tokens = ac.comment_haystack_tokens(
+            [self._comment("<div>%s</div>\n<p>body</p>" % MARKER_A)])
+        self.assertIn(MARKER_A, tokens)
+
+    def test_a_marker_forged_inside_an_html_comment_is_found_via_raw_text(self):
+        """html_to_text drops HTML comments, so the walker alone is blind to
+        this one; the raw `text` side of the union sees it. Suppression is the
+        fail-safe direction: a false suppression skips a write, a false miss
+        duplicates a comment on a live work item."""
+        raw = "<!-- %s -->\nvisible" % MARKER_A
+        self.assertNotIn(MARKER_A, ac.html_to_text(raw))
+        self.assertIn(MARKER_A, ac.comment_haystack_tokens([self._comment(raw)]))
+
+    def test_an_entity_escaped_neighbour_does_not_hide_the_marker(self):
+        raw = "%s &amp; more" % MARKER_A
+        self.assertIn(MARKER_A, ac.comment_haystack_tokens([self._comment(raw)]))
+
+    def test_the_bare_digest_alone_suppresses_as_the_second_tier(self):
+        digest = MARKER_A[-13:-1]
+        tokens = ac.comment_haystack_tokens(
+            [self._comment("wrapper rewritten, digest kept: %s" % digest)])
+        plan = ac.plan_comments([entry("understanding", MARKER_A)], tokens)
+        self.assertTrue(plan[0]["already_posted"])
+
+    def test_an_unrelated_comment_does_not_suppress(self):
+        tokens = ac.comment_haystack_tokens([self._comment("ordinary chatter")])
+        plan = ac.plan_comments([entry("understanding", MARKER_A)], tokens)
+        self.assertFalse(plan[0]["already_posted"])
+
+    def test_the_gate_never_consults_rendered_text(self):
+        """Pinned in a named test so a later change cannot repoint the gate at
+        the optional HTML rendering: a marker an HTML renderer altered would go
+        unmatched, every entry would plan as not-already-posted, and the lane
+        would post again on a live work item."""
+        for fn in (ac.comment_haystack_tokens, ac.marker_tokens,
+                   ac.plan_comments):
+            with self.subTest(fn=fn.__name__):
+                self.assertNotIn("renderedText", inspect.getsource(fn))
+
+    def test_a_comment_without_text_fails_closed_rather_than_shrink_the_haystack(self):
+        for bad in ({"id": "1"}, {"id": "1", "text": ""},
+                    {"id": "1", "text": None}, "not a comment"):
+            with self.subTest(comment=bad):
+                with self.assertRaises(ac.AdoError):
+                    ac.comment_haystack_tokens([bad])
+
+    def test_an_empty_history_yields_an_empty_token_set(self):
+        self.assertEqual(ac.comment_haystack_tokens([]), set())
+
+    def test_plan_preserves_order_and_reports_each_entry(self):
+        tokens = ac.comment_haystack_tokens([self._comment(MARKER_B)])
+        plan = ac.plan_comments(
+            [entry("understanding", MARKER_A), entry("decision", MARKER_B)],
+            tokens)
+        self.assertEqual([p["marker"] for p in plan], [MARKER_A, MARKER_B])
+        self.assertEqual([p["already_posted"] for p in plan], [False, True])
+        self.assertEqual([p["kind"] for p in plan],
+                         ["understanding", "decision"])
+
+
 class TestMain(unittest.TestCase):
     ENV = {"ADO_ORG_URL": "https://dev.azure.com/contoso", "ADO_PAT": "tok"}
 
