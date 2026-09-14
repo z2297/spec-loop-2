@@ -18,6 +18,7 @@ Usage:
 
 import argparse
 import base64
+import contextlib
 import inspect
 import io
 import json
@@ -721,3 +722,219 @@ class TestTheDedupeHaystackComesFromStoredTextOnly(unittest.TestCase):
         source = inspect.getsource(ac)
         self.assertNotIn('"renderedText"', source)
         self.assertNotIn("'renderedText'", source)
+
+
+class TestAcceptanceCriteriaResolveInAFixedOrder(unittest.TestCase):
+    def test_the_field_wins_when_present_and_non_empty(self):
+        fields = {ac.FIELD_ACCEPTANCE_CRITERIA: "<ul><li>it spins</li></ul>"}
+        resolved = ac.resolve_acceptance_criteria(
+            fields, "## Acceptance Criteria\n\nfrom desc")
+        self.assertEqual(resolved, ("- it spins", "field"))
+
+    def test_an_absent_field_is_the_common_case_not_a_failure(self):
+        """An Agile User Story and a Task have no acceptance-criteria field at
+        all, so its absence must fall through to the description."""
+        rendered = "intro\n\n## Acceptance Criteria\n\n- it spins\n- it stops"
+        self.assertEqual(
+            ac.resolve_acceptance_criteria({}, rendered),
+            ("- it spins\n- it stops", "description"))
+
+    def test_an_empty_field_falls_through_to_the_description(self):
+        fields = {ac.FIELD_ACCEPTANCE_CRITERIA: "<div>   </div>"}
+        rendered = "## Acceptance Criteria\n\n- it spins"
+        self.assertEqual(
+            ac.resolve_acceptance_criteria(fields, rendered),
+            ("- it spins", "description"))
+
+    def test_a_field_of_an_unexpected_shape_degrades_rather_than_crashes(self):
+        for raw in (7, [], {}, None):
+            fields = {ac.FIELD_ACCEPTANCE_CRITERIA: raw}
+            self.assertEqual(
+                ac.resolve_acceptance_criteria(fields, ""), ("", ""))
+
+    def test_neither_source_yields_an_empty_pair(self):
+        self.assertEqual(
+            ac.resolve_acceptance_criteria({}, "just prose"), ("", ""))
+
+    def test_the_section_stops_at_the_next_heading(self):
+        rendered = ("## Acceptance Criteria\n\n- it spins\n\n"
+                    "## Notes\n\nnot criteria")
+        criteria, source = ac.resolve_acceptance_criteria({}, rendered)
+        self.assertEqual(criteria, "- it spins")
+        self.assertEqual(source, "description")
+        self.assertNotIn("not criteria", criteria)
+
+    def test_the_heading_match_is_case_and_colon_insensitive(self):
+        headings = ("## acceptance criteria", "## ACCEPTANCE CRITERIA:",
+                    "Acceptance Criteria:", "acceptance  criteria")
+        for heading in headings:
+            resolved = ac.resolve_acceptance_criteria(
+                {}, f"{heading}\n\n- it spins")
+            self.assertEqual(resolved, ("- it spins", "description"))
+
+
+class TestTheNormalizedRecord(unittest.TestCase):
+    def _values(self, **overrides):
+        """Every RECORD_FIELDS value for a whole, resolvable work item, with
+        the optional ones already at their legitimately-empty value."""
+        values = {
+            "org": "contoso",
+            "project": "Contoso Platform",
+            "id": "1234",
+            "web_url": "https://dev.azure.com/contoso/_workitems/edit/1234",
+            "title": "Make the widget spin",
+            "work_item_type": "User Story",
+            "state": "Active",
+            "description": "",
+            "acceptance_criteria": "",
+            "acceptance_criteria_source": "",
+            "repro_steps": "",
+            "comments": [],
+        }
+        values.update(overrides)
+        return values
+
+    def test_the_record_is_built_in_record_fields_order(self):
+        record = ac._normalized(self._values())
+        self.assertEqual(list(record), list(ac.RECORD_FIELDS))
+
+    def test_org_project_and_id_are_all_required(self):
+        for field in ("org", "project", "id"):
+            self.assertIn(field, ac.REQUIRED_FIELDS)
+
+    def test_an_empty_required_field_is_a_half_resolve_and_raises(self):
+        for field in ac.REQUIRED_FIELDS:
+            values = self._values(**{field: ""})
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac._normalized(values)
+            self.assertIn(field, str(ctx.exception))
+
+    def test_the_optional_fields_are_legitimately_empty(self):
+        record = ac._normalized(self._values())
+        self.assertEqual(record["description"], "")
+        self.assertEqual(record["comments"], [])
+
+    def test_rendered_text_and_next_page_are_not_record_fields(self):
+        absent = ("rendered_text", "renderedText", "next_page", "nextPage")
+        for name in absent:
+            self.assertNotIn(name, ac.RECORD_FIELDS)
+
+
+class TestResolveWorkItem(unittest.TestCase):
+    ENV = {"ADO_ORG_URL": "https://dev.azure.com/contoso", "ADO_PAT": "tok"}
+
+    def _patched(self, item, comments=None, env=None):
+        """Enter the environment patch and both transport patches on ONE
+        contextlib.ExitStack and return it, already entered, alongside the
+        fetch_work_item and fetch_comments mocks. One stack rather than three
+        nested `with` blocks keeps each test flat, and holding the two mocks is
+        what lets a test assert an ORDER property -- that a refusal costs zero
+        requests."""
+        stack = contextlib.ExitStack()
+        stack.enter_context(
+            mock.patch.dict(ac.os.environ, env or self.ENV, clear=True))
+        read = stack.enter_context(
+            mock.patch.object(ac, "fetch_work_item", return_value=item))
+        comment_patch = mock.patch.object(
+            ac, "fetch_comments", return_value=comments or [])
+        sweep = stack.enter_context(comment_patch)
+        return stack, read, sweep
+
+    def _resolve(self, item, comments=None, env=None):
+        stack, _read, _sweep = self._patched(item, comments, env)
+        with stack:
+            return ac.resolve_work_item("1234")
+
+    def test_a_user_story_resolves_to_the_whole_record(self):
+        record = self._resolve(work_item())
+        self.assertEqual(record["org"], "contoso")
+        self.assertEqual(record["project"], "Contoso Platform")
+        self.assertEqual(record["id"], "1234")
+        self.assertEqual(record["title"], "Make the widget spin")
+        self.assertEqual(record["work_item_type"], "User Story")
+        self.assertEqual(record["state"], "Active")
+        self.assertEqual(record["description"], "spin it")
+        self.assertEqual(record["acceptance_criteria_source"], "")
+        self.assertEqual(record["repro_steps"], "")
+
+    def test_a_bugs_repro_steps_land_in_their_own_field_not_the_description(self):
+        item = work_item(**{
+            ac.FIELD_TYPE: "Bug",
+            ac.FIELD_DESCRIPTION: "",
+            ac.FIELD_REPRO_STEPS: "<ol><li>click it</li></ol>",
+        })
+        record = self._resolve(item)
+        self.assertEqual(record["repro_steps"], "- click it")
+        self.assertEqual(record["description"], "")
+
+    def test_the_resolved_comments_are_the_swept_comments(self):
+        comments = [{"id": "1", "author": "Ada", "created": "", "modified": "",
+                     "text": "hello"}]
+        record = self._resolve(work_item(), comments=comments)
+        self.assertEqual(record["comments"], comments)
+
+    def test_the_comment_sweep_is_called_with_the_project_from_the_read(self):
+        stack, _read, sweep = self._patched(work_item())
+        with stack:
+            ac.resolve_work_item("1234")
+        sweep.assert_called_once_with(
+            "https://dev.azure.com/contoso", "tok", "Contoso Platform", "1234")
+
+    def test_a_mismatched_ado_project_refuses_the_resolve(self):
+        env = dict(self.ENV, ADO_PROJECT="SomethingElse")
+        with self.assertRaises(ac.AdoUsageError):
+            self._resolve(work_item(), env=env)
+
+    def test_an_href_on_another_origin_refuses_the_resolve(self):
+        item = work_item(_links={"html": {"href": "https://evil.example.com/x"}})
+        with self.assertRaises(ac.AdoError):
+            self._resolve(item)
+
+    def test_a_work_item_with_no_title_is_a_half_resolve(self):
+        item = work_item(**{ac.FIELD_TITLE: ""})
+        with self.assertRaises(ac.AdoError):
+            self._resolve(item)
+
+    def test_the_id_is_validated_before_any_request(self):
+        stack, read, _sweep = self._patched(work_item())
+        with stack:
+            with self.assertRaises(ac.AdoUsageError):
+                ac.resolve_work_item("../../etc/passwd")
+        read.assert_not_called()
+
+    def test_a_half_resolve_refuses_before_it_sweeps_any_comment(self):
+        """An empty required field is a half-resolve. It must cost ZERO
+        comment requests, not a full MAX_COMMENT_PAGES sweep."""
+        item = work_item(**{ac.FIELD_TITLE: "   "})
+        stack, _read, sweep = self._patched(item)
+        with stack:
+            with self.assertRaises(ac.AdoError):
+                ac.resolve_work_item("1234")
+        sweep.assert_not_called()
+
+
+class TestTheReadLaneStaysReadOnly(unittest.TestCase):
+    """The read path is CLOSED: no read function so much as names a writer,
+    so any bounded writer added to this module later is reachable only from
+    its own explicitly-authorized entry point. Scoped per function on
+    purpose (the shape of
+    plugins/spec-loop/scripts/test_jira_client.py:1554), so a later slice
+    ADDS a writer and its own tests rather than deleting these."""
+
+    WRITERS = ("_http_post", "_http_patch", "_http_put", "_http_delete")
+
+    def test_no_read_function_can_reach_a_writer(self):
+        reads = (ac.fetch_work_item, ac.fetch_comments, ac.resolve_work_item,
+                 ac.work_item_url, ac.comments_url)
+        for fn in reads:
+            with self.subTest(fn=fn.__name__):
+                self._assert_names_no_writer(inspect.getsource(fn))
+
+    def _assert_names_no_writer(self, source):
+        for writer in self.WRITERS:
+            self.assertNotIn(writer, source, writer)
+
+    def test_the_only_network_entry_point_the_read_lane_uses_is_http_get(self):
+        for fn in (ac.fetch_work_item, ac.fetch_comments):
+            with self.subTest(fn=fn.__name__):
+                self.assertIn("_http_get(", inspect.getsource(fn))

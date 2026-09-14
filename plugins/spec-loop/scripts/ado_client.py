@@ -812,6 +812,130 @@ def fetch_comments(api_root, pat, project, work_item_id):
         "comment history")
 
 
+# A rendered heading is either html_to_text's HEADING_PREFIX (from an <h1>-<h6>
+# tag) or a bare 'Acceptance Criteria:' line, which is how the section is
+# commonly styled with <b>. KNOWN LOSSINESS, stated rather than claimed away: a
+# <b>-styled pseudo-heading does NOT terminate the section, because the walker
+# renders it as ordinary prose, so a following bold-styled section is included.
+# A real heading tag does terminate it.
+AC_HEADING_RE = re.compile(
+    r"^\s{0,3}(?:#{1,6}\s*)?acceptance\s+criteria\s*:?\s*$", re.IGNORECASE)
+ANY_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s")
+
+
+def acceptance_criteria_from_description(text):
+    """Extract the 'Acceptance Criteria' section of an already-rendered
+    description: every line after the heading, up to the next heading or the
+    end. Returns '' when no such heading is present. (PURE)"""
+    collected = []
+    inside = False
+    for line in (text or "").splitlines():
+        if not inside:
+            inside = bool(AC_HEADING_RE.match(line))
+            continue
+        if ANY_HEADING_RE.match(line):
+            break
+        collected.append(line)
+    return "\n".join(collected).strip()
+
+
+def resolve_acceptance_criteria(fields, description_text):
+    """Resolve the acceptance criteria in the fixed order and report which
+    source won: the Microsoft.VSTS.Common.AcceptanceCriteria field when it is
+    present and renders non-empty ('field'), else the rendered description's
+    'Acceptance Criteria' section ('description'), else ('', '').
+
+    THE FIELD'S ABSENCE IS NOT A FAILURE. It exists on Bug, Epic, Feature and
+    Product Backlog Item only -- an Agile User Story and a Task have no such
+    field -- so the missing case is the common one. There is no field-catalogue
+    GET to make: the field is either in the flat `fields` map or it is not, so
+    path (1) is a dict lookup rather than an HTTP call. Recording the winning
+    source is what makes the fallback safe: a reader can always tell where the
+    text came from. A field of some other shape (a number, an array) is not
+    criteria text, so it degrades to the description fallback rather than
+    crashing the resolve. (PURE)"""
+    raw = fields.get(FIELD_ACCEPTANCE_CRITERIA)
+    rendered = html_to_text(raw).strip() if isinstance(raw, str) else ""
+    if rendered:
+        return (rendered, "field")
+    from_description = acceptance_criteria_from_description(description_text)
+    if from_description:
+        return (from_description, "description")
+    return ("", "")
+
+
+RECORD_FIELDS = (
+    "org", "project", "id", "web_url", "title", "work_item_type", "state",
+    "description", "acceptance_criteria", "acceptance_criteria_source",
+    "repro_steps", "comments")
+# org, project and id are ALL required: an Azure DevOps work item is a bare
+# integer plus an org and a project, so the triple is what identifies it. A
+# record that cannot name its own org or project cannot be checked against a
+# post-time target, which is the whole defence against a wrong-target write.
+REQUIRED_FIELDS = (
+    "org", "project", "id", "web_url", "title", "work_item_type", "state")
+
+
+def _normalized(values):
+    """Build the inter-slice record in RECORD_FIELDS order -- the single source
+    of truth for the JSON contract shape, so it cannot drift between callers.
+    An empty REQUIRED_FIELDS entry means the API response was incomplete: that
+    is a half-resolve and raises, because a partial record must never be
+    emitted as if it were a whole one. description, acceptance_criteria,
+    acceptance_criteria_source, repro_steps and an empty comments list are all
+    legitimately empty."""
+    record = {name: values[name] for name in RECORD_FIELDS}
+    empty = [name for name in REQUIRED_FIELDS if not record[name]]
+    if empty:
+        raise AdoError(
+            "Azure DevOps returned an incomplete work item: the required "
+            "field(s) " + ", ".join(empty)
+            + " came back empty; refusing to emit a partial record")
+    return record
+
+
+def resolve_work_item(work_item_id):
+    """Resolve one Azure DevOps work-item id READ-ONLY to the normalized
+    record. Credentials come from the environment (see credentials()); every
+    call is fail-closed.
+
+    The read is issued with org + id alone on the project-OPTIONAL route, the
+    project is then taken from the response's own System.TeamProject, and the
+    comment sweep -- where the project is REQUIRED -- uses that derived value.
+    ADO_PROJECT, if set, is only an assertion. The body-supplied web URL is
+    validated against the requested org before it is stored, since it is later
+    displayed where an operator authorizes a write."""
+    api_root, org, pat = credentials()
+    resolved_id = validate_work_item_id(work_item_id)
+    item = fetch_work_item(api_root, pat, resolved_id)
+    fields = item.get("fields") or {}
+    project = resolve_project(fields)
+    assert_project_matches_env(project)
+    description = html_to_text(fields.get(FIELD_DESCRIPTION))
+    criteria, source = resolve_acceptance_criteria(fields, description)
+    href = ((item.get("_links") or {}).get("html") or {}).get("href")
+    # ORDER IS LOAD-BEARING: validate the scalar record FIRST, with an empty
+    # comment list, so a half-resolve (an empty required field, or a spoofed
+    # _links.html.href) refuses BEFORE the comment sweep spends up to
+    # MAX_COMMENT_PAGES network round trips it is going to throw away.
+    record = _normalized({
+        "org": org,
+        "project": project,
+        "id": resolved_id,
+        "web_url": validate_web_url(href, api_root),
+        "title": (fields.get(FIELD_TITLE) or "").strip(),
+        "work_item_type": (fields.get(FIELD_TYPE) or "").strip(),
+        "state": (fields.get(FIELD_STATE) or "").strip(),
+        "description": description,
+        "acceptance_criteria": criteria,
+        "acceptance_criteria_source": source,
+        "repro_steps": html_to_text(fields.get(FIELD_REPRO_STEPS)),
+        "comments": [],
+    })
+    record["comments"] = fetch_comments(api_root, pat, project, resolved_id)
+    return record
+
+
 def main(argv=None):
     """Placeholder completed in the CLI task; see build_parser/_dispatch."""
     raise NotImplementedError
