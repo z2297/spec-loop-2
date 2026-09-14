@@ -19,3 +19,6 @@ __pycache__/
 
 # spec-loop Jira intake artifacts (card text; never commit)
 .spec-loop-jira/
+
+# spec-loop Azure DevOps intake artifacts (work item text; never commit)
+.spec-loop-ado/

@@ -58,18 +58,33 @@ the tool set and this section exact.
   argv, and never quote a credential into the artifact or into a rendered comment body. Azure
   DevOps still supports PATs but now recommends Microsoft Entra tokens where possible; an
   OAuth flow is deliberately out of scope for this connector.
-- **`Write` is for this intake's artifact only** — the `artifact_path` the renderer returns,
-  under `.spec-loop-ado/`. Nothing else is ever written: not a source file, not a plugin file,
-  not a run's state, and not `.gitignore` (Step 1's containment is a constant-string `Bash`
-  append, never a `Write` — see below). Step 6's guard asserts the `.spec-loop-ado/` prefix
-  before the artifact write.
-- **`Bash` makes exactly two sanctioned writes and no others**: Step 1's constant-string
-  containment append to the invoking repo's own `.gitignore`, and Step 8's confirmed comment
-  POST. It is otherwise read-only against Azure DevOps and against the repo. It runs exactly
-  three bundled script invocations — `ado_client.py resolve`, `ado_intake.py render`, and
-  `ado_client.py comment` (with `--post` only after Step 8's confirmation) — plus `mktemp -d`
-  and that one `printf ... >> .gitignore` append, whose entire argument is a fixed literal with
-  nothing provider-derived in it. Every argument derived from the work item goes in as a
+- **`Write` writes this intake's artifact, plus three scratch files inside the temporary
+  directory, and nothing else.** The artifact goes to the `artifact_path` the renderer
+  returns, under `.spec-loop-ado/`, and Step 6's guard asserts that prefix before the
+  write. The three others are this run's own working files inside the `mktemp -d`
+  directory: `<tmp>/record.json` (Step 2), `<tmp>/refinement.json` and `<tmp>/payload.json`
+  (Step 5). They are **inputs to the bundled scripts, never a dedupe gate and never
+  authority for *whether* a write happens** — the dedupe gate is always the work item's own
+  comment list, and the target is re-proved against a fresh read before any POST — though
+  `<tmp>/payload.json` does carry the comment bodies Step 8 posts, so a stale or tampered copy
+  of that one file changes *what* gets written even though it cannot change *whether* the
+  write is gated. The temporary directory's retained copy of the work item is disclosed below. Nothing
+  outside those four paths is ever written by `Write`: not a source file, not a plugin
+  file, not a run's state, and not `.gitignore` (Step 1's containment is a constant-string
+  `Bash` append, never a `Write` — see below).
+- **`Bash` makes exactly two sanctioned writes and no others** — one into the repository and
+  one into Azure DevOps: Step 1's constant-string containment append to the invoking repo's
+  own `.gitignore`, and Step 8's confirmed comment POST. It is otherwise read-only against
+  Azure DevOps and against the repo. The only bytes this command writes anywhere other than
+  into the repository and into Azure DevOps are the three scratch files listed above, inside
+  the `mktemp -d` directory. It runs three distinct bundled script commands —
+  `ado_client.py resolve`, `ado_intake.py render`, and `ado_client.py comment` — which is
+  **three invocations on the default path and four on the armed one**, because
+  `ado_client.py comment` runs twice: once in Step 7 as a preview with no flag and zero
+  writes, and once more in Step 8 with `--post` after the confirmation. Nothing else is
+  invoked except `mktemp -d` and that one `printf ... >> .gitignore` append, whose entire
+  argument is a fixed literal with nothing provider-derived in it. Every argument derived
+  from the work item goes in as a
   **separate argv token** to the bundled scripts; nothing from Azure DevOps is ever spliced
   into a shell string, and nothing from Azure DevOps ever reaches the `.gitignore` append.
 - **Untrusted input.** The title, description, acceptance criteria, repro steps, project name,
@@ -185,8 +200,13 @@ the tool set and this section exact.
    You own the clock: pass the timestamp; the script never reads one. Exit 0 prints one JSON
    object with `ok`, `work_item_org`, `work_item_project`, `work_item_id`, `artifact_path`,
    `artifact`, `comments`, `ranked_gaps`, and `posted` (always `false` — this script never
-   posts; posting is Step 8's separate script). Exit 1 prints `{"ok": false, "errors": [...]}`
-   on stdout — the refinement failed validation, so fix the refinement and re-run the render.
+   posts; posting is Step 8's separate script). Exit 1 prints `{"ok": false, "errors": [...]}` on stdout, and it has **two possible
+   causes**: the `--record` file failed validation, which is checked **first**, or the
+   `--refinement` object failed validation. **Surface the `errors` array verbatim** and read it
+   to tell them apart — a record error means the wrong or a corrupted `<tmp>/record.json` was
+   passed and the fix is to re-resolve the work item (Step 2), while a refinement error means
+   the refinement object needs fixing and the render re-run. Do not assume the refinement is
+   at fault.
    Exit 2 prints the message alone on **stderr**: this script adds no prefix of its own the
    way `ado_client.py` does, though every one of its usage messages already begins with
    `error: `. That is a usage failure — surface it and stop. Save this **whole payload object** verbatim to `<tmp>/payload.json`;
@@ -238,6 +258,14 @@ the tool set and this section exact.
    entry per comment with a `status` of `would-post` or `already-posted`. `already-posted`
    means that marker was extracted from the **work item's own full comment list** — report it
    as already posted, never as a fresh success. Print `Nothing has been posted yet.`
+   Handle its failure exactly as Steps 2 and 5 handle theirs. Exit 1 prints
+   `{"ok": false, "errors": [...]}` on **stdout** and exit 2 prints `error: ...` on
+   **stderr** — in either case surface the message verbatim and **stop here**. Do not go on
+   to Step 8, and do not ask the arming question from remembered or hand-composed values: a
+   failed preview yields no `title` and no `web_url`, and those are exactly what Step 8's
+   confirmation must name, so arming without them would strip the only defence against
+   writing to the wrong work item. A failed preview has posted nothing — it runs with no
+   flag and issues GETs only — so stopping here leaves the work item untouched.
 
 8. **Ask once, then post — or don't.** If every comment is `already-posted`, print
    `Already posted — nothing to do.` and skip to the handoff: run no write. Otherwise ask ONE
