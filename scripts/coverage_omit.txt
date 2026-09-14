@@ -31,6 +31,7 @@
 # scripts/<name>.py because measure_coverage.normalize_key canonicalizes either
 # scripts dir.
 
+scripts/ado_client.py:__main__           # process-entry shim; the module is imported, not run as __main__, under unittest
 scripts/ado_intake.py:__main__           # process-entry shim; the module is imported, not run as __main__, under unittest
 scripts/dag.py:__main__                  # process-entry shim; the module is imported, not run as __main__, under unittest
 scripts/dashboard_launcher.py:__main__   # process-entry shim; the module is imported, not run as __main__, under unittest
