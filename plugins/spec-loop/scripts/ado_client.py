@@ -153,8 +153,13 @@ WORK_ITEM_ID_RE and percent-encoded before it reaches a URL segment; so is
 the project name and so is the continuationToken. The org URL's host is
 allow-listed and https-only, and userinfo is rejected so a credential
 cannot be smuggled through it. Redirects are refused outright. No URL from
-a response body is ever fetched. This module issues GET only -- _http_get
-takes no `data` parameter, so a mutating verb is not expressible. The PAT
+a response body is ever fetched. THE READ LANE ISSUES GET ONLY:
+_http_get takes no `data` parameter and no `method` parameter, so a
+mutating verb is not expressible on it. The module has exactly ONE
+writer, _http_post, and it adds one work-item comment and nothing
+else; it is a separate function reached only from the `comment`
+subcommand and only when that subcommand is armed with --post, so
+the default path of every subcommand performs zero writes. The PAT
 comes from the environment ONLY and is never read from argv (argv is
 visible in `ps` and lands in shell history); error messages name only the
 URL, so neither the PAT nor the composed base64(":" + PAT) can ride out in
