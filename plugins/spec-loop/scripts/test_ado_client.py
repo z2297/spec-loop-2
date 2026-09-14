@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Tests for the read-only Azure DevOps work-item reader (stdlib unittest).
+"""Tests for the Azure DevOps work-item reader and its one bounded comment
+writer (stdlib unittest).
 
-Covers work-item-id and org-URL validation (allow-list + argument/URL-injection
-defence), credential resolution and its fail-closed message, the HTML -> text
-renderer, work-item and continuationToken-paginated comment resolution against a
-mocked opener, the normalized-record contract, that the PAT and the composed
-base64(":" + PAT) never leak into an error, stdout or stderr, and the READ-ONLY
-guarantee (the GET helper has no `data` parameter; the module spawns no
-subprocess).
+Covers BOTH lanes. Read lane: work-item-id and org-URL validation (allow-list
++ argument/URL-injection defence), credential resolution and its fail-closed
+message, the HTML -> text renderer, work-item and
+continuationToken-paginated comment resolution against a mocked opener, the
+normalized-record contract, that the PAT and the composed base64(":" + PAT)
+never leak into an error, stdout or stderr, and the read lane's structural
+guarantee that it cannot write (the GET helper has no `data` parameter; no
+read function so much as names a writer; the module spawns no subprocess).
+Write lane: that _http_post is the only writer, that the comment subcommand
+previews and posts nothing unless --post arms it, that a wrong target and an
+in-batch duplicate marker are refused before the first request, that a posted
+body is inert and carries its marker on line 1, that the dedupe gate extracts
+markers from the stored text rather than substring-scanning renderedText, and
+that a partial batch failure is disclosed rather than silently dropped.
 
 `scripts/validate_marketplace.py` does NOT lint scripts/*.py, so this is the
 sole automated guard on the client. Standard library only. No live network.
