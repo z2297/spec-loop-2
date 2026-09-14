@@ -1789,13 +1789,15 @@ class TestTheCommentSubcommandIsOffByDefault(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             record_path, comments_path = self._files(
                 tmp, ado_record(), render_payload(org="fabrikam"))
-            argv = ["comment", "--record", record_path,
-                    "--comments", comments_path, "--post"]
+            argv = [
+                "comment", "--record", record_path,
+                "--comments", comments_path, "--post",
+            ]
+            stdout_patch = mock.patch("sys.stdout", new_callable=io.StringIO)
             with contextlib.ExitStack() as stack:
                 creds = stack.enter_context(mock.patch.object(ac, "credentials"))
                 get = stack.enter_context(mock.patch.object(ac, "_http_get"))
-                out = stack.enter_context(
-                    mock.patch("sys.stdout", new_callable=io.StringIO))
+                out = stack.enter_context(stdout_patch)
                 code = ac.main(argv)
         self.assertEqual(code, 1)
         self.assertFalse(json.loads(out.getvalue())["ok"])
