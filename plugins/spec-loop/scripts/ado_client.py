@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Azure DevOps Services work-item reader (stdlib only, READ-ONLY).
+"""Azure DevOps Services work-item reader with ONE bounded comment writer (stdlib only).
 
 Resolves one Azure DevOps work-item id to a normalized JSON record (org,
 project, id, web url, title, work item type, state, the HTML description
 rendered to text, acceptance criteria with the source that won, repro
 steps, and the full paginated comment list). Authenticates with HTTP Basic
 auth built from an EMPTY username and the PAT in ADO_PAT, against the org
-named by ADO_ORG_URL.
+named by ADO_ORG_URL. Also previews -- and, only under an explicit --post,
+adds -- the spec-loop intake comments on one work item.
 
 Design decisions:
   - Mirrors plugins/spec-loop/scripts/jira_client.py's transport doctrine by
@@ -98,6 +99,52 @@ Design decisions:
   - No subprocess, no filesystem writes, and no clock read anywhere in this
     module: the controller owns the clock. Azure DevOps' own createdDate /
     modifiedDate strings are echoed verbatim.
+  - THE WRITE IS OFF BY DEFAULT AND BOUNDED TO ONE VERB. `comment` previews
+    by default, issuing GETs only; `--post` is the only thing that arms the
+    HTTP verb. _http_post is the module's SOLE writer and adds one work-item comment
+    and nothing else: no state transition, no field edit or PATCH, no
+    assignee change, no work-item or child creation, no relation/link edit,
+    no attachment, no comment edit, no comment delete, no reaction. It is a
+    SEPARATE function from _http_get, which still takes no `data` parameter
+    and no `method` parameter -- that absence is the read lane's proof, so
+    the writer is added beside it rather than by widening it.
+  - THE WRONG-TARGET WRITE IS THE WRITE LANE'S DEFINING HAZARD. An Azure
+    DevOps work item is a bare integer plus an org and a project that come
+    from outside the id, so item 1234 exists in every org: if the org
+    changed between the preview and the armed post, the lane would put one
+    item's refinement on another AND the read-back dedupe gate would report a
+    clean success, with no comment-delete lane to retract it. So the comments
+    payload carries the (org, project, id) triple it was rendered for, the
+    record carries its own, both must agree BEFORE any credential is read,
+    and the armed lane then re-resolves the work item and refuses unless the
+    triple matches the fresh one and the org matches the current ADO_ORG_URL.
+    The target is never taken from a flag.
+  - IN-BATCH DUPLICATES ARE REFUSED AT VALIDATION, before the first request.
+    The read-back gate compares each entry to the work item and never to its
+    siblings, so two identical entries in one batch would both plan as
+    not-already-posted, both post, and collapse onto one reported comment id.
+  - THE DEDUPE GATE EXTRACTS MARKERS BY REGEX INTO A SET -- never a substring
+    scan -- from the stored `text` UNIONed with its html_to_text rendering,
+    and never from `renderedText`. The two sides of the union differ where it
+    matters: a marker forged inside an HTML comment is invisible to the
+    walker and visible in the raw text. A bare 12-hex digest matches as a
+    second tier, because suppression is the fail-safe direction.
+  - THE MARKER LIVES INSIDE THE POSTED BODY, so the one call that writes the
+    comment writes the marker: no local file is ever the dedupe gate and a
+    fresh clone cannot double-post. The work item is read ONCE PER
+    INVOCATION, not before every individual write.
+  - THE POSTED BODY MUST BE INERT. ADO's Add body carries only `text` and
+    there is no documented way to assert its `format`, so a body is posted
+    only when '&', '<' and '>' were already escaped at render time; a body
+    still carrying '<' or '>' is REFUSED rather than re-escaped, since
+    re-escaping would double-encode a legitimate '&amp;'. This module
+    guarantees only that the body contains no active markup -- it cannot
+    control how Azure DevOps interprets the body.
+  - NOT VERIFIED HERE: the marker's byte-survival across the write/read
+    api-version asymmetry (POST 7.0-preview.3, read back 7.1-preview.4) is an
+    assumption no faked-transport test can close; it needs one live round
+    trip. And a partial batch failure is disclosed, not recoverable by
+    re-running: an edited refinement renders a different marker.
 
 SECURITY: the work-item id and every Azure DevOps text field (title,
 description, acceptance criteria, repro steps, every comment body) are
@@ -118,6 +165,12 @@ Exit codes: 0 = ok; 1 = contract failure; 2 = usage / unreadable input
 Usage:
     ADO_ORG_URL=https://dev.azure.com/contoso ADO_PAT=... \\
         python3 scripts/ado_client.py resolve --id 1234
+    ADO_ORG_URL=https://dev.azure.com/contoso ADO_PAT=... \\
+        python3 scripts/ado_client.py comment --record record.json \\
+        --comments comments.json          # previews; posts nothing
+    ADO_ORG_URL=https://dev.azure.com/contoso ADO_PAT=... \\
+        python3 scripts/ado_client.py comment --record record.json \\
+        --comments comments.json --post   # ARMS the one bounded write
 """
 
 from __future__ import annotations
@@ -133,6 +186,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
+from pathlib import Path
 
 
 class AdoError(Exception):
@@ -146,6 +200,18 @@ class AdoUsageError(AdoError):
     ADO_ORG_URL, missing credentials, or an ADO_PROJECT that disagrees with
     the work item -- anything the user can fix in their invocation or
     environment. Maps to exit code 2."""
+
+
+class _IndeterminateWriteError(AdoError):
+    """A write whose outcome Azure DevOps could not confirm: the transport
+    failed (a timeout or a connection error) either before the request left
+    the client or while reading the response to a POST that may already have
+    landed. Raised ONLY from _http_post's URLError/OSError branches, where
+    landing is genuinely unknowable -- never from the HTTPError branch, where
+    a clean 4xx/5xx status means the server rejected the write and nothing
+    landed. execute_comment_plan uses this distinction to name the in-flight
+    comment as indeterminate rather than silently excluding it from the
+    partial-batch disclosure."""
 
 
 WORK_ITEM_ID_RE = re.compile(r"^[0-9]{1,10}$")
@@ -812,6 +878,632 @@ def fetch_comments(api_root, pat, project, work_item_id):
         "comment history")
 
 
+def comment_add_url(route):
+    """Compose the comment-ADD URL LOCALLY from the validated api_root, the
+    percent-encoded project and a literal path. `route` is the 3-tuple
+    (api_root, project, work_item_id).
+
+    NOTE THE API-VERSION: the add endpoint's newest documented version is
+    API_VERSION_COMMENT_ADD ('7.0-preview.3'), which differs ON PURPOSE from
+    the comment list's 7.1-preview.4 and the work-item read's stable 7.1
+    (Microsoft Learn, read 2026-09-14). Do not 'unify' them.
+
+    The project is the ORIGINAL name, quote(..., safe='')-encoded -- never an
+    artifact slug, which would 404 on every project whose name has a space.
+    The id is re-validated here even though the caller validated it: an
+    untrusted value is encoded regardless before it reaches a URL segment."""
+    api_root, project, work_item_id = route
+    encoded_project = urllib.parse.quote(project, safe="")
+    encoded_id = urllib.parse.quote(validate_work_item_id(work_item_id), safe="")
+    return (f"{api_root}/{encoded_project}/_apis/wit/workItems/{encoded_id}"
+            f"/comments?api-version={API_VERSION_COMMENT_ADD}")
+
+
+def _http_post(url, pat, payload):
+    """HTTP POST of one JSON `payload` object through the same no-redirect
+    opener. THE ONLY MUTATING ENTRY POINT IN THIS MODULE.
+
+    Deliberately a SEPARATE function from _http_get rather than a `method=`
+    parameter on it: the read lane's never-a-mutating-verb guarantee is the
+    ABSENCE of `data` and `method` from _http_get's signature, and widening
+    that signature would erase the proof.
+
+    Errors reference only the URL -- the credential rides in a header, so
+    neither the PAT nor the composed base64(':' + PAT) can appear in an
+    exception message. A 3xx is terminal (_NoRedirect), so a write never
+    replays its Authorization header or its body to another origin."""
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    headers = {
+        "Authorization": _auth_header(pat),
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with _OPENER.open(req, timeout=30) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise AdoError(
+            f"HTTP {exc.code} posting to {url}: {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        # A URLError here means the request may never have reached the
+        # server, OR it may have landed and only the response was lost --
+        # urllib cannot distinguish the two. Raised as _IndeterminateWriteError
+        # (never plain AdoError) so execute_comment_plan can disclose the
+        # in-flight comment as INDETERMINATE rather than silently excluding
+        # it, unlike a clean HTTPError status below.
+        raise _IndeterminateWriteError(
+            f"network error posting to {url}: {exc.reason}") from exc
+    except OSError as exc:
+        # urllib only wraps an OSError raised by h.request() into a URLError
+        # (CPython's AbstractHTTPHandler.do_open); an OSError out of
+        # h.getresponse() or resp.read() -- a timeout while reading the
+        # response to a POST THAT HAS ALREADY LANDED on the work item --
+        # propagates unwrapped and would otherwise slip past the AdoError
+        # handling above, past execute_comment_plan's `except AdoError`, and
+        # past main()'s exit-1 JSON contract as a raw traceback. Caught here,
+        # terminally, as _IndeterminateWriteError, so every write-path
+        # transport failure becomes a partial-batch disclosure that names the
+        # in-flight comment as indeterminate rather than implying it did not
+        # land. The message names only the URL, so no credential can ride out
+        # in it.
+        raise _IndeterminateWriteError(
+            f"network error posting to {url}: {exc}") from exc
+
+
+def post_comment(route, pat, body):
+    """POST ONE comment to ONE Azure DevOps work item. THE SOLE WRITER.
+
+    Bounded on purpose: this adds a comment and nothing else -- no state
+    transition, no field edit or PATCH, no assignee change, no work-item or
+    child creation, no relation/link edit, no attachment, no comment edit,
+    no comment delete, no reaction.
+
+    THE DEDUPE MARKER LIVES INSIDE `body`, so the one network call that
+    writes the comment is the same call that writes the marker: no local file
+    can make a later run skip a comment that was never actually posted, and a
+    fresh clone cannot double-post.
+
+    Verified against Microsoft Learn's Add Comment operation (read
+    2026-09-14): the request body is {"text": <string>} -- there is no
+    documented way to assert the stored `format` -- and the created comment's
+    id appears as `id` in the definition table and `commentId` in the sample
+    payload, so both spellings are read. A response carrying neither is
+    refused rather than reported as a confirmed write."""
+    url = comment_add_url(route)
+    raw = _http_post(url, pat, {"text": body}).decode("utf-8")
+    created = _parse_json(raw, "created comment")
+    if not isinstance(created, dict):
+        created = {}
+    comment_id = _comment_id(created)
+    if comment_id:
+        return comment_id
+    raise AdoError(
+        "Azure DevOps accepted the comment POST for work item "
+        f"{route[2]} but returned no comment id; refusing to report a "
+        "write that cannot be confirmed")
+
+
+COMMENT_KINDS = ("understanding", "decision", "open-question")
+COMMENT_ENTRY_KEYS = ("kind", "marker", "body")
+
+# THIS MODULE'S OWN COPIES, on purpose: ado_intake.py builds the markers and
+# exports the same two patterns, and there is deliberately no shared runtime
+# module between them (duplication over coupling), so neither module's change
+# can loosen the other's gate. ado_intake's own tests pin the shape both have
+# to agree on.
+MARKER_RE = re.compile(
+    r"\[spec-loop-intake:(?:understanding|decision|open-question):"
+    r"[0-9a-f]{12}\]")
+# The bare digest, for the dedupe gate's second tier: a round trip that
+# rewrote the wrapper but kept the digest must still SUPPRESS a re-post,
+# because a false suppression only skips a write while a false miss
+# duplicates a comment on a live work item with no delete lane to retract it.
+MARKER_DIGEST_RE = re.compile(r"\b[0-9a-f]{12}\b")
+
+# The only two characters that can open active markup. The rendered body was
+# escaped at render time (& -> &amp;, < -> &lt;, > -> &gt;), so a body still
+# carrying one of these did not come through that escaping and is REFUSED
+# rather than posted. It is deliberately not re-escaped here: re-applying the
+# transform would double-encode every legitimate '&amp;' and corrupt the body
+# the operator previewed. '&' alone cannot activate markup, so it is left
+# alone -- the marker contains none of the three characters either way, which
+# test_escaping_leaves_the_marker_byte_identical pins.
+ACTIVE_MARKUP_CHARS = ("<", ">")
+
+
+def _entry_field_errors(item, where):
+    """Error strings for a comment entry missing one of its string fields.
+    Reported before any other check, because every later check indexes one
+    of these keys. (PURE)"""
+    template = "%s.%s is missing or not a string"
+    return [
+        template % (where, key)
+        for key in COMMENT_ENTRY_KEYS
+        if not isinstance(item.get(key), str) or not item.get(key)
+    ]
+
+
+def _entry_kind_errors(item, where):
+    """Error strings for an entry whose kind is not one this lane renders.
+    ado_intake.py builds only the three; anything else did not come from the
+    renderer. (PURE)"""
+    if item["kind"] in COMMENT_KINDS:
+        return []
+    template = "%s.kind %r is not one of %s"
+    kinds = ", ".join(COMMENT_KINDS)
+    return [template % (where, item["kind"], kinds)]
+
+
+def _entry_marker_errors(item, where):
+    """Error strings for a marker that is malformed or is not alone on line 1
+    of the body. (PURE)
+
+    Both halves are load-bearing. The marker must match MARKER_RE because the
+    dedupe gate EXTRACTS markers by regex rather than matching a substring.
+    And it must sit inside the body, on line 1, because the body is what the
+    POST writes: the marker being inside the posted body is exactly what makes
+    it written by, and only by, the call that performs the write, and line 1
+    maximizes its survival under truncation or a rendering change. A body that
+    lost its marker could never be deduped by a later run, so it is refused
+    here rather than posted."""
+    marker, body = item["marker"], item["body"]
+    if not MARKER_RE.fullmatch(marker):
+        template = "%s.marker %r does not match %s"
+        return [template % (where, marker, MARKER_RE.pattern)]
+    if body.splitlines()[0].strip() == marker:
+        return []
+    template = (
+        "%s.body must carry its marker %s alone on line 1; a comment whose "
+        "body lost its marker could never be deduped by a later run")
+    return [template % (where, marker)]
+
+
+def _entry_inertness_errors(body, where):
+    """Error strings for a body that still carries active markup. (PURE)
+
+    The body must be inert whether Azure DevOps stores it as markdown or as
+    HTML, and the Add call cannot declare the format. The renderer escaped
+    '&', '<' and '>' at render time, so a body still carrying '<' or '>' did
+    not come through that escaping and is REFUSED -- see ACTIVE_MARKUP_CHARS
+    for why it is not re-escaped here instead."""
+    found = [char for char in ACTIVE_MARKUP_CHARS if char in body]
+    if not found:
+        return []
+    template = (
+        "%s.body is not inert: it still contains %s. Azure DevOps' Add body "
+        "cannot declare its format, so a body is posted only when '&', '<' "
+        "and '>' were escaped at render time.")
+    chars = " and ".join(repr(char) for char in found)
+    return [template % (where, chars)]
+
+
+def _errors_for_comment_entry(item, index):
+    """Error strings for ONE comment entry; [] means valid. (PURE)
+
+    Entries come from ado_intake.py render's payload
+    ({"kind", "gap_id", "marker", "body"}); this module NEVER builds a marker
+    of its own. A missing field short-circuits the rest, because every later
+    check indexes one of the keys it guards."""
+    where = "comments[%d]" % index
+    if not isinstance(item, dict):
+        template = "%s must be an object with the keys %s"
+        return [template % (where, ", ".join(COMMENT_ENTRY_KEYS))]
+    missing = _entry_field_errors(item, where)
+    if missing:
+        return missing
+    errors = _entry_kind_errors(item, where)
+    errors += _entry_marker_errors(item, where)
+    errors += _entry_inertness_errors(item["body"], where)
+    return errors
+
+
+def _duplicate_marker_errors(entries):
+    """Error strings for a marker used by two entries in ONE batch. (PURE)
+
+    plan_comments dedupes each entry against the WORK ITEM's comment list; it
+    cannot see an entry's siblings, so two identical entries in one batch
+    would both plan as not-already-posted and both POST, and _comment_results'
+    by-marker map would then collapse the two writes onto one comment id.
+    Measured on the Jira twin of this lane in run 20260908-jira-intake.
+    Refusing the batch here means the duplicate is caught before the first
+    request, so nothing partial is left on the work item."""
+    first_seen = {}
+    errors = []
+    for index, item in enumerate(entries):
+        marker = item["marker"]
+        if marker not in first_seen:
+            first_seen[marker] = index
+            continue
+        errors.append(
+            "comments[%d].marker duplicates comments[%d].marker (%s)"
+            % (index, first_seen[marker], marker))
+    return errors
+
+
+def validate_comment_entries(entries):
+    """Error strings for the batch to post; [] means valid. (PURE)
+
+    Runs BEFORE any credential is read and BEFORE the first request, so a
+    refusal leaves nothing partial on the work item. Shape errors
+    short-circuit the duplicate scan, which indexes entry['marker']."""
+    if not isinstance(entries, list) or not entries:
+        return ["comments must be a non-empty list of comment entries"]
+    errors = []
+    for index, item in enumerate(entries):
+        errors += _errors_for_comment_entry(item, index)
+    if errors:
+        return errors
+    return _duplicate_marker_errors(entries)
+
+
+def marker_tokens(text):
+    """Every dedupe token visible in one blob of text, as a SET. (PURE)
+
+    Two tiers: the full marker, and the bare 12-hex digest as a standalone
+    token. EXTRACTION, NOT SUBSTRING MATCHING: pulling tokens out and
+    comparing sets survives HTML wrapping ('<div>[marker]</div>'), whitespace
+    and newline normalization, and entity-escaping of NEIGHBOURING characters
+    -- the plausible mutations across the write/read api-version asymmetry
+    (POST 7.0-preview.3, read back 7.1-preview.4). The second tier strictly
+    increases suppression, which is the FAIL-SAFE direction: a false
+    suppression skips a write, a false miss duplicates a comment on a live
+    work item that this connector has no lane to delete."""
+    return set(MARKER_RE.findall(text)) | set(MARKER_DIGEST_RE.findall(text))
+
+
+def comment_haystack_tokens(comments):
+    """The dedupe token set for a work item's FULL comment history. (PURE)
+
+    THE HAYSTACK IS THE STORED `text`, UNIONED WITH ITS html_to_text
+    RENDERING -- and never the optional HTML *rendering* Azure DevOps can
+    return alongside it, which a renderer may entity-encode or strip (see
+    _comment_text, which is where that field is refused as a data source).
+    Both sides of this union fail safe, and they differ exactly where it
+    matters: a marker forged inside an HTML comment is INVISIBLE to the
+    walker (which drops comments) and VISIBLE in the raw text, while a marker
+    split across markup is visible to the walker.
+
+    A comment with no usable `text` RAISES rather than contribute nothing:
+    silently shrinking the haystack is the failure mode that double-posts on
+    every run. (_comment_text already enforces this on the read path; this
+    call re-asserts it because the entries arrive here as plain dicts.)"""
+    tokens = set()
+    for raw in comments:
+        if not isinstance(raw, dict):
+            raise AdoError(_MISSING_TEXT_MSG)
+        text = _comment_text(raw)
+        tokens |= marker_tokens(text)
+        tokens |= marker_tokens(html_to_text(text))
+    return tokens
+
+
+def plan_comments(entries, tokens):
+    """Decide, per entry, whether it is already on the work item. (PURE)
+
+    `tokens` comes from comment_haystack_tokens over the work item's FULL
+    paginated comment list, read back over the network -- THE WORK ITEM'S OWN
+    COMMENT LIST IS THE DEDUPE GATE, never a local file, so a fresh clone
+    cannot double-post. An entry whose marker (or whose bare digest) is
+    already in the set is reported as already-posted rather than posted again
+    or silently dropped. IN-BATCH duplicates are not this function's job:
+    validate_comment_entries refuses them before the lane gets here, because
+    this gate compares each entry to the work item and never to its
+    siblings."""
+    planned = []
+    for item in entries:
+        marker = item["marker"]
+        digest = marker[-13:-1]
+        planned.append({
+            "kind": item["kind"], "marker": marker,
+            "already_posted": marker in tokens or digest in tokens})
+    return planned
+
+
+# THE WRONG-TARGET REFUSAL. An Azure DevOps work item is a bare integer plus an
+# org and a project that come from OUTSIDE the id, so item 1234 exists in every
+# org and project -- a hazard Jira's self-describing ABC-123 key cannot even
+# express. The record names one triple, the rendered comments payload names the
+# triple it was rendered FOR, and agreed_target refuses unless the two are
+# EQUAL -- it is pure, so the comment lane can run it before it reads a
+# credential or issues a request.
+TRIPLE_FIELDS = ("org", "project", "id")
+PAYLOAD_TRIPLE_FIELDS = ("work_item_org", "work_item_project", "work_item_id")
+
+_RECORD_TRIPLE_MSG = (
+    "the record does not name its own target: the field(s) %s are missing or "
+    "empty. A record that cannot name its (org, project, id) cannot be "
+    "checked against the work item a write would land on.")
+_PAYLOAD_TRIPLE_MSG = (
+    "the comments file does not name the work item it was rendered for: the "
+    "field(s) %s are missing or empty. Pass the whole payload object printed "
+    "by ado_intake.py render (which carries %s), not a bare comments array.")
+_WRONG_TARGET_MSG = (
+    "REFUSING THE WRITE: the comment plan does not belong to %s (%s). An "
+    "Azure DevOps work-item id is a bare integer, so id %s exists in every "
+    "org and project: posting here would put one item's refinement on "
+    "another, and the read-back dedupe gate would report a clean success. "
+    "Re-resolve the work item and re-render the comments.")
+
+
+def _triple_from(source, keys, missing_error):
+    """Read an (org, project, id) triple out of `source` under `keys`,
+    fail-closed. Every field must be a non-empty string, and the id must
+    survive validate_work_item_id -- it reaches a URL segment. (PURE apart
+    from raising)"""
+    if not isinstance(source, dict):
+        raise missing_error(", ".join(keys))
+    missing = [
+        key for key in keys
+        if not isinstance(source.get(key), str) or not source[key].strip()
+    ]
+    if missing:
+        raise missing_error(", ".join(missing))
+    org, project, work_item_id = (source[key].strip() for key in keys)
+    return (org, project, validate_work_item_id(work_item_id))
+
+
+def _record_triple_error(names):
+    """A record that cannot name its own target is a CONTRACT failure (exit
+    1): all three fields are in REQUIRED_FIELDS, so a missing one means the
+    record did not come from resolve_work_item."""
+    return AdoError(_RECORD_TRIPLE_MSG % names)
+
+
+def _payload_triple_error(names):
+    """A comments payload that cannot name its target is USAGE (exit 2): the
+    operator passed the wrong file, or a bare comments array."""
+    return AdoUsageError(
+        _PAYLOAD_TRIPLE_MSG % (names, ", ".join(PAYLOAD_TRIPLE_FIELDS)))
+
+
+def record_triple(record):
+    """The (org, project, id) triple of a resolve record. (PURE apart from
+    raising) All three are in the record's REQUIRED_FIELDS, so an empty one is
+    a half-resolve; reaching this function with one missing means the record
+    did not come from resolve_work_item and is a contract failure."""
+    return _triple_from(record, TRIPLE_FIELDS, _record_triple_error)
+
+
+def payload_triple(payload):
+    """The (org, project, id) triple the comments payload was RENDERED FOR.
+    (PURE apart from raising)
+
+    THE BINDING BETWEEN A PREVIEW AND THE ITEM IT WAS RENDERED FOR. A bare
+    comments array carries no triple and is refused here: the target must come
+    from the rendered payload and the resolved record, never from ambient
+    environment addressing."""
+    return _triple_from(payload, PAYLOAD_TRIPLE_FIELDS, _payload_triple_error)
+
+
+def assert_same_target(expected, actual, what):
+    """Refuse unless two (org, project, id) triples are EQUAL, naming both
+    sides and preferring neither.
+
+    THE COMPARISON IS DELIBERATELY EXACT. Azure DevOps org and project names
+    are case-preserving, this path fails closed, and a case-insensitive or
+    punctuation-folding compare would quietly widen what it accepts -- on the
+    one lane in this plugin whose mistakes cannot be undone. Do not 'fix' it
+    into one."""
+    diffs = [
+        "%s %r != %r" % (name, want, got)
+        for name, want, got in zip(TRIPLE_FIELDS, expected, actual)
+        if want != got
+    ]
+    if diffs:
+        raise AdoError(_WRONG_TARGET_MSG % (what, "; ".join(diffs), actual[2]))
+    return None
+
+
+def agreed_target(record, payload):
+    """The one (org, project, id) triple the record and the comments payload
+    BOTH name, or a refusal. (PURE apart from raising)
+
+    Runs BEFORE any credential is read and before the first request, so a
+    mismatched pair costs nothing and leaks nothing."""
+    target = record_triple(record)
+    assert_same_target(target, payload_triple(payload), "the resolved record")
+    return target
+
+
+# THE COMMENT LANE. Posting is OFF BY DEFAULT: without `arm` the lane issues
+# GETs only and reports what it WOULD post. The order below IS the safety
+# design -- pure entry validation first, then ONE fresh re-resolve that proves
+# the target and supplies the dedupe haystack at once, then the refusal, and
+# only then the single bounded write.
+_INVALID_PLAN_MSG = "refusing to post from an invalid comment plan: %s"
+_PARTIAL_BATCH_MSG = (
+    "%s; %d comment(s) already posted to work item %s before the failure: "
+    "%s. Those comments are on the work item now and this connector has no "
+    "lane to delete them. A later run suppresses exactly those markers, and "
+    "only while the refinement still renders byte-identically.")
+_INDETERMINATE_MSG = (
+    "%s; comment %s was in flight when the transport failed and MAY be on "
+    "work item %s -- Azure DevOps was not able to confirm it%s. There is no "
+    "comment-delete lane to retract it.")
+_INDETERMINATE_LANDED_CLAUSE = (
+    "; %d earlier comment(s) are confirmed on the work item: %s")
+
+
+def _landed_clause(posted):
+    """The '; N earlier comment(s) are confirmed...' clause, or '' when
+    nothing landed before the in-flight comment. (PURE)"""
+    if not posted:
+        return ""
+    markers = ", ".join(item["marker"] for item in posted)
+    return _INDETERMINATE_LANDED_CLAUSE % (len(posted), markers)
+
+
+def _partial_batch_error(work_item_id, posted, exc, in_flight=None):
+    """The AdoError raised when a batch POST fails part-way through.
+
+    The BATCH is not atomic -- only each individual comment is (see
+    execute_comment_plan) -- so a failure after N comments have already
+    landed must SAY SO: the work item has been mutated even though the whole
+    operation is being reported as failed, and there is no comment-delete
+    lane to retract it. Every already-posted marker is named, so the operator
+    can tell exactly what happened from the refusal alone.
+
+    `in_flight`, when given, is the entry that was being POSTed when a
+    _IndeterminateWriteError was raised (a transport failure, not a clean
+    HTTP status): Azure DevOps could not confirm whether that particular
+    comment landed, so it is named EXPLICITLY as indeterminate rather than
+    silently excluded from the disclosure the way a clean HTTPError status
+    (nothing sent, nothing landed) is. Without this, an operator reading a
+    plain 'network error' message could reasonably conclude nothing was
+    written and post the comment by hand, producing the exact duplicate this
+    slice exists to prevent.
+
+    DELIBERATELY NOT A RECOVERY INSTRUCTION. A later run suppresses a landed
+    comment only while the refinement still renders byte-identically:
+    measured on the Jira twin of this lane, dropping a single period from the
+    refinement changed the marker, so a second pass over an edited refinement
+    would post NEW comments beside the landed ones. The disclosure states
+    what happened and names the markers; what to do next is the operator's
+    call, with the work item in front of them.
+
+    The message carries the underlying AdoError, which names only a URL, plus
+    markers this module never invents -- so no credential can ride out in
+    it."""
+    if in_flight is not None:
+        landed_clause = _landed_clause(posted)
+        return AdoError(
+            _INDETERMINATE_MSG
+            % (exc, in_flight["marker"], work_item_id, landed_clause))
+    if not posted:
+        return AdoError(str(exc))
+    markers = ", ".join(item["marker"] for item in posted)
+    return AdoError(
+        _PARTIAL_BATCH_MSG % (exc, len(posted), work_item_id, markers))
+
+
+def _posted_result(item, comment_id):
+    """One result row for a comment that LANDED. (PURE)"""
+    return {
+        "kind": item["kind"], "marker": item["marker"],
+        "status": "posted", "comment_id": comment_id}
+
+
+def execute_comment_plan(route, pat, pending):
+    """POST each pending comment in order and return one result each.
+
+    Fail closed and ATOMIC PER COMMENT: every entry was shape-validated
+    before any request was issued, and the FIRST failure propagates
+    immediately, so no later comment is posted. One comment is written whole
+    by one POST or not at all -- there is no partial body.
+
+    The BATCH is not atomic, and that partial mutation is DISCLOSED rather
+    than swallowed (see _partial_batch_error): this is the only irreversible
+    external call in this module."""
+    posted = []
+    for item in pending:
+        try:
+            comment_id = post_comment(route, pat, item["body"])
+        except AdoError as exc:
+            raise _write_failure(route[2], posted, item, exc) from exc
+        posted.append(_posted_result(item, comment_id))
+    return posted
+
+
+def _write_failure(work_item_id, posted, item, exc):
+    """The AdoError to raise for one failed POST in a batch: names `item` as
+    in-flight only when the failure was transport-indeterminate. (PURE)"""
+    in_flight = item if isinstance(exc, _IndeterminateWriteError) else None
+    return _partial_batch_error(work_item_id, posted, exc, in_flight)
+
+
+def _preview_result(item, planned):
+    """One result row for a comment that was NOT posted on this invocation:
+    either already on the work item, or awaiting an armed run. (PURE)"""
+    status = "already-posted" if planned["already_posted"] else "would-post"
+    return {
+        "kind": item["kind"], "marker": planned["marker"],
+        "status": status, "comment_id": None}
+
+
+def _comment_results(entries, plan, posted):
+    """Merge the dedupe plan and the POST results into one ordered result per
+    REQUESTED comment, in the requested order. (PURE)
+
+    Keyed by marker, which is safe ONLY because validate_comment_entries
+    already refused an in-batch duplicate: two entries sharing a marker would
+    collapse onto one row here and both report the same comment id -- the
+    exact collapse measured on the Jira twin of this lane."""
+    by_marker = {item["marker"]: item for item in posted}
+    return [
+        by_marker.get(planned["marker"]) or _preview_result(item, planned)
+        for item, planned in zip(entries, plan)
+    ]
+
+
+def _assert_target_unchanged(target, fresh, org):
+    """Refuse unless `target` still names BOTH the work item the fresh read
+    just returned AND the organization the current ADO_ORG_URL points at.
+
+    Two checks because there are two ways to drift. The record check catches
+    a comments payload rendered for a different item; the environment check
+    catches the org moving between the preview invocation and the armed one
+    -- a different shell tab, a re-sourced .env, a mistyped re-export. Both
+    land one item's refinement on another, and the read-back dedupe gate
+    SUCCEEDS on the wrong item (it carries no such marker), so the operator
+    would otherwise see a clean success."""
+    assert_same_target(
+        target, record_triple(fresh), "the freshly resolved work item")
+    assert_same_target(
+        target, (org, target[1], target[2]),
+        "the organization named by the current ADO_ORG_URL")
+    return None
+
+
+def run_comment_lane(target, entries, arm):
+    """Preview -- or, when armed, post -- the intake comments for ONE work
+    item, target-checked and dedupe-gated. `target` is the agreed
+    (org, project, id) triple; `arm` alone decides whether a write happens.
+
+    POSTING IS OFF BY DEFAULT: with `arm` false this issues GETs only and
+    reports what it WOULD post, so the default path performs zero writes.
+
+    THE ORDER IS THE SAFETY DESIGN:
+      1. Every entry is shape-validated -- marker shape, marker alone on line
+         1 of the body, an inert body, and no in-batch duplicate -- BEFORE
+         any credential is read and BEFORE the first request, so a refusal
+         leaves nothing partial on the work item.
+      2. The work item is RE-RESOLVED fresh. That one read serves both
+         purposes at once: it proves the target and it supplies the comment
+         history, so the lane issues no extra request. The preview and the
+         armed post are separate invocations, so the target is re-proved here
+         rather than trusted from the payload.
+      3. The write REFUSES unless `target` equals the freshly resolved
+         (org, project, id) triple AND the org derived from the current
+         ADO_ORG_URL.
+      4. Only then, and only when armed, is a POST issued -- one per pending
+         comment, on a route composed from the validated api_root.
+
+    THE WORK ITEM IS READ ONCE PER INVOCATION, not before every individual
+    write: within one armed batch every comment is posted from the single
+    snapshot taken in step 2. A comment added by someone else mid-batch is
+    invisible to this run."""
+    errors = validate_comment_entries(entries)
+    if errors:
+        raise AdoError(_INVALID_PLAN_MSG % "; ".join(errors))
+    api_root, org, pat = credentials()
+    fresh = resolve_work_item(target[2])
+    _assert_target_unchanged(target, fresh, org)
+    plan = plan_comments(entries, comment_haystack_tokens(fresh["comments"]))
+    done = [bool(item["already_posted"]) for item in plan]
+    pending = [item for item, seen in zip(entries, done) if not seen]
+    posted = []
+    if arm:
+        posted = execute_comment_plan(
+            (api_root, target[1], target[2]), pat, pending)
+    return {
+        "ok": True, "org": target[0], "project": target[1],
+        "work_item_id": target[2], "title": fresh["title"],
+        "web_url": fresh["web_url"], "armed": bool(arm),
+        "posted_count": len(posted), "already_posted_count": done.count(True),
+        "results": _comment_results(entries, plan, posted)}
+
+
 # A rendered heading is either html_to_text's HEADING_PREFIX (from an <h1>-<h6>
 # tag) or a bare 'Acceptance Criteria:' line, which is how the section is
 # commonly styled with <b>. KNOWN LOSSINESS, stated rather than claimed away: a
@@ -949,15 +1641,50 @@ def resolve_work_item(work_item_id):
     return record
 
 
+def _load_json_file(path, what):
+    """Read one JSON file, mapping any read or parse failure to a usage error
+    the caller can fix. No credential is read and no request is issued before
+    this succeeds."""
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AdoUsageError(
+            f"cannot read the {what} file {path}: {exc}") from exc
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        raise AdoUsageError(
+            f"the {what} file {path} is not valid JSON: {exc}") from exc
+
+
+def _comment_payload(args):
+    """Load the resolved record and the rendered comments, agree on ONE target
+    triple, and run the comment lane.
+
+    THE TARGET COMES FROM THE RESOLVED RECORD AND THE RENDERED PAYLOAD, never
+    from ambient environment addressing and never from a flag: there is no
+    --id, no --project and no --org on this subcommand. The two files must
+    name the same (org, project, id) or the lane refuses -- before a
+    credential is read and before the first request."""
+    record = _load_json_file(args.record, "record")
+    payload = _load_json_file(args.comments, "comments")
+    target = agreed_target(record, payload)
+    entries = payload.get("comments") if isinstance(payload, dict) else None
+    return run_comment_lane(target, entries, args.post)
+
+
 def build_parser():
-    """Build the CLI parser. The read lane exposes exactly one subcommand,
-    `resolve --id`, and it issues no write.
+    """Build the CLI parser. The read lane exposes `resolve --id`, which
+    issues no write, and the write lane exposes `comment`, which previews by
+    default and issues its one bounded POST only under --post.
 
     There is deliberately NO credential flag and NO --project flag on any
     subcommand: credentials are read from the environment only, so they
     cannot appear on a command line that `ps` can see, and the project is
     read from the work item's own System.TeamProject, so a flag could only
-    disagree with it."""
+    disagree with it. `comment` also has no --id: its target comes from the
+    resolved record and the rendered comments payload agreeing, never from a
+    flag."""
     parser = argparse.ArgumentParser(
         description="Azure DevOps Services work-item reader (read-only).")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -967,11 +1694,33 @@ def build_parser():
     resolve.add_argument(
         "--id", required=True, dest="work_item_id",
         help="Azure DevOps work-item id, e.g. 1234.")
+    comment = sub.add_parser(
+        "comment",
+        help=("Preview the spec-loop intake comments for one work item -- "
+              "or, with --post, actually add them."))
+    comment.add_argument(
+        "--record", required=True,
+        help=("path to this module's `resolve` output (JSON). The write "
+              "target comes from this record, never from the environment "
+              "alone."))
+    comment.add_argument(
+        "--comments", required=True,
+        help=("path to the whole payload object printed by ado_intake.py "
+              "render, which carries both the comment bodies and the "
+              "(org, project, id) triple they were rendered for"))
+    comment.add_argument(
+        "--post", action="store_true",
+        help=("ARM THE WRITE. Without this flag nothing is posted: the lane "
+              "issues GETs only and reports what it would post."))
     return parser
 
 
 def _dispatch(args):
-    """Run the requested subcommand and return the object to print."""
+    """Run the requested subcommand and return the object to print. The
+    comment lane is reached only through its own subcommand, and it previews
+    unless args.post armed it."""
+    if args.command == "comment":
+        return _comment_payload(args)
     return resolve_work_item(args.work_item_id)
 
 
