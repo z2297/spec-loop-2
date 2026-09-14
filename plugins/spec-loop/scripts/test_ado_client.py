@@ -361,3 +361,170 @@ class TestHtmlToTextIsLossyButFaithful(unittest.TestCase):
     def test_malformed_tag_soup_never_raises(self):
         for raw in ("<<<>>>", "<div", "a < b", "</p></p>", "<br" * 200):
             ac.html_to_text(raw)
+
+
+def work_item(**overrides):
+    """One raw work-item response object, shaped like the documented payload.
+    Field overrides are merged into `fields`; a top-level override (e.g.
+    _links) replaces that key."""
+    fields = {
+        ac.FIELD_TITLE: "Make the widget spin",
+        ac.FIELD_DESCRIPTION: "<div>spin it</div>",
+        ac.FIELD_TYPE: "User Story",
+        ac.FIELD_PROJECT: "Contoso Platform",
+        ac.FIELD_STATE: "Active",
+    }
+    fields.update({k: v for k, v in overrides.items() if k.count(".")})
+    href = ("https://dev.azure.com/contoso/Contoso%20Platform"
+            "/_workitems/edit/1234")
+    payload = {
+        "id": 1234,
+        "fields": fields,
+        "_links": {"html": {"href": href}},
+    }
+    payload.update({k: v for k, v in overrides.items() if not k.count(".")})
+    return payload
+
+
+class TestUrlsAreComposedLocally(unittest.TestCase):
+    def test_the_work_item_url_omits_the_project_and_pins_its_api_version(self):
+        url = ac.work_item_url("https://dev.azure.com/contoso", "1234")
+        self.assertEqual(
+            url,
+            "https://dev.azure.com/contoso/_apis/wit/workitems/1234"
+            "?api-version=7.1")
+
+    def test_the_work_item_url_percent_encodes_the_id_it_was_given(self):
+        with self.assertRaises(ac.AdoUsageError):
+            ac.work_item_url("https://dev.azure.com/contoso", "1/../2")
+
+    def test_the_comments_url_carries_the_encoded_project_and_its_api_version(self):
+        url = ac.comments_url(
+            "https://dev.azure.com/contoso", "Contoso Platform", "1234")
+        self.assertEqual(
+            url,
+            "https://dev.azure.com/contoso/Contoso%20Platform/_apis/wit/"
+            "workItems/1234/comments?api-version=7.1-preview.4"
+            "&$top=100")
+
+    def test_the_comments_url_encodes_a_slash_in_a_project_name(self):
+        url = ac.comments_url("https://dev.azure.com/contoso", "a/b", "1")
+        self.assertIn("a%2Fb", url)
+        self.assertNotIn("/a/b/", url)
+
+    def test_no_url_composer_reads_anything_from_a_response_body(self):
+        """Function-scoped, and docstring-stripped, ON PURPOSE. The module's
+        docstrings are load-bearing doctrine whose JOB is to discuss
+        `nextPage`, so a whole-module token scan would fail against the
+        repo's own required prose (and would tempt an executor to weaken the
+        assertion instead of the code). What must hold is that the URL
+        composers read nothing from a response body. The behavioural proof
+        that the hostile `nextPage` in the fixture is never fetched lives in
+        Task 5's test_the_server_supplied_next_page_url_is_never_fetched;
+        this is the structural companion. Never weaken either -- conventions
+        §23 is a blocking rule."""
+        for fn in (ac.work_item_url, ac.comments_url):
+            with self.subTest(fn=fn.__name__):
+                source = inspect.getsource(fn)
+                parts = source.split('"""')
+                code = parts[2] if len(parts) >= 3 else source
+                self.assertNotIn("nextPage", code)
+                self.assertNotIn("_links", code)
+
+
+class TestTheProjectComesFromTheRead(unittest.TestCase):
+    def test_the_project_is_taken_from_system_teamproject(self):
+        fields = {ac.FIELD_PROJECT: "Contoso Platform"}
+        self.assertEqual(ac.resolve_project(fields), "Contoso Platform")
+
+    def test_a_missing_project_is_a_half_resolve_and_raises(self):
+        shapes = (
+            {},
+            {ac.FIELD_PROJECT: ""},
+            {ac.FIELD_PROJECT: "   "},
+            {ac.FIELD_PROJECT: 7},
+        )
+        for fields in shapes:
+            with self.assertRaises(ac.AdoError):
+                ac.resolve_project(fields)
+
+    def test_a_project_name_with_a_control_character_is_refused_not_rewritten(self):
+        for bad in ("a\nb", "a\rb", "a\x00b", "a\tb"):
+            with self.assertRaises(ac.AdoError):
+                ac.resolve_project({ac.FIELD_PROJECT: bad})
+
+    def test_an_unset_ado_project_asserts_nothing(self):
+        with mock.patch.dict(ac.os.environ, {}, clear=True):
+            self.assertIsNone(ac.assert_project_matches_env("Contoso Platform"))
+
+    def test_a_matching_ado_project_passes(self):
+        env = {"ADO_PROJECT": " Contoso Platform "}
+        with mock.patch.dict(ac.os.environ, env, clear=True):
+            self.assertIsNone(ac.assert_project_matches_env("Contoso Platform"))
+
+    def test_a_mismatched_ado_project_refuses_and_names_both_values(self):
+        env = {"ADO_PROJECT": "Other"}
+        with mock.patch.dict(ac.os.environ, env, clear=True):
+            with self.assertRaises(ac.AdoUsageError) as ctx:
+                ac.assert_project_matches_env("Contoso Platform")
+        message = str(ctx.exception)
+        self.assertIn("Other", message)
+        self.assertIn("Contoso Platform", message)
+
+
+class TestTheWebUrlIsValidatedBeforeItIsEverDisplayed(unittest.TestCase):
+    def test_an_href_under_the_validated_api_root_is_returned(self):
+        href = ("https://dev.azure.com/contoso/Contoso%20Platform"
+                "/_workitems/edit/1234")
+        root = "https://dev.azure.com/contoso"
+        self.assertEqual(ac.validate_web_url(href, root), href)
+
+    def test_the_host_comparison_is_case_insensitive(self):
+        href = "https://DEV.AZURE.COM/contoso/_workitems/edit/1"
+        root = "https://dev.azure.com/contoso"
+        self.assertEqual(ac.validate_web_url(href, root), href)
+
+    def test_an_href_on_another_origin_is_refused(self):
+        hrefs = (
+            "https://evil.example.com/contoso/_workitems/edit/1",
+            "http://dev.azure.com/contoso/_workitems/edit/1",
+            "https://dev.azure.com/otherorg/_workitems/edit/1",
+            "https://dev.azure.com.evil.example/contoso/x",
+            "javascript:alert(1)", "", None, 42,
+        )
+        for bad in hrefs:
+            with self.assertRaises(ac.AdoError):
+                ac.validate_web_url(bad, "https://dev.azure.com/contoso")
+
+    def test_a_prefix_lookalike_org_is_refused(self):
+        bad = "https://dev.azure.com/contoso-evil/_workitems/edit/1"
+        with self.assertRaises(ac.AdoError):
+            ac.validate_web_url(bad, "https://dev.azure.com/contoso")
+
+    def test_a_mismatched_href_names_the_other_host_but_not_its_path(self):
+        bad = ("https://contoso.visualstudio.com/Contoso%20Platform"
+               "/_workitems/edit/1234?secret=leak")
+        with self.assertRaises(ac.AdoError) as ctx:
+            ac.validate_web_url(bad, "https://dev.azure.com/contoso")
+        message = str(ctx.exception)
+        self.assertIn("https://dev.azure.com/contoso", message)
+        self.assertIn("https://contoso.visualstudio.com", message)
+        self.assertNotIn("_workitems", message)
+        self.assertNotIn("secret", message)
+
+
+class TestFetchWorkItem(unittest.TestCase):
+    def test_the_read_issues_one_get_to_the_locally_composed_url(self):
+        payload = json.dumps(work_item()).encode("utf-8")
+        with mock.patch.object(ac, "_http_get", return_value=payload) as get:
+            item = ac.fetch_work_item(
+                "https://dev.azure.com/contoso", "tok", "1234")
+        self.assertEqual(item["id"], 1234)
+        get.assert_called_once_with(
+            "https://dev.azure.com/contoso/_apis/wit/workitems/1234"
+            "?api-version=7.1", "tok")
+
+    def test_a_non_object_response_is_a_contract_failure(self):
+        with mock.patch.object(ac, "_http_get", return_value=b"[]"):
+            with self.assertRaises(ac.AdoError):
+                ac.fetch_work_item("https://dev.azure.com/contoso", "tok", "1")

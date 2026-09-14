@@ -484,6 +484,172 @@ def html_to_text(raw):
     return _tidy_text(parser.text())
 
 
+# Verified reference names (Microsoft Learn field index, read 2026-09-14).
+# Fields are a FLAT map under `fields`, keyed by reference name.
+FIELD_TITLE = "System.Title"                  # String, all types
+FIELD_DESCRIPTION = "System.Description"      # HTML, all types
+FIELD_TYPE = "System.WorkItemType"            # String, all types
+FIELD_PROJECT = "System.TeamProject"          # String, all types
+FIELD_STATE = "System.State"                  # String, all types
+# HTML, and present on Bug / Epic / Feature / Product Backlog Item ONLY. An
+# Agile User Story and a Task have NO acceptance-criteria field at all, so its
+# absence is the common case and never a resolve failure.
+FIELD_ACCEPTANCE_CRITERIA = "Microsoft.VSTS.Common.AcceptanceCriteria"
+# HTML, Bug only -- and usually where a Bug's real detail lives, which is why
+# it gets its own record field instead of being substituted into description.
+FIELD_REPRO_STEPS = "Microsoft.VSTS.TCM.ReproSteps"
+
+COMMENT_PAGE_SIZE = 100
+
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def work_item_url(api_root, work_item_id):
+    """Compose the work-item read URL LOCALLY from the validated api_root plus
+    a literal path. The project segment is deliberately OMITTED: it is
+    optional on this endpoint, and issuing the read without it is what lets
+    the project be discovered from the response instead of supplied from the
+    environment. The id is re-validated and percent-encoded here even though
+    the caller validated it -- defence in depth, per the rule that an
+    untrusted value is encoded regardless before it reaches a URL segment."""
+    encoded = urllib.parse.quote(validate_work_item_id(work_item_id), safe="")
+    return (f"{api_root}/_apis/wit/workitems/{encoded}"
+            f"?api-version={API_VERSION_WORK_ITEM}")
+
+
+def comments_url(api_root, project, work_item_id, continuation_token=None):
+    """Compose a comment-list page URL LOCALLY from the validated api_root, the
+    percent-encoded project (REQUIRED on this endpoint) and a literal path.
+
+    NOTE THE TWO DISTINCT TRANSFORMS OF ONE PROJECT NAME: this URL needs the
+    ORIGINAL name, quote(..., safe="")-encoded. An artifact path needs a lossy
+    filesystem slug instead. Reusing a slug here would 404 on every project
+    whose name contains a space.
+
+    The continuation token is an opaque SERVER-CHOSEN string: it is validated
+    against CONTINUATION_TOKEN_RE by the caller and percent-encoded here. The
+    response's fully-formed `nextPage` URL is never read and never fetched --
+    composing the URL locally is what keeps every request inside the
+    already-validated origin."""
+    encoded_project = urllib.parse.quote(project, safe="")
+    encoded_id = urllib.parse.quote(validate_work_item_id(work_item_id), safe="")
+    url = (f"{api_root}/{encoded_project}/_apis/wit/workItems/{encoded_id}"
+           f"/comments?api-version={API_VERSION_COMMENTS_READ}"
+           f"&$top={COMMENT_PAGE_SIZE}")
+    if continuation_token:
+        token = urllib.parse.quote(continuation_token, safe="")
+        url += f"&continuationToken={token}"
+    return url
+
+
+def fetch_work_item(api_root, pat, work_item_id):
+    """GET one work item READ-ONLY and return the raw response object. The id
+    is validated before any request is issued (inside work_item_url). A
+    response that is not a JSON object is a contract failure rather than
+    something to index into."""
+    url = work_item_url(api_root, work_item_id)
+    payload = _parse_json(_http_get(url, pat).decode("utf-8"), "work item")
+    if not isinstance(payload, dict):
+        raise AdoError(
+            "Azure DevOps returned a work-item response that is not an "
+            "object; refusing to read fields from it")
+    return payload
+
+
+def resolve_project(fields):
+    """Resolve the project from the work item's own System.TeamProject, which
+    is present on every work-item type. THE PROJECT IS NEVER TAKEN FROM THE
+    ENVIRONMENT: the comment endpoints require it, and an operator-supplied
+    project could disagree with where the item actually lives -- a 404 at
+    best, a comment addressed to another item's route at worst.
+
+    An absent or empty value is a HALF-RESOLVE and raises: the record would
+    otherwise carry no way to reconstruct the comment route. A name carrying a
+    control character or a line break is REFUSED, never rewritten -- it also
+    lands in artifact front matter downstream, where a raw newline inside a
+    quoted scalar is a hazard."""
+    raw = fields.get(FIELD_PROJECT)
+    project = raw.strip() if isinstance(raw, str) else ""
+    if not project:
+        raise AdoError(
+            f"Azure DevOps returned a work item with no {FIELD_PROJECT}; "
+            "refusing to emit a record that cannot name its own project")
+    if _CONTROL_CHAR_RE.search(project):
+        raise AdoError(
+            f"the work item's {FIELD_PROJECT} contains a control character or "
+            "line break; refusing it rather than rewriting a project name")
+    return project
+
+
+def assert_project_matches_env(project):
+    """Treat ADO_PROJECT, when set, as an ASSERTION about the resolved project
+    and refuse on a mismatch, naming both values and preferring neither. When
+    unset -- the recommended state -- this asserts nothing: you cannot mis-set
+    what you do not set, and removing the input is strictly stronger than
+    validating it.
+
+    THE COMPARISON IS DELIBERATELY EXACT (after stripping surrounding
+    whitespace only). Azure DevOps project names are case-preserving, this is
+    an assertion-only path that fails closed and names both values preferring
+    neither, and a case-insensitive or punctuation-folding compare would
+    quietly widen what the assertion accepts. Do not 'fix' it into one."""
+    expected = (os.environ.get(PROJECT_ENV_VAR) or "").strip()
+    if expected and expected != project:
+        raise AdoUsageError(
+            f"{PROJECT_ENV_VAR} is set to {expected!r} but the work item "
+            f"lives in project {project!r}; refusing to continue. Unset "
+            f"{PROJECT_ENV_VAR} (the project is read from the work item) or "
+            "correct it to match.")
+    return None
+
+
+def validate_web_url(href, api_root):
+    """Validate the work item's body-supplied _links.html.href and return it.
+
+    THIS URL IS NEVER FETCHED -- it is stored in the record and DISPLAYED. It
+    is validated anyway, and for a specific reason: it is displayed in the
+    confirmation prompt where an operator authorizes an irreversible write, so
+    a spoofed href would look to them like a genuine work-item link at exactly
+    the wrong moment.
+
+    Requiring it to start with the already-validated api_root plus '/' does
+    double duty: it re-applies the host allow-list to a value that never
+    passed through it, and it asserts the org the response reports is the org
+    that was asked for -- a wrong org mis-targets exactly like a wrong
+    project. The '/' is load-bearing: without it 'contoso-evil' would pass as
+    'contoso'."""
+    text = href if isinstance(href, str) else ""
+    prefix = f"{api_root}/"
+    if not text.lower().startswith(prefix.lower()):
+        raise AdoError(
+            "the work item's web URL does not sit under the requested "
+            f"organization {api_root} (the response's URL is on "
+            f"{_href_origin(text)}); refusing to emit or display it. If your "
+            "organization has both host forms, set ADO_ORG_URL to the form "
+            "Azure DevOps itself returns.")
+    return text
+
+
+def _href_origin(text):
+    """Render just the scheme+host of a body-supplied href, for a refusal
+    message. SCHEME AND HOST ONLY: the path and query are untrusted response
+    data and must never be echoed. Returns '<unparseable>' rather than raise,
+    because this runs only on an error path.
+
+    Without this, the realistic trigger -- an org whose _links.html.href comes
+    back on the legacy <org>.visualstudio.com host while ADO_ORG_URL is the
+    dev.azure.com form, or the reverse -- produces a correct, fail-closed exit
+    1 that reads to the operator as an unexplained outage. The mocked
+    transport suite cannot surface that; the message has to."""
+    try:
+        parts = urllib.parse.urlsplit(text)
+    except ValueError:
+        return "<unparseable>"
+    if not parts.scheme or not parts.hostname:
+        return "<unparseable>"
+    return f"{parts.scheme}://{parts.hostname}"
+
+
 def main(argv=None):
     """Placeholder completed in the CLI task; see build_parser/_dispatch."""
     raise NotImplementedError
