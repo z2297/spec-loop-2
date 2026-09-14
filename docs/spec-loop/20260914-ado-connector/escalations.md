@@ -133,3 +133,34 @@ Rendered from EscalationRecords; answers are written back into the matching entr
 - Answer: ACCEPTED. Both open violations are whole-file class_lines with function=null on ado_client.py (1533) and test_ado_client.py (1633) - the identical fingerprints already accepted for slices a1 and a2 this run under the repo's standing human ruling from 20260825-scope-ceiling that class_lines is computed over the WHOLE file and reports file length, not class size. a5 is a behaviour-neutral documenta…
 - Answered-at: 2026-09-14T20:09:57Z
 
+## [run] Publish choice for run 20260914-ado-connector   (status: ANSWERED)
+<!-- escalation-id: run:publish -->
+<!-- escalation-identity: 0e6d6b4857749dcc -->
+- Trigger: ambiguity
+- Opened: 2026-09-14T20:30:00Z
+- Context: All five slices are merged into spec-loop-run/20260914-ado-connector (HEAD d780d8e plus the run-state commit 6c9d2d8), cut from main at ca497d2. The Phase 5 six-segment suite is GREEN controller-measured, the cross-slice integration review returned PASS with no safety flag, run state and the runbook are committed, and the knowledge graph is synthesised. NOTHING has been pushed: the loop never pus…
+- The decision: How should this run be published?
+- Options:
+  1. Push the branch and open a PR — (RECOMMENDED DEFAULT) Pushes spec-loop-run/20260914-ado-connector to origin and opens a pull request against main. Keeps main untouched and gives the connector a review surface - reasonable given it adds a first-of-its-kind irreversible external write to this plugin.
+  2. Push the branch only, no PR — Pushes the branch to origin for safekeeping and leaves opening a PR to you.
+  3. Merge onto main locally with --no-ff — Merges the run onto the default branch in this clone without pushing. main moves; nothing leaves the machine.
+  4. Leave it local — No push and no merge. The branch stays in this clone exactly as it is; you decide later.
+- If unanswered: leave it local - the branch is intact and nothing is lost
+- Answer: Merge onto main and cut a new release.
+- Answered-at: 2026-09-14T20:33:07Z
+
+## [run] Does cutting the release include pushing main and the v2.6.0 tag?   (status: ANSWERED)
+<!-- escalation-id: run:publish-2 -->
+<!-- escalation-identity: 61650c3bd2a2027c -->
+- Trigger: ambiguity
+- Opened: 2026-09-14T20:35:00Z
+- Context: The human asked to merge to main and cut a new release. Version 2.6.0 is settled on precedent. But release.py neither pushes nor tags: it edits plugin.json, adds a marketplace ARCHIVE entry whose source is pinned to git tag v<version>, and rolls the CHANGELOG. So a release cut without a pushed tag leaves that archive entry pointing at a tag that does not exist. Pushing main and creating a tag on …
+- The decision: How far should the release go?
+- Options:
+  1. Local only — (RECOMMENDED DEFAULT) Merge main, run release.py 2.6.0, commit. Nothing pushed, no tag. You push and tag when ready.
+  2. Push main and create the v2.6.0 tag — Also pushes main to origin and creates and pushes the annotated tag, so the marketplace archive entry resolves.
+  3. Push main only — Pushes main without the tag; the archive entry stays dangling until you tag.
+- If unanswered: local only
+- Answer: Push main and create and push the v2.6.0 tag - the full outward-facing release.
+- Answered-at: 2026-09-14T20:33:07Z
+

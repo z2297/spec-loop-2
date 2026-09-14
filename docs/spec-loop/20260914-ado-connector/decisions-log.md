@@ -85,3 +85,4 @@ Rendered from the run's events; append-only, and nothing parses it back.
 [phase5] PHASE5-GATE: GREEN — Controller-measured first-hand on the integration branch, all six segments: marketplace valid; 126 root tests OK; 2143 plugin tests OK; coverage 2269 tests, ado_client.py 99.3% vs floor 94, ado_intak… — AT: 2026-09-14T20:15:57Z
 [phase5] DECISION: No remediation slice. The integration review returned PASS with no safety flag and all five cross-slice seams sound; its three findings are non-blocking and are recorded as follow-ons in the runbook. — AT: 2026-09-14T20:21:24Z
 [phase5] DEFERRED: VERIFIED FIRST-HAND by the controller. test_doctrine_jira_intake.py carries TWO pins for the artifact root: test_the_command_names_the_gitignored_artifact_root (the command prose) at :149 AND a separ… — AT: 2026-09-14T20:27:34Z
+[run] DECISION: Release version 2.6.0 (minor bump from 2.5.1). — AT: 2026-09-14T20:32:24Z
