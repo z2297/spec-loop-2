@@ -148,6 +148,125 @@ def validate_project_name(value):
     return value
 
 
+TRIPLE_FIELDS = ("org", "project", "id")
+_SLUG_DISALLOWED_RE = re.compile(r"[^a-z0-9._-]+")
+_SLUG_DASH_RUN_RE = re.compile(r"-{2,}")
+_SLUG_DOT_RUN_RE = re.compile(r"[.]{2,}")
+
+
+def _dict_triple_values(triple):
+    """The raw org, project and id of a record-shaped dict, or raise. (PURE)"""
+    if any(field not in triple for field in TRIPLE_FIELDS):
+        raise IntakeUsageError(
+            "error: the target must carry org, project and id; got keys "
+            "%s" % (sorted(triple),))
+    return [triple[field] for field in TRIPLE_FIELDS]
+
+
+def validate_triple(triple):
+    """Return the validated (org, project, id) tuple, else raise. (PURE)
+
+    Accepts the tuple form or a record-shaped dict, so a caller can pass the
+    resolved record straight through without re-spelling the keys. The triple
+    is ONE parameter everywhere it is consumed: it is the single unit that
+    binds a rendered preview to the work item it was rendered for."""
+    if isinstance(triple, dict):
+        values = _dict_triple_values(triple)
+    elif isinstance(triple, (list, tuple)) and len(triple) == 3:
+        values = list(triple)
+    else:
+        raise IntakeUsageError(
+            "error: expected an (org, project, id) triple; got %r"
+            % (triple,))
+    return (validate_org(values[0]),
+            validate_project_name(values[1]),
+            validate_work_item_id(values[2]))
+
+
+def _collapse_slug_runs(slug):
+    """Collapse '-' and '.' runs, then strip both from the ends. (PURE)
+
+    Collapsing '.' runs is what makes '..' STRUCTURALLY unrepresentable in a
+    slug rather than something checked for afterwards, and stripping is what
+    keeps a slug from naming a dotfile. project_slug applies this twice --
+    once before the length cap and once after -- because the cap itself can
+    expose a fresh trailing separator."""
+    collapsed = _SLUG_DASH_RUN_RE.sub("-", _SLUG_DOT_RUN_RE.sub(".", slug))
+    return collapsed.strip("-.")
+
+
+def project_slug(project):
+    """A path-safe slug for one ADO project name. Lossy and TOTAL. (PURE)
+
+    Whitelist-by-construction, not an allow-list check: casefold, replace
+    every character outside [a-z0-9._-] with '-', collapse runs, strip
+    leading/trailing '-' and '.', cap the length, and refuse an empty
+    result. '..', '/', '\\' and NUL are therefore unrepresentable rather
+    than checked for. This slug is for the FILESYSTEM ONLY -- a request URL
+    must use the original name, percent-encoded by the caller, because the
+    slug 404s on every project whose name contains a space."""
+    name = validate_project_name(project)
+    slug = _collapse_slug_runs(_SLUG_DISALLOWED_RE.sub("-", name.casefold()))
+    slug = _collapse_slug_runs(slug[:PROJECT_MAX_SLUG])
+    if not slug or ".." in slug:
+        raise IntakeUsageError(
+            "error: the project name %r has no path-safe slug; rename the "
+            "project or run the intake from a project whose name contains "
+            "at least one letter or digit" % (project,))
+    return slug
+
+
+def _target_discriminator(org, project):
+    """8 hex of sha256 over the ORIGINAL org and project names. (PURE)
+
+    The slug is lossy, so two different projects can slug identically, and
+    work item 42 exists in every project of every org. The discriminator is
+    taken from the unslugged names so neither collision is possible."""
+    joined = "\n".join([org, project]).encode("utf-8")
+    return hashlib.sha256(joined).hexdigest()[:8]
+
+
+def target_dir(triple):
+    """'<slug>-<hash8>/<id>' for one validated triple. (PURE)"""
+    org, project, work_item_id = validate_triple(triple)
+    slug = project_slug(project)
+    discriminator = _target_discriminator(org, project)
+    return "%s-%s/%s" % (slug, discriminator, work_item_id)
+
+
+def _validated_artifact_root(artifact_root):
+    """The normalized artifact root, or raise. (PURE)
+
+    The root is the caller's, not the work item's, but it is still the outer
+    half of a composed path, so it is checked before anything is composed
+    against it."""
+    root = str(artifact_root or "").strip().rstrip("/")
+    segments = root.split("/")
+    if not root or root.startswith("/") or "\\" in root or ".." in segments:
+        raise IntakeUsageError(
+            "error: artifact root %r must be a relative path with no '..' "
+            "segment, and no backslash" % (artifact_root,))
+    return root
+
+
+def artifact_path(triple, artifact_root):
+    """Compose the intake artifact path and ASSERT it sits under the root.
+
+    Sanitize-and-assert: every segment is made safe first, then the composed
+    path is re-checked against the normalized root, so no later change to
+    the composition can escape unnoticed. The triple is one parameter both
+    to keep the signature narrow and because org, project and id are only
+    ever meaningful together."""
+    relative = target_dir(triple)
+    root = _validated_artifact_root(artifact_root)
+    path = "%s/%s/intake.md" % (root, relative)
+    if not path.startswith(root + "/") or ".." in path.split("/"):
+        raise IntakeUsageError(
+            "error: refusing to write outside the artifact root %r"
+            % (root,))
+    return path
+
+
 def main(argv=None):
     """Placeholder until the render subcommand lands (slice a3, task 8)."""
     raise NotImplementedError
