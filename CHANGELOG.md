@@ -7,6 +7,24 @@ All notable changes to the spec-loop plugin are documented here. The format is
 
 ## [Unreleased]
 
+### Added
+- **`/spec-loop:ado-intake` — an Azure DevOps Services work-item intake lane, the Jira
+  lane's sibling.** Resolves one work-item id read-only through `ado_client.py` (stdlib
+  `urllib` REST, PAT-as-HTTP-Basic from `ADO_ORG_URL` + `ADO_PAT`, https-only host
+  allow-list, redirects refused outright, and no URL from a response body ever fetched),
+  renders a pinned-schema intake artifact under the gitignored `.spec-loop-ado/` root
+  through the pure `ado_intake.py`, and previews the intake comments it would add. Its
+  **one** Azure DevOps write is adding a comment to the work item it just read — off by
+  default, armed only by `--post` after a separate confirmation that names the resolved
+  title and web URL, target-bound to the record's `(org, project, id)` triple, and
+  dedupe-gated against the work item's own comment list. The project is taken from the
+  work item's own `System.TeamProject`, never from the environment; `ADO_PROJECT` is
+  optional and only an assertion. Known limits are stated in the command's security
+  boundary rather than claimed away: the marker's survival across the write/read
+  api-version pair is not yet verified against a live organization, a mid-batch failure is
+  fail-closed per comment but not transactional, deleting a posted comment in the web UI
+  re-arms it, and the temporary directory retains a full copy of the work item.
+
 ## [2.5.1] - 2026-09-10
 ### Fixed
 - **A tab-indented python file was measured as if it had no nesting at all, and now
