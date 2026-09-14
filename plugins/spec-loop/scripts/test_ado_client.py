@@ -274,6 +274,13 @@ class TestTheSecretNeverLeaks(unittest.TestCase):
     def test_an_http_error_message_names_only_the_url(self):
         url = "https://dev.azure.com/contoso/_apis/wit/workitems/1"
         error = urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+        # An HTTPError IS a response object (addinfourl extends
+        # tempfile._TemporaryFileWrapper), so an unclosed one emits a
+        # ResourceWarning to stderr whenever the collector gets to it --
+        # landing in whichever test happens to be capturing stderr then.
+        # Closed deterministically here so this file leaks no warning into
+        # another test module.
+        self.addCleanup(error.close)
         with mock.patch.object(ac._OPENER, "open", side_effect=error):
             with self.assertRaises(ac.AdoError) as ctx:
                 ac._http_get(url, "sekrit-pat")
@@ -528,3 +535,187 @@ class TestFetchWorkItem(unittest.TestCase):
         with mock.patch.object(ac, "_http_get", return_value=b"[]"):
             with self.assertRaises(ac.AdoError):
                 ac.fetch_work_item("https://dev.azure.com/contoso", "tok", "1")
+
+
+def raw_comment(cid, text, author="Ada", id_key="id"):
+    """One raw comment object. `id_key` selects which of the two documented
+    spellings carries the id: the definition table names it `id`, while
+    Microsoft's own sample payloads show `commentId`."""
+    return {
+        id_key: cid,
+        "text": text,
+        "createdBy": {"displayName": author},
+        "createdDate": "2026-09-14T10:00:00Z",
+        "modifiedDate": "2026-09-14T10:00:00Z",
+    }
+
+
+def comment_page(comments, total, token=None):
+    """One raw comment-list page. Every page also carries a server-chosen
+    `nextPage` URL, which this client must never fetch -- it is included in
+    the fixture pointing at a hostile origin precisely so a test can prove the
+    client ignores it."""
+    page = {
+        "comments": comments,
+        "totalCount": total,
+        "nextPage": "https://evil.example.com/steal-the-pat",
+    }
+    if token is not None:
+        page["continuationToken"] = token
+    return page
+
+
+class TestTheCommentSweepIsFailClosed(unittest.TestCase):
+    def _sweep(self, pages):
+        bodies = [json.dumps(p).encode("utf-8") for p in pages]
+        with mock.patch.object(ac, "_http_get", side_effect=bodies) as get:
+            result = ac.fetch_comments(
+                "https://dev.azure.com/contoso", "tok", "Contoso Platform",
+                "1234")
+        return result, get
+
+    def test_a_single_page_sweep_normalizes_every_comment(self):
+        raws = [raw_comment(1, "hello"), raw_comment(2, "world")]
+        comments, _ = self._sweep([comment_page(raws, 2)])
+        self.assertEqual([c["text"] for c in comments], ["hello", "world"])
+        self.assertEqual([c["id"] for c in comments], ["1", "2"])
+        self.assertEqual(comments[0]["author"], "Ada")
+        self.assertEqual(comments[0]["created"], "2026-09-14T10:00:00Z")
+
+    def test_an_empty_history_is_a_legitimate_empty_list(self):
+        comments, _ = self._sweep([comment_page([], 0)])
+        self.assertEqual(comments, [])
+
+    def test_the_sweep_follows_the_continuation_token_it_composes_itself(self):
+        pages = [
+            comment_page([raw_comment(1, "a")], 2, token="TOKEN-2"),
+            comment_page([raw_comment(2, "b")], 2),
+        ]
+        comments, get = self._sweep(pages)
+        self.assertEqual([c["text"] for c in comments], ["a", "b"])
+        second_url = get.call_args_list[1].args[0]
+        self.assertIn("continuationToken=TOKEN-2", second_url)
+        self.assertTrue(
+            second_url.startswith("https://dev.azure.com/contoso/"))
+
+    def test_the_server_supplied_next_page_url_is_never_fetched(self):
+        pages = [
+            comment_page([raw_comment(1, "a")], 2, token="TOKEN-2"),
+            comment_page([raw_comment(2, "b")], 2),
+        ]
+        _, get = self._sweep(pages)
+        for call in get.call_args_list:
+            self.assertNotIn("evil.example.com", call.args[0])
+
+    def test_a_comment_id_spelled_commentid_is_accepted(self):
+        raws = [raw_comment(9, "a", id_key="commentId")]
+        comments, _ = self._sweep([comment_page(raws, 1)])
+        self.assertEqual(comments[0]["id"], "9")
+
+    def test_a_comment_with_no_text_raises_rather_than_shrink_the_haystack(self):
+        broken_comments = (
+            {"id": 1},
+            {"id": 1, "text": ""},
+            {"id": 1, "text": None},
+            {"id": 1, "text": 7},
+        )
+        for broken in broken_comments:
+            with self.subTest(broken=broken):
+                with self.assertRaises(ac.AdoError):
+                    self._sweep([comment_page([broken], 1)])
+
+    def test_a_missing_or_non_numeric_total_count_raises(self):
+        pages = (
+            {"comments": []},
+            {"comments": [], "totalCount": None},
+            {"comments": [], "totalCount": "lots"},
+        )
+        for page in pages:
+            with self.subTest(page=page):
+                with self.assertRaises(ac.AdoError):
+                    self._sweep([page])
+
+    def test_a_page_missing_the_comments_list_raises(self):
+        pages = (
+            {"totalCount": 1},
+            {"comments": {}, "totalCount": 1},
+            {"comments": "a", "totalCount": 1},
+        )
+        for page in pages:
+            with self.subTest(page=page):
+                with self.assertRaises(ac.AdoError):
+                    self._sweep([page])
+
+    def test_terminating_with_fewer_comments_than_total_count_raises(self):
+        with self.assertRaises(ac.AdoError) as ctx:
+            self._sweep([comment_page([raw_comment(1, "a")], 5)])
+        self.assertIn("5", str(ctx.exception))
+
+    def test_a_continuation_token_that_fails_its_allow_list_raises(self):
+        for bad in ("tok en", "tok\n", "a" * 513, "tok&x=1", 42, []):
+            with self.subTest(bad=bad):
+                page = comment_page([raw_comment(1, "a")], 2, token=bad)
+                with self.assertRaises(ac.AdoError):
+                    self._sweep([page])
+
+    def test_a_traversal_shaped_token_is_neutralised_by_percent_encoding(self):
+        """CONTINUATION_TOKEN_RE is pinned verbatim by conventions §31 and it
+        permits '.', '/' and '-', so '../etc' MATCHES the allow-list. That is
+        not a hole, and the regex is NOT what defends here: the token only
+        ever lands in a query PARAMETER, quote(safe="")-encoded, so no path
+        traversal is expressible. Assert the real defence directly rather
+        than asserting a rejection that does not (and need not) happen."""
+        url = ac.comments_url(
+            "https://dev.azure.com/contoso", "P", "1", "../etc")
+        self.assertIn("continuationToken=..%2Fetc", url)
+        self.assertNotIn("../etc", url)
+        self.assertNotIn("/etc", url)
+
+    def test_an_unterminated_sweep_is_capped_and_raises(self):
+        page = comment_page([raw_comment(1, "a")], 10 ** 6, token="TOKEN")
+        bodies = [json.dumps(page).encode("utf-8")] * (ac.MAX_COMMENT_PAGES + 1)
+        with mock.patch.object(ac, "_http_get", side_effect=bodies):
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac.fetch_comments(
+                    "https://dev.azure.com/contoso", "tok",
+                    "Contoso Platform", "1234")
+        self.assertIn(str(ac.MAX_COMMENT_PAGES), str(ctx.exception))
+
+    def test_deleted_comments_stay_excluded(self):
+        """includeDeleted stays at its default. Setting it would let a comment
+        deleted in the web UI permanently suppress a legitimate re-post.
+
+        Scoped to comments_url -- the only function that can send the
+        parameter -- and matched as `includeDeleted=`, because conventions
+        §24.3 REQUIRES the module and fetch_comments docstrings to document
+        this consequence by name. A whole-module scan for the bare word would
+        fail against that mandated prose."""
+        source = inspect.getsource(ac.comments_url)
+        self.assertNotIn("includeDeleted=", source)
+        self.assertNotIn(
+            "includeDeleted=true", inspect.getsource(ac.fetch_comments))
+
+
+class TestTheDedupeHaystackComesFromStoredTextOnly(unittest.TestCase):
+    """A marker is matched against what was STORED. renderedText is an
+    optional HTML RENDERING that a renderer may entity-encode or strip; a
+    marker it altered would go unmatched and the comment lane would post
+    again on a live work item. This test fails if the gate is ever
+    repointed."""
+
+    def test_the_normalized_text_is_the_stored_text_not_the_rendered_text(self):
+        raw = raw_comment(1, "[spec-loop-intake:decision:0123456789ab] body")
+        raw["renderedText"] = "<p>totally different</p>"
+        normalized = ac._normalize_comment(raw)
+        self.assertEqual(normalized["text"], raw["text"])
+        self.assertNotIn("renderedText", normalized)
+
+    def test_the_module_never_mentions_rendered_text_as_a_data_source(self):
+        """Module-wide but QUOTE-SCOPED: it looks for the field being used as
+        a dict KEY ('"renderedText"'), not for the bare word. The docstrings
+        must stay free to explain why renderedText is not the haystack, and
+        they name it with backticks, so this cannot fire on its own required
+        prose."""
+        source = inspect.getsource(ac)
+        self.assertNotIn('"renderedText"', source)
+        self.assertNotIn("'renderedText'", source)

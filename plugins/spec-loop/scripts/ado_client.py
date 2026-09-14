@@ -650,6 +650,168 @@ def _href_origin(text):
     return f"{parts.scheme}://{parts.hostname}"
 
 
+MAX_COMMENT_PAGES = 100
+
+# The continuationToken is an opaque SERVER-CHOSEN string that lands in a
+# query string. It is allow-listed rather than trusted, and a token that does
+# not match RAISES -- dropping it would silently truncate the sweep, which is
+# the same failure mode as a missing totalCount.
+CONTINUATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9+/=_.\-]{1,512}$")
+
+_MISSING_COMMENTS_MSG = (
+    "Azure DevOps comment page is missing the 'comments' list; cannot read "
+    "the full comment history")
+_MISSING_TOTAL_MSG = (
+    "Azure DevOps comment page is missing a numeric 'totalCount'; cannot "
+    "tell whether the full comment history has been read")
+_MISSING_TEXT_MSG = (
+    "Azure DevOps returned a comment with no 'text'; refusing to dedupe "
+    "against a comment history with a hole in it")
+_BAD_TOKEN_MSG = (
+    "Azure DevOps returned a 'continuationToken' outside "
+    + CONTINUATION_TOKEN_RE.pattern
+    + "; refusing a possibly-truncated comment history rather than dropping "
+      "the token")
+
+
+def _comment_id(raw):
+    """Read a comment's id, accepting either documented spelling. The
+    comment-list DEFINITION table names the field `id`, while Microsoft's own
+    SAMPLE PAYLOADS on the list and add pages show `commentId`. Read
+    defensively: prefer whichever is present."""
+    for key in ("id", "commentId"):
+        value = raw.get(key)
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _comment_text(raw):
+    """Read a comment's STORED text, fail-closed.
+
+    This is the dedupe haystack, and it comes from `text` -- never from
+    `renderedText`, an optional HTML rendering of the same body. A marker that
+    an HTML renderer entity-encoded or stripped would go UNMATCHED, every
+    entry would plan as not-already-posted, and the comment lane would post
+    again on a live work item.
+
+    `text` is on the base Comment definition and is returned without $expand
+    (verified 2026-09-14), so a missing one is a shape surprise -- and three
+    real shapes still produce one: a redacted comment surfaced under
+    includeDeleted, a legitimately empty comment, and any future projection
+    change. A documented default projection is not a runtime guarantee, so
+    this raises rather than contribute an empty string to the haystack."""
+    text = raw.get("text")
+    if not isinstance(text, str) or not text:
+        raise AdoError(_MISSING_TEXT_MSG)
+    return text
+
+
+def _normalize_comment(raw):
+    """Normalize one raw comment to
+    {"id", "author", "created", "modified", "text"}. `renderedText` and
+    `nextPage` are deliberately NOT surfaced: one would tempt a later change
+    to dedupe against a rendering, the other is a server-chosen URL nothing
+    may fetch."""
+    if not isinstance(raw, dict):
+        raise AdoError(_MISSING_TEXT_MSG)
+    created_by = raw.get("createdBy")
+    author = ""
+    if isinstance(created_by, dict):
+        author = created_by.get("displayName")
+    return {
+        "id": _comment_id(raw),
+        "author": author or "",
+        "created": raw.get("createdDate") or "",
+        "modified": raw.get("modifiedDate") or "",
+        "text": _comment_text(raw),
+    }
+
+
+def _page_total(page):
+    """Extract one page's reported `totalCount` as an int, fail-closed. A
+    missing or non-numeric totalCount must NOT be treated as 0 -- collapsing
+    it to 0 would make the very first page look complete and silently truncate
+    the sweep, defeating comment-based dedupe on a chatty work item."""
+    total = page.get("totalCount")
+    if isinstance(total, bool) or not isinstance(total, (int, float, str)):
+        raise AdoError(_MISSING_TOTAL_MSG)
+    try:
+        return int(total)
+    except (TypeError, ValueError):
+        raise AdoError(_MISSING_TOTAL_MSG) from None
+
+
+def _page_token(page):
+    """Extract one page's `continuationToken`, or None when the sweep is done.
+    A present token that fails CONTINUATION_TOKEN_RE RAISES -- dropping it
+    would end the sweep early and dedupe against a truncated history."""
+    token = page.get("continuationToken")
+    if token is None or token == "":
+        return None
+    if not isinstance(token, str) or not CONTINUATION_TOKEN_RE.fullmatch(token):
+        raise AdoError(_BAD_TOKEN_MSG)
+    return token
+
+
+def _page_comments(page):
+    """The page's `comments` list, fail-closed on any other shape: swallowing
+    a shape change here would silently degrade to 'no comments' and defeat
+    dedupe."""
+    if not isinstance(page, dict):
+        raise AdoError(_MISSING_COMMENTS_MSG)
+    comments = page.get("comments")
+    if not isinstance(comments, list):
+        raise AdoError(_MISSING_COMMENTS_MSG)
+    return comments
+
+
+def _assert_sweep_complete(collected, total, work_item_id):
+    """Refuse a sweep that terminated with fewer comments than the server's
+    own totalCount: deduping against a truncated history double-posts."""
+    if len(collected) < total:
+        raise AdoError(
+            f"read {len(collected)} comment(s) for work item {work_item_id} "
+            f"but Azure DevOps reported totalCount {total}; refusing a "
+            "possibly-truncated comment history")
+
+
+def fetch_comments(api_root, pat, project, work_item_id):
+    """GET the FULL, paginated comment list for one work item, normalized to
+    [{"id", "author", "created", "modified", "text"}, ...] in server order.
+
+    Sweeps until no `continuationToken` comes back, capped at
+    MAX_COMMENT_PAGES so a misbehaving server cannot loop forever, then
+    cross-checks the collected count against the reported totalCount. Every
+    page URL is composed LOCALLY from the validated api_root plus the
+    regex-validated, percent-encoded token: the response's own fully-formed
+    `nextPage` URL is never fetched, because it would pass through neither the
+    host allow-list (which validated the ORG URL, not a URL this client
+    volunteers to fetch) nor the redirect refusal (there is no 3xx to refuse).
+
+    includeDeleted stays at its DEFAULT, so deleted comments are excluded.
+    The consequence is deliberate and belongs in the command's prose: deleting
+    a spec-loop comment in the Azure DevOps web UI RE-ARMS it, and a later
+    armed run posts it again. Setting includeDeleted to true to 'fix' that
+    would make a deleted comment permanently suppress a legitimate re-post."""
+    collected = []
+    total = 0
+    token = None
+    for _ in range(MAX_COMMENT_PAGES):
+        url = comments_url(api_root, project, work_item_id, token)
+        page = _parse_json(_http_get(url, pat).decode("utf-8"), "comment page")
+        total = _page_total(page)
+        collected.extend(_normalize_comment(c) for c in _page_comments(page))
+        token = _page_token(page)
+        if token is None:
+            _assert_sweep_complete(collected, total, work_item_id)
+            return collected
+    raise AdoError(
+        f"comment pagination did not terminate after {MAX_COMMENT_PAGES} "
+        f"pages for work item {work_item_id}; refusing a possibly-truncated "
+        "comment history")
+
+
 def main(argv=None):
     """Placeholder completed in the CLI task; see build_parser/_dispatch."""
     raise NotImplementedError
