@@ -812,6 +812,103 @@ def fetch_comments(api_root, pat, project, work_item_id):
         "comment history")
 
 
+def comment_add_url(route):
+    """Compose the comment-ADD URL LOCALLY from the validated api_root, the
+    percent-encoded project and a literal path. `route` is the 3-tuple
+    (api_root, project, work_item_id).
+
+    NOTE THE API-VERSION: the add endpoint's newest documented version is
+    API_VERSION_COMMENT_ADD ('7.0-preview.3'), which differs ON PURPOSE from
+    the comment list's 7.1-preview.4 and the work-item read's stable 7.1
+    (Microsoft Learn, read 2026-09-14). Do not 'unify' them.
+
+    The project is the ORIGINAL name, quote(..., safe='')-encoded -- never an
+    artifact slug, which would 404 on every project whose name has a space.
+    The id is re-validated here even though the caller validated it: an
+    untrusted value is encoded regardless before it reaches a URL segment."""
+    api_root, project, work_item_id = route
+    encoded_project = urllib.parse.quote(project, safe="")
+    encoded_id = urllib.parse.quote(validate_work_item_id(work_item_id), safe="")
+    return (f"{api_root}/{encoded_project}/_apis/wit/workItems/{encoded_id}"
+            f"/comments?api-version={API_VERSION_COMMENT_ADD}")
+
+
+def _http_post(url, pat, payload):
+    """HTTP POST of one JSON `payload` object through the same no-redirect
+    opener. THE ONLY MUTATING ENTRY POINT IN THIS MODULE.
+
+    Deliberately a SEPARATE function from _http_get rather than a `method=`
+    parameter on it: the read lane's never-a-mutating-verb guarantee is the
+    ABSENCE of `data` and `method` from _http_get's signature, and widening
+    that signature would erase the proof.
+
+    Errors reference only the URL -- the credential rides in a header, so
+    neither the PAT nor the composed base64(':' + PAT) can appear in an
+    exception message. A 3xx is terminal (_NoRedirect), so a write never
+    replays its Authorization header or its body to another origin."""
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    headers = {
+        "Authorization": _auth_header(pat),
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with _OPENER.open(req, timeout=30) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise AdoError(
+            f"HTTP {exc.code} posting to {url}: {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise AdoError(
+            f"network error posting to {url}: {exc.reason}") from exc
+    except OSError as exc:
+        # urllib only wraps an OSError raised by h.request() into a URLError
+        # (CPython's AbstractHTTPHandler.do_open); an OSError out of
+        # h.getresponse() or resp.read() -- a timeout while reading the
+        # response to a POST THAT HAS ALREADY LANDED on the work item --
+        # propagates unwrapped and would otherwise slip past the AdoError
+        # handling above, past execute_comment_plan's `except AdoError`, and
+        # past main()'s exit-1 JSON contract as a raw traceback. Caught here,
+        # terminally, so every write-path transport failure is an AdoError and
+        # can still be turned into a partial-batch disclosure. The message
+        # names only the URL, so no credential can ride out in it.
+        raise AdoError(f"network error posting to {url}: {exc}") from exc
+
+
+def post_comment(route, pat, body):
+    """POST ONE comment to ONE Azure DevOps work item. THE SOLE WRITER.
+
+    Bounded on purpose: this adds a comment and nothing else -- no state
+    transition, no field edit or PATCH, no assignee change, no work-item or
+    child creation, no relation/link edit, no attachment, no comment edit,
+    no comment delete, no reaction.
+
+    THE DEDUPE MARKER LIVES INSIDE `body`, so the one network call that
+    writes the comment is the same call that writes the marker: no local file
+    can make a later run skip a comment that was never actually posted, and a
+    fresh clone cannot double-post.
+
+    Verified against Microsoft Learn's Add Comment operation (read
+    2026-09-14): the request body is {"text": <string>} -- there is no
+    documented way to assert the stored `format` -- and the created comment's
+    id appears as `id` in the definition table and `commentId` in the sample
+    payload, so both spellings are read. A response carrying neither is
+    refused rather than reported as a confirmed write."""
+    url = comment_add_url(route)
+    created = _parse_json(_http_post(url, pat, {"text": body}).decode("utf-8"),
+                          "created comment")
+    if not isinstance(created, dict):
+        created = {}
+    comment_id = _comment_id(created)
+    if not comment_id:
+        raise AdoError(
+            "Azure DevOps accepted the comment POST for work item "
+            f"{route[2]} but returned no comment id; refusing to report a "
+            "write that cannot be confirmed")
+    return comment_id
+
+
 # A rendered heading is either html_to_text's HEADING_PREFIX (from an <h1>-<h6>
 # tag) or a bare 'Acceptance Criteria:' line, which is how the section is
 # commonly styled with <b>. KNOWN LOSSINESS, stated rather than claimed away: a

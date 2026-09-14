@@ -965,6 +965,121 @@ class TestTheReadLaneStaysReadOnly(unittest.TestCase):
                 self.assertIn("_http_get(", inspect.getsource(fn))
 
 
+class TestHttpPostIsTheOnlyWriter(unittest.TestCase):
+    """The writer is a SEPARATE function from _http_get, and the GET helper
+    never grows a body or a method parameter -- the absence of `data` on
+    _http_get is the read lane's security proof."""
+
+    def test_http_get_still_has_no_data_or_method_parameter(self):
+        params = inspect.signature(ac._http_get).parameters
+        self.assertNotIn("data", params)
+        self.assertNotIn("method", params)
+
+    def test_http_post_is_a_distinct_function_that_takes_a_payload(self):
+        params = inspect.signature(ac._http_post).parameters
+        self.assertEqual(list(params), ["url", "pat", "payload"])
+
+    def test_http_post_sends_a_post_with_a_json_body(self):
+        seen = {}
+
+        class _Resp:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def read(self_inner):
+                return b'{"id": 7}'
+
+        def _open(req, timeout=None):
+            seen["method"] = req.get_method()
+            seen["data"] = req.data
+            seen["ctype"] = req.get_header("Content-type")
+            return _Resp()
+
+        with mock.patch.object(ac._OPENER, "open", _open):
+            raw = ac._http_post("https://dev.azure.com/o/x", "tok", {"text": "hi"})
+        self.assertEqual(raw, b'{"id": 7}')
+        self.assertEqual(seen["method"], "POST")
+        self.assertEqual(json.loads(seen["data"].decode("utf-8")), {"text": "hi"})
+        self.assertEqual(seen["ctype"], "application/json")
+
+    def test_an_http_error_on_the_write_names_only_the_url(self):
+        error = urllib.error.HTTPError(
+            "https://dev.azure.com/o/x", 403, "Forbidden", {}, None)
+        # Closed deterministically, exactly as TestTheSecretNeverLeaks does:
+        # an HTTPError IS a response object, so an unclosed one emits a
+        # ResourceWarning into whichever test is capturing stderr when the
+        # collector reaches it.
+        self.addCleanup(error.close)
+        with mock.patch.object(ac._OPENER, "open", side_effect=error):
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac._http_post("https://dev.azure.com/o/x", "sekrit", {"text": "x"})
+        message = str(ctx.exception)
+        self.assertIn("https://dev.azure.com/o/x", message)
+        self.assertNotIn("sekrit", message)
+        self.assertNotIn(base64.b64encode(b":sekrit").decode("ascii"), message)
+
+    def test_a_url_error_on_the_write_is_an_ado_error(self):
+        with mock.patch.object(ac._OPENER, "open",
+                               side_effect=urllib.error.URLError("down")):
+            with self.assertRaises(ac.AdoError):
+                ac._http_post("https://dev.azure.com/o/x", "tok", {"text": "x"})
+
+    def test_a_bare_oserror_while_reading_the_write_response_is_an_ado_error(self):
+        with mock.patch.object(ac._OPENER, "open",
+                               side_effect=OSError("connection reset")):
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac._http_post("https://dev.azure.com/o/x", "sekrit", {"text": "x"})
+        self.assertNotIn("sekrit", str(ctx.exception))
+
+
+class TestPostOneComment(unittest.TestCase):
+    ROUTE = ("https://dev.azure.com/contoso", "My Team", "1234")
+
+    def test_the_add_url_is_composed_locally_with_the_add_api_version(self):
+        url = ac.comment_add_url(self.ROUTE)
+        self.assertEqual(
+            url,
+            "https://dev.azure.com/contoso/My%20Team/_apis/wit/workItems/1234"
+            "/comments?api-version=7.0-preview.3")
+
+    def test_the_add_api_version_differs_from_the_read_versions(self):
+        url = ac.comment_add_url(self.ROUTE)
+        self.assertIn(ac.API_VERSION_COMMENT_ADD, url)
+        self.assertNotIn(ac.API_VERSION_COMMENTS_READ, url)
+
+    def test_a_bad_id_is_refused_before_a_url_exists(self):
+        with self.assertRaises(ac.AdoUsageError):
+            ac.comment_add_url(("https://dev.azure.com/contoso", "P", "../x"))
+
+    def test_post_comment_returns_the_created_comment_id(self):
+        with mock.patch.object(ac, "_http_post",
+                               return_value=b'{"id": 42}') as post:
+            comment_id = ac.post_comment(self.ROUTE, "tok", "body")
+        self.assertEqual(comment_id, "42")
+        url, pat, payload = post.call_args.args
+        self.assertEqual(payload, {"text": "body"})
+        self.assertEqual(pat, "tok")
+        self.assertTrue(url.startswith("https://dev.azure.com/contoso/"))
+
+    def test_the_commentid_spelling_is_accepted_too(self):
+        with mock.patch.object(ac, "_http_post", return_value=b'{"commentId": 9}'):
+            self.assertEqual(ac.post_comment(self.ROUTE, "tok", "b"), "9")
+
+    def test_a_response_without_an_id_refuses_rather_than_confirm_the_write(self):
+        with mock.patch.object(ac, "_http_post", return_value=b"{}"):
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac.post_comment(self.ROUTE, "tok", "b")
+        self.assertIn("1234", str(ctx.exception))
+
+    def test_a_non_object_response_refuses(self):
+        with mock.patch.object(ac, "_http_post", return_value=b"[]"):
+            with self.assertRaises(ac.AdoError):
+                ac.post_comment(self.ROUTE, "tok", "b")
+
+
 class TestMain(unittest.TestCase):
     ENV = {"ADO_ORG_URL": "https://dev.azure.com/contoso", "ADO_PAT": "tok"}
 
