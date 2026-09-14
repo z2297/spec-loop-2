@@ -1,0 +1,104 @@
+{
+  "schema_version": 2,
+  "id": "a5",
+  "status": "DONE",
+  "branch": "spec-loop/20260914-ado-connector/a5",
+  "commits": {
+    "base": "2f58f5bb8fb8c2b8105b84b2980c2a7c6be81670",
+    "head": "6a4267d06f721eaf152aeed45f4a1858fce25efa"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "SKIPPED",
+    "concerns": 0
+  },
+  "tasks_completed": 9,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 2,
+    "residual": [],
+    "open": []
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p 'test_*.py' ; python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_*.py' ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs plugins/spec-loop/scripts/slice_wave_radius.test.mjs plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs plugins/spec-loop/scripts/slice_wave_reentry.test.mjs plugins/spec-loop/scripts/slice_wave_accepted.test.mjs plugins/spec-loop/scripts/slice_wave_replan.test.mjs",
+    "result": "All six suite segments passed: validate_marketplace OK; 126 scripts tests OK; 2143 spec-loop tests OK; 2269 coverage tests OK (skipped=3); 48 dashboard tests OK; 136 wave tests OK (total 4623 tests passed)",
+    "passed": true,
+    "scope": "full",
+    "tree_sha": "845328bba3293e277fdc0fa675f4ef284f8802aa"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "0 violation(s)",
+    "head_sha": "6a4267d06f721eaf152aeed45f4a1858fce25efa",
+    "tree_sha": "845328bba3293e277fdc0fa675f4ef284f8802aa",
+    "measured_at": "verify:1",
+    "violations": 0,
+    "accepted": [
+      {
+        "metric": "class_lines",
+        "file": "plugins/spec-loop/scripts/ado_client.py",
+        "function": null,
+        "value": 1533,
+        "threshold": 300
+      },
+      {
+        "metric": "class_lines",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": null,
+        "value": 1633,
+        "threshold": 300
+      }
+    ]
+  },
+  "escalations": [],
+  "agents_used": 1,
+  "wave": 4,
+  "events": [
+    {
+      "scope": "a5",
+      "type": "decision",
+      "payload": {
+        "summary": "2 accepted violation fingerprint(s) supplied for a5: class_lines plugins/spec-loop/scripts/ado_client.py, class_lines plugins/spec-loop/scripts/test_ado_client.py",
+        "rationale": "controller-recorded acceptances (redispatch.py accept-violations); matched violations stop blocking the gate and are listed under quality.accepted",
+        "reversibility": "moderate"
+      }
+    },
+    {
+      "scope": "a5",
+      "type": "re-entry",
+      "payload": {
+        "summary": "re-entered at verify from head 6a4267d (0 order(s), 2 fix round(s) already spent)",
+        "stage": "verify",
+        "head": "6a4267d06f721eaf152aeed45f4a1858fce25efa",
+        "fix_rounds": 2,
+        "orders": []
+      }
+    },
+    {
+      "scope": "a5",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "a5",
+      "type": "quality-gate",
+      "payload": {
+        "summary": "measured at verify:1 on 6a4267d: 0 violation(s), 2 accepted",
+        "status": "FAIL",
+        "violations": 0,
+        "accepted": 2,
+        "head_sha": "6a4267d06f721eaf152aeed45f4a1858fce25efa",
+        "tree_sha": "845328bba3293e277fdc0fa675f4ef284f8802aa",
+        "stage": "verify:1"
+      }
+    }
+  ]
+}

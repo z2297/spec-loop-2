@@ -1,0 +1,111 @@
+{
+  "schema_version": 2,
+  "id": "a3",
+  "status": "DONE",
+  "branch": "spec-loop/20260914-ado-connector/a3",
+  "commits": {
+    "base": "ca497d23d221b8cb671fe7bc9d66be61b4283639",
+    "head": "ba3e2f84ad724a668ce8cedb32a8c67f682b01ac"
+  },
+  "risk_tier": 2,
+  "review_tier": 2,
+  "critique": {
+    "verdict": "SKIPPED",
+    "concerns": 0
+  },
+  "tasks_completed": 9,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 2,
+    "residual": [],
+    "open": []
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p 'test_*.py' ; python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_*.py' ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs plugins/spec-loop/scripts/slice_wave_radius.test.mjs plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs plugins/spec-loop/scripts/slice_wave_reentry.test.mjs plugins/spec-loop/scripts/slice_wave_accepted.test.mjs plugins/spec-loop/scripts/slice_wave_replan.test.mjs",
+    "result": "All 6 suite segments passed: marketplace validation OK, 126 tests in scripts OK, 1910 tests in plugins/spec-loop/scripts OK, 2036 coverage tests with PASS result, 48 dashboard tests OK, 136 wave behavior tests OK",
+    "passed": true,
+    "scope": "full",
+    "tree_sha": "15be4e16533845b00d65708d05bd455562f49cdd"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "Quality gate exit code 1: three class_lines violations reported, all whole-file metrics (function=null) from builtin-heuristic backend. These match the accepted measurement debt from run 20260825-scope-ceiling per the human answer: class_lines counts file length when any changed range touches it; all three file counts (754, 567, 541) are documented as pre-existing in this repo's standing human ruling.",
+    "head_sha": "ba3e2f84ad724a668ce8cedb32a8c67f682b01ac",
+    "tree_sha": "15be4e16533845b00d65708d05bd455562f49cdd",
+    "measured_at": "verify:1",
+    "violations": 0,
+    "accepted": [
+      {
+        "metric": "class_lines",
+        "file": "plugins/spec-loop/scripts/ado_intake.py",
+        "function": null,
+        "value": 754,
+        "threshold": 300
+      },
+      {
+        "metric": "class_lines",
+        "file": "plugins/spec-loop/scripts/test_ado_intake.py",
+        "function": null,
+        "value": 567,
+        "threshold": 300
+      },
+      {
+        "metric": "class_lines",
+        "file": "scripts/measure_coverage.py",
+        "function": null,
+        "value": 541,
+        "threshold": 300
+      }
+    ]
+  },
+  "escalations": [],
+  "agents_used": 1,
+  "wave": 1,
+  "events": [
+    {
+      "scope": "a3",
+      "type": "decision",
+      "payload": {
+        "summary": "3 accepted violation fingerprint(s) supplied for a3: class_lines plugins/spec-loop/scripts/ado_intake.py, class_lines plugins/spec-loop/scripts/test_ado_intake.py, class_lines scripts/measure_coverage.py",
+        "rationale": "controller-recorded acceptances (redispatch.py accept-violations); matched violations stop blocking the gate and are listed under quality.accepted",
+        "reversibility": "moderate"
+      }
+    },
+    {
+      "scope": "a3",
+      "type": "re-entry",
+      "payload": {
+        "summary": "re-entered at verify from head ba3e2f8 (0 order(s), 2 fix round(s) already spent)",
+        "stage": "verify",
+        "head": "ba3e2f84ad724a668ce8cedb32a8c67f682b01ac",
+        "fix_rounds": 2,
+        "orders": []
+      }
+    },
+    {
+      "scope": "a3",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "a3",
+      "type": "quality-gate",
+      "payload": {
+        "summary": "measured at verify:1 on ba3e2f8: 0 violation(s), 3 accepted",
+        "status": "FAIL",
+        "violations": 0,
+        "accepted": 3,
+        "head_sha": "ba3e2f84ad724a668ce8cedb32a8c67f682b01ac",
+        "tree_sha": "15be4e16533845b00d65708d05bd455562f49cdd",
+        "stage": "verify:1"
+      }
+    }
+  ]
+}

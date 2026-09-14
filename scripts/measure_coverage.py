@@ -99,6 +99,8 @@ _MAIN_SHIM_RE = re.compile(r"^if\s+__name__\s*==\s*['\"]__main__['\"]\s*:")
 
 # Product modules that count toward coverage (basename -> relpath key).
 TARGET_FILES = (
+    "scripts/ado_client.py",
+    "scripts/ado_intake.py",
     "scripts/dag.py",
     "scripts/dashboard_launcher.py",
     "scripts/dashboard_server.py",
@@ -141,6 +143,8 @@ TARGET_MODULES = tuple(Path(t).stem for t in TARGET_FILES)
 # and not chased in this slice), not from the optimistic local 100%. The TOTAL floor
 # likewise sits well under the py3.12 aggregate that pr_resolver drags down.
 PER_FILE_FLOORS = {
+    "scripts/ado_client.py": 94,           # local 99.2% (2026-09-14) - >=5
+    "scripts/ado_intake.py": 91,           # local 96.3% (2026-09-14) - >=5
     "scripts/dag.py": 94,                  # local 99.8% (2026-07-30) - 5
     "scripts/dashboard_launcher.py": 95,   # local 100% - 5
     "scripts/dashboard_server.py": 94,     # local 99.5% (2026-07-30) - 5

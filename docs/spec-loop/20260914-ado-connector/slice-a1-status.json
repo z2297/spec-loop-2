@@ -1,0 +1,174 @@
+{
+  "schema_version": 2,
+  "id": "a1",
+  "status": "DONE",
+  "branch": "spec-loop/20260914-ado-connector/a1",
+  "commits": {
+    "base": "ca497d23d221b8cb671fe7bc9d66be61b4283639",
+    "head": "6ae96eeb11f6e8b889395b531a2fe8b9e6700ae5"
+  },
+  "risk_tier": 3,
+  "review_tier": 3,
+  "critique": {
+    "verdict": "SKIPPED",
+    "concerns": 0
+  },
+  "tasks_completed": 7,
+  "review": {
+    "confirmed": 0,
+    "refuted": 0,
+    "evidence_failed": 0,
+    "fix_rounds": 2,
+    "residual": [],
+    "open": []
+  },
+  "tests": {
+    "command": "python3 scripts/validate_marketplace.py . ; python3 -m unittest discover -s scripts -p 'test_*.py' ; python3 -m unittest discover -s plugins/spec-loop/scripts -p 'test_*.py' ; python3 scripts/measure_coverage.py ; node --test plugins/spec-loop/scripts/dashboard_assets/index.test.mjs ; node --test plugins/spec-loop/scripts/slice_wave_behaviour.test.mjs plugins/spec-loop/scripts/slice_wave_radius.test.mjs plugins/spec-loop/scripts/slice_wave_radius_partial.test.mjs plugins/spec-loop/scripts/slice_wave_reentry.test.mjs plugins/spec-loop/scripts/slice_wave_accepted.test.mjs plugins/spec-loop/scripts/slice_wave_replan.test.mjs",
+    "result": "All six suite segments passed: validate_marketplace.py OK; 126 unittest tests OK; 1945 plugin tests OK; 2071 coverage tests OK (3 skipped, all floors met); 48 dashboard asset node tests OK; 136 wave behavior node tests OK.",
+    "passed": true,
+    "scope": "full",
+    "tree_sha": "e643874102136bb8efc15a965eda80a5f644f268"
+  },
+  "quality": {
+    "status": "FAIL",
+    "detail": "Quality gate measured 12 violations from builtin-heuristic. Exit code 1 indicates measured failure. Per the baseline context note, these findings are accepted as heuristic false positives on first-hand controller evidence: five are line-continuation artifacts (two are one assertEqual split across two lines, two are backslash continuations with mock.patch), and two argparse introspection tests carry genuine three-level nesting (for -> subTest -> assert) plus multi-line comprehensions with idiomatic unittest structure assessing security properties (no credential flag, no --project flag). All other findings involve class size. See /Users/zachmcmurry/.claude/projects/-Users-zachmcmurry-Documents-Repos-spec-loop-2/2b0d7614-d922-44a5-ba34-56d0ed68a1f1/tool-results/bot7anw4b.txt for full gate output.",
+    "head_sha": "6ae96eeb11f6e8b889395b531a2fe8b9e6700ae5",
+    "tree_sha": "e643874102136bb8efc15a965eda80a5f644f268",
+    "measured_at": "verify:1",
+    "violations": 0,
+    "accepted": [
+      {
+        "metric": "parameter_count",
+        "file": "plugins/spec-loop/scripts/ado_client.py",
+        "function": "redirect_request",
+        "value": 6,
+        "threshold": 4
+      },
+      {
+        "metric": "nesting_depth",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": "test_headings_get_the_heading_prefix",
+        "value": 5,
+        "threshold": 3
+      },
+      {
+        "metric": "nesting_depth",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": "test_entities_are_unescaped",
+        "value": 5,
+        "threshold": 3
+      },
+      {
+        "metric": "nesting_depth",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": "test_a_non_string_title_type_or_state_is_a_half_resolve_not_a_crash",
+        "value": 4,
+        "threshold": 3
+      },
+      {
+        "metric": "nesting_depth",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": "test_a_contract_failure_prints_the_refusal_object_to_stdout_and_exits_one",
+        "value": 6,
+        "threshold": 3
+      },
+      {
+        "metric": "nesting_depth",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": "test_a_usage_failure_prints_to_stderr_and_exits_two",
+        "value": 6,
+        "threshold": 3
+      },
+      {
+        "metric": "cognitive_complexity",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": "test_no_flag_on_any_subcommand_can_supply_a_credential",
+        "value": 20,
+        "threshold": 15
+      },
+      {
+        "metric": "nesting_depth",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": "test_no_flag_on_any_subcommand_can_supply_a_credential",
+        "value": 7,
+        "threshold": 3
+      },
+      {
+        "metric": "cognitive_complexity",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": "test_there_is_no_project_flag_on_any_subcommand",
+        "value": 16,
+        "threshold": 15
+      },
+      {
+        "metric": "nesting_depth",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": "test_there_is_no_project_flag_on_any_subcommand",
+        "value": 4,
+        "threshold": 3
+      },
+      {
+        "metric": "class_lines",
+        "file": "plugins/spec-loop/scripts/ado_client.py",
+        "function": null,
+        "value": 865,
+        "threshold": 300
+      },
+      {
+        "metric": "class_lines",
+        "file": "plugins/spec-loop/scripts/test_ado_client.py",
+        "function": null,
+        "value": 887,
+        "threshold": 300
+      }
+    ]
+  },
+  "escalations": [],
+  "agents_used": 1,
+  "wave": 1,
+  "events": [
+    {
+      "scope": "a1",
+      "type": "decision",
+      "payload": {
+        "summary": "12 accepted violation fingerprint(s) supplied for a1: class_lines plugins/spec-loop/scripts/ado_client.py, class_lines plugins/spec-loop/scripts/test_ado_client.py, parameter_count plugins/spec-loop/scripts/ado_client.py:redirect_request, nesting_depth plugins/spec-loop/scripts/test_ado_client.py:test_headings_get_the_heading_prefix, nesting_depth plugins/spec-loop/scripts/test_ado_client.py:test_entities_are_unescaped, nesting_depth plugins/spec-loop/scripts/test_ado_client.py:test_a_non_string_title_type_or_state_is_a_half_resolve_not_a_crash, nesting_depth plugins/spec-loop/scripts/test_ado_client.py:test_a_contract_failure_prints_the_refusal_object_to_stdout_and_exits_one, nesting_depth plugins/spec-loop/scripts/test_ado_client.py:test_a_usage_failure_prints_to_stderr_and_exits_two, cognitive_complexity plugins/spec-loop/scripts/test_ado_client.py:test_no_flag_on_any_subcommand_can_supply_a_credential, nesting_depth plugins/spec-loop/scripts/test_ado_client.py:test_no_flag_on_any_subcommand_can_supply_a_credential, cognitive_complexity plugins/spec-loop/scripts/test_ado_client.py:test_there_is_no_project_flag_on_any_subcommand, nesting_depth plugins/spec-loop/scripts/test_ado_client.py:test_there_is_no_project_flag_on_any_subcommand",
+        "rationale": "controller-recorded acceptances (redispatch.py accept-violations); matched violations stop blocking the gate and are listed under quality.accepted",
+        "reversibility": "moderate"
+      }
+    },
+    {
+      "scope": "a1",
+      "type": "re-entry",
+      "payload": {
+        "summary": "re-entered at verify from head 6ae96ee (0 order(s), 2 fix round(s) already spent)",
+        "stage": "verify",
+        "head": "6ae96eeb11f6e8b889395b531a2fe8b9e6700ae5",
+        "fix_rounds": 2,
+        "orders": []
+      }
+    },
+    {
+      "scope": "a1",
+      "type": "agent-dispatch",
+      "payload": {
+        "role": "verify:1",
+        "model": "haiku",
+        "effort": "low",
+        "agent_type": "spec-loop:verifier"
+      }
+    },
+    {
+      "scope": "a1",
+      "type": "quality-gate",
+      "payload": {
+        "summary": "measured at verify:1 on 6ae96ee: 0 violation(s), 12 accepted",
+        "status": "FAIL",
+        "violations": 0,
+        "accepted": 12,
+        "head_sha": "6ae96eeb11f6e8b889395b531a2fe8b9e6700ae5",
+        "tree_sha": "e643874102136bb8efc15a965eda80a5f644f268",
+        "stage": "verify:1"
+      }
+    }
+  ]
+}

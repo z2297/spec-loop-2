@@ -59,6 +59,7 @@ runs slices as background agents when Workflow is unavailable), `git`,
 /spec-loop --from-plan            # execute the most recent plan-mode plan
 /spec-loop --thorough <request>   # promote every slice's review one tier
 /spec-loop --resume <run-id>
+/spec-loop:ado-intake <WORK-ITEM-ID>   # refine one Azure DevOps work item
 ```
 
 See `plugins/spec-loop/README.md` for the full manual: flags, risk tiers, the
@@ -66,7 +67,10 @@ review pipeline, quality-gate and knowledge-graph configuration, the dashboard,
 and `/spec-loop:peer-review`. `/spec-loop:jira-intake` turns a single Jira card
 into a refined, gitignored intake artifact and prints the loop handoff — it
 never starts the loop, and its only Jira write is adding a comment, off by
-default and behind an explicit confirmation. Migrating from v1? Read
+default and behind an explicit confirmation. `/spec-loop:ado-intake` is the
+same lane for a single Azure DevOps Services work item, with the same single
+bounded write — adding a comment, off by default and behind an explicit
+confirmation that names the resolved work item. Migrating from v1? Read
 `plugins/spec-loop/references/migration-from-v1.md`.
 
 ## Repo layout
