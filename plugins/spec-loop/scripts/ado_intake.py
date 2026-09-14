@@ -440,6 +440,97 @@ def rank_gaps(gaps):
     return sorted(list(gaps), key=_gap_sort_key)
 
 
+RECORD_KEYS = ("org", "project", "id", "web_url", "title", "description",
+               "acceptance_criteria", "acceptance_criteria_source",
+               "repro_steps", "state", "work_item_type", "comments")
+REQUIRED_NON_EMPTY = ("org", "project", "id")
+
+
+def _missing_key_errors(record):
+    """One error per RECORD_KEYS entry absent from record, in key order.
+    (PURE)"""
+    errors = []
+    for key in RECORD_KEYS:
+        if key not in record:
+            errors.append("record is missing required key: %s" % key)
+    return errors
+
+
+def _wrong_type_errors(record):
+    """One error per non-string RECORD_KEYS scalar, skipping comments. (PURE)
+
+    comments is validated separately by the caller since it is a list, not
+    a scalar."""
+    errors = []
+    for key in RECORD_KEYS:
+        if key == "comments":
+            continue
+        if not isinstance(record[key], str):
+            errors.append("record key %s must be a string" % key)
+    return errors
+
+
+def _empty_required_errors(record):
+    """One error per REQUIRED_NON_EMPTY field whose stripped value is
+    empty. (PURE)
+
+    This is the half-resolve guard: an empty System.TeamProject (or org, or
+    id) must raise, never render a partial record, because the triple
+    silently shrinking to an empty segment would collide every work item
+    that resolves that way onto the same artifact path and marker."""
+    errors = []
+    for key in REQUIRED_NON_EMPTY:
+        value = record.get(key)
+        if isinstance(value, str) and not value.strip():
+            errors.append("record key %s must not be empty" % key)
+    return errors
+
+
+def validate_record(record):
+    """Return a list of human-readable error strings; [] means valid. (PURE)
+
+    The record file is authored by the calling model rather than piped
+    straight from ado_client.py, so its shape is a contract to check, not
+    an assumption. Presence alone is not enough: a None scalar renders as
+    the literal text 'None' in the artifact, silently misreporting the work
+    item, and an empty org/project/id is a half-resolve that must not reach
+    the path or marker composition. Field ORDER follows RECORD_KEYS so the
+    message is stable."""
+    if not isinstance(record, dict):
+        return ["record must be a JSON object"]
+    missing = _missing_key_errors(record)
+    if missing:
+        return missing
+    errors = _wrong_type_errors(record)
+    if not isinstance(record["comments"], list):
+        errors.append("record key comments must be a list")
+    errors += _empty_required_errors(record)
+    return errors
+
+
+def _require_valid_record(record):
+    """Raise IntakeError unless the record satisfies validate_record.
+
+    Fail closed at the same choke point the refinement is checked at, so a
+    malformed record produces the documented refusal shape instead of a
+    traceback."""
+    errors = validate_record(record)
+    if errors:
+        raise IntakeError(
+            "refusing to render from an invalid record: " + "; ".join(errors))
+
+
+def record_triple(record):
+    """The validated (org, project, id) triple for an already-checked
+    record. (PURE apart from raising)
+
+    Validates the record first so a caller can pass the raw record straight
+    through without re-spelling the keys, and so record_triple can never
+    hand back a triple drawn from a half-resolve."""
+    _require_valid_record(record)
+    return validate_triple(record)
+
+
 def main(argv=None):
     """Placeholder until the render subcommand lands (slice a3, task 8)."""
     raise NotImplementedError

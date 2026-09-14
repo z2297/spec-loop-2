@@ -280,3 +280,70 @@ class TestGapRanking(unittest.TestCase):
                 {"id": "G1", "impact": "high", "blocking": True}]
         intake.rank_gaps(gaps)
         self.assertEqual([g["id"] for g in gaps], ["G2", "G1"])
+
+
+def make_record(**over):
+    """A minimal valid ADO record dict; keyword args override one key."""
+    base = {
+        "org": "contoso",
+        "project": "My Team – Platform",
+        "id": "1234",
+        "web_url": "https://dev.azure.com/contoso/_workitems/edit/1234",
+        "title": "Widget toggle",
+        "description": "Users want a toggle.",
+        "acceptance_criteria": "Toggle persists.",
+        "acceptance_criteria_source": "field",
+        "repro_steps": "",
+        "state": "Active",
+        "work_item_type": "User Story",
+        "comments": [],
+    }
+    base.update(over)
+    return base
+
+
+class TestRecordValidation(unittest.TestCase):
+    """The record file is authored by the calling model rather than piped
+    straight from ado_client.py, so its shape is a contract to check."""
+
+    def test_a_minimal_record_is_valid(self):
+        self.assertEqual(intake.validate_record(make_record()), [])
+
+    def test_an_unknown_extra_key_is_tolerated(self):
+        self.assertEqual(
+            intake.validate_record(make_record(rendered_text="<b>x</b>")), [])
+
+    def test_a_missing_key_is_reported_by_name(self):
+        bad = make_record()
+        del bad["repro_steps"]
+        self.assertEqual(intake.validate_record(bad),
+                         ["record is missing required key: repro_steps"])
+
+    def test_a_none_scalar_is_reported_not_rendered(self):
+        self.assertIn("record key title must be a string",
+                      intake.validate_record(make_record(title=None)))
+
+    def test_comments_must_be_a_list(self):
+        self.assertIn("record key comments must be a list",
+                      intake.validate_record(make_record(comments={})))
+
+    def test_an_empty_triple_field_is_a_half_resolve(self):
+        for field in ("org", "project", "id"):
+            with self.subTest(field=field):
+                self.assertIn(
+                    "record key %s must not be empty" % field,
+                    intake.validate_record(make_record(**{field: ""})))
+
+    def test_a_numeric_id_is_refused(self):
+        self.assertIn("record key id must be a string",
+                      intake.validate_record(make_record(id=1234)))
+
+    def test_require_valid_record_raises_with_every_error_joined(self):
+        with self.assertRaises(intake.IntakeError) as caught:
+            intake._require_valid_record(make_record(title=None))
+        self.assertIn("refusing to render from an invalid record",
+                      str(caught.exception))
+
+    def test_record_triple_is_the_validated_target(self):
+        self.assertEqual(intake.record_triple(make_record()),
+                         ("contoso", "My Team – Platform", "1234"))
