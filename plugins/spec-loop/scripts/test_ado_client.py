@@ -1256,6 +1256,86 @@ class TestTheDedupeGateExtractsMarkersIntoASet(unittest.TestCase):
                          ["understanding", "decision"])
 
 
+def ado_record(org="contoso", project="My Team", work_item_id="1234"):
+    return {"org": org, "project": project, "id": work_item_id,
+            "web_url": "https://dev.azure.com/contoso/_workitems/edit/1234",
+            "title": "T", "work_item_type": "Bug", "state": "Active",
+            "comments": []}
+
+
+def render_payload(org="contoso", project="My Team", work_item_id="1234",
+                   comments=None):
+    return {"ok": True, "work_item_org": org, "work_item_project": project,
+            "work_item_id": work_item_id, "posted": False,
+            "comments": comments if comments is not None
+            else [entry("understanding", MARKER_A)]}
+
+
+class TestTheWriteRefusesAWrongTarget(unittest.TestCase):
+    """An Azure DevOps work item is a bare integer plus an org and a project
+    that come from OUTSIDE the id, so work item 1234 exists in every org. The
+    preview and the armed post are separate invocations: if the org changes
+    between them the connector would post item A's refinement onto item B, and
+    the read-back dedupe gate would SUCCEED (item B has no such marker), so the
+    operator would see a clean success. There is no comment-delete lane."""
+
+    def test_the_agreed_target_is_the_triple_both_sides_name(self):
+        self.assertEqual(
+            ac.agreed_target(ado_record(), render_payload()),
+            ("contoso", "My Team", "1234"))
+
+    def test_a_payload_naming_another_org_is_refused(self):
+        with self.assertRaises(ac.AdoError) as ctx:
+            ac.agreed_target(ado_record(), render_payload(org="fabrikam"))
+        message = str(ctx.exception)
+        self.assertIn("contoso", message)
+        self.assertIn("fabrikam", message)
+        self.assertIn("org", message)
+
+    def test_a_payload_naming_another_project_is_refused(self):
+        with self.assertRaises(ac.AdoError):
+            ac.agreed_target(ado_record(), render_payload(project="Other"))
+
+    def test_a_payload_naming_another_work_item_is_refused(self):
+        with self.assertRaises(ac.AdoError):
+            ac.agreed_target(ado_record(), render_payload(work_item_id="9999"))
+
+    def test_the_comparison_is_exact_not_case_folded(self):
+        with self.assertRaises(ac.AdoError):
+            ac.agreed_target(ado_record(), render_payload(project="my team"))
+
+    def test_a_record_missing_a_triple_field_is_refused(self):
+        broken = ado_record()
+        del broken["project"]
+        with self.assertRaises(ac.AdoError) as ctx:
+            ac.record_triple(broken)
+        self.assertIn("project", str(ctx.exception))
+
+    def test_a_payload_without_the_triple_is_a_usage_error(self):
+        with self.assertRaises(ac.AdoUsageError) as ctx:
+            ac.payload_triple({"comments": []})
+        self.assertIn("work_item_org", str(ctx.exception))
+
+    def test_a_payload_that_is_a_bare_array_is_a_usage_error(self):
+        """A bare comments array carries no (org, project, id) triple, so it
+        cannot be bound to the item it was rendered for and is refused."""
+        with self.assertRaises(ac.AdoUsageError):
+            ac.payload_triple([entry("understanding", MARKER_A)])
+
+    def test_a_non_numeric_id_in_the_payload_is_refused(self):
+        with self.assertRaises(ac.AdoUsageError):
+            ac.payload_triple(render_payload(work_item_id="12/comments"))
+
+    def test_assert_same_target_names_both_sides_and_prefers_neither(self):
+        with self.assertRaises(ac.AdoError) as ctx:
+            ac.assert_same_target(("contoso", "A", "1"), ("contoso", "B", "1"),
+                                  "the freshly resolved work item")
+        message = str(ctx.exception)
+        self.assertIn("the freshly resolved work item", message)
+        self.assertIn("'A'", message)
+        self.assertIn("'B'", message)
+
+
 class TestMain(unittest.TestCase):
     ENV = {"ADO_ORG_URL": "https://dev.azure.com/contoso", "ADO_PAT": "tok"}
 

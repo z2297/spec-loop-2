@@ -1125,6 +1125,111 @@ def plan_comments(entries, tokens):
     return planned
 
 
+# THE WRONG-TARGET REFUSAL. An Azure DevOps work item is a bare integer plus an
+# org and a project that come from OUTSIDE the id, so item 1234 exists in every
+# org and project -- a hazard Jira's self-describing ABC-123 key cannot even
+# express. The record names one triple, the rendered comments payload names the
+# triple it was rendered FOR, and the write happens only where the two agree.
+TRIPLE_FIELDS = ("org", "project", "id")
+PAYLOAD_TRIPLE_FIELDS = ("work_item_org", "work_item_project", "work_item_id")
+
+_RECORD_TRIPLE_MSG = (
+    "the record does not name its own target: the field(s) %s are missing or "
+    "empty. A record that cannot name its (org, project, id) cannot be "
+    "checked against the work item a write would land on.")
+_PAYLOAD_TRIPLE_MSG = (
+    "the comments file does not name the work item it was rendered for: the "
+    "field(s) %s are missing or empty. Pass the whole payload object printed "
+    "by ado_intake.py render (which carries %s), not a bare comments array.")
+_WRONG_TARGET_MSG = (
+    "REFUSING THE WRITE: the comment plan does not belong to %s (%s). An "
+    "Azure DevOps work-item id is a bare integer, so id %s exists in every "
+    "org and project: posting here would put one item's refinement on "
+    "another, and the read-back dedupe gate would report a clean success. "
+    "Re-resolve the work item and re-render the comments.")
+
+
+def _triple_from(source, keys, missing_error):
+    """Read an (org, project, id) triple out of `source` under `keys`,
+    fail-closed. Every field must be a non-empty string, and the id must
+    survive validate_work_item_id -- it reaches a URL segment. (PURE apart
+    from raising)"""
+    if not isinstance(source, dict):
+        raise missing_error(", ".join(keys))
+    missing = [
+        key for key in keys
+        if not isinstance(source.get(key), str) or not source[key].strip()
+    ]
+    if missing:
+        raise missing_error(", ".join(missing))
+    org, project, work_item_id = (source[key].strip() for key in keys)
+    return (org, project, validate_work_item_id(work_item_id))
+
+
+def _record_triple_error(names):
+    """A record that cannot name its own target is a CONTRACT failure (exit
+    1): all three fields are in REQUIRED_FIELDS, so a missing one means the
+    record did not come from resolve_work_item."""
+    return AdoError(_RECORD_TRIPLE_MSG % names)
+
+
+def _payload_triple_error(names):
+    """A comments payload that cannot name its target is USAGE (exit 2): the
+    operator passed the wrong file, or a bare comments array."""
+    return AdoUsageError(
+        _PAYLOAD_TRIPLE_MSG % (names, ", ".join(PAYLOAD_TRIPLE_FIELDS)))
+
+
+def record_triple(record):
+    """The (org, project, id) triple of a resolve record. (PURE apart from
+    raising) All three are in the record's REQUIRED_FIELDS, so an empty one is
+    a half-resolve; reaching this function with one missing means the record
+    did not come from resolve_work_item and is a contract failure."""
+    return _triple_from(record, TRIPLE_FIELDS, _record_triple_error)
+
+
+def payload_triple(payload):
+    """The (org, project, id) triple the comments payload was RENDERED FOR.
+    (PURE apart from raising)
+
+    THE BINDING BETWEEN A PREVIEW AND THE ITEM IT WAS RENDERED FOR. A bare
+    comments array carries no triple and is refused here: the target must come
+    from the rendered payload and the resolved record, never from ambient
+    environment addressing."""
+    return _triple_from(payload, PAYLOAD_TRIPLE_FIELDS,
+                        _payload_triple_error)
+
+
+def assert_same_target(expected, actual, what):
+    """Refuse unless two (org, project, id) triples are EQUAL, naming both
+    sides and preferring neither.
+
+    THE COMPARISON IS DELIBERATELY EXACT. Azure DevOps org and project names
+    are case-preserving, this path fails closed, and a case-insensitive or
+    punctuation-folding compare would quietly widen what it accepts -- on the
+    one lane in this plugin whose mistakes cannot be undone. Do not 'fix' it
+    into one."""
+    diffs = [
+        "%s %r != %r" % (name, want, got)
+        for name, want, got in zip(TRIPLE_FIELDS, expected, actual)
+        if want != got
+    ]
+    if diffs:
+        raise AdoError(_WRONG_TARGET_MSG % (what, "; ".join(diffs), actual[2]))
+    return None
+
+
+def agreed_target(record, payload):
+    """The one (org, project, id) triple the record and the comments payload
+    BOTH name, or a refusal. (PURE apart from raising)
+
+    Runs BEFORE any credential is read and before the first request, so a
+    mismatched pair costs nothing and leaks nothing."""
+    target = record_triple(record)
+    assert_same_target(target, payload_triple(payload), "the resolved record")
+    return target
+
+
 # A rendered heading is either html_to_text's HEADING_PREFIX (from an <h1>-<h6>
 # tag) or a bare 'Acceptance Criteria:' line, which is how the section is
 # commonly styled with <b>. KNOWN LOSSINESS, stated rather than claimed away: a
