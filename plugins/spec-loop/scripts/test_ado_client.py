@@ -1352,6 +1352,276 @@ class TestTheWriteRefusesAWrongTarget(unittest.TestCase):
         self.assertIn("'B'", message)
 
 
+class TestTheCommentLanePreviewsByDefault(unittest.TestCase):
+    """Posting is OFF BY DEFAULT: the unarmed lane issues GETs only and
+    reports what it WOULD post, and the whole safety chain -- entry
+    validation, then the fresh re-resolve, then the target agreement --
+    runs before the first POST can exist."""
+
+    ENV = {"ADO_ORG_URL": "https://dev.azure.com/contoso", "ADO_PAT": "tok"}
+    TARGET = ("contoso", "My Team", "1234")
+
+    @contextlib.contextmanager
+    def _lane(self, fresh=None, env=None):
+        """Patch the environment, the fresh re-resolve and the writer on one
+        stack, so no test can reach a socket."""
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(ac.os.environ, env or self.ENV, clear=True))
+            resolve = stack.enter_context(mock.patch.object(
+                ac, "resolve_work_item",
+                return_value=fresh if fresh is not None else ado_record()))
+            post = stack.enter_context(mock.patch.object(ac, "_http_post"))
+            yield resolve, post
+
+    def test_the_default_path_posts_nothing_and_reports_what_it_would_post(self):
+        with self._lane() as (_resolve, post):
+            out = ac.run_comment_lane(
+                self.TARGET, [entry("understanding", MARKER_A)], False)
+        post.assert_not_called()
+        self.assertFalse(out["armed"])
+        self.assertEqual(out["posted_count"], 0)
+        self.assertEqual(out["results"][0]["status"], "would-post")
+        self.assertIsNone(out["results"][0]["comment_id"])
+
+    def test_the_payload_names_the_target_and_the_item_for_the_operator(self):
+        with self._lane() as (_resolve, _post):
+            out = ac.run_comment_lane(
+                self.TARGET, [entry("understanding", MARKER_A)], False)
+        self.assertEqual(
+            (out["org"], out["project"], out["work_item_id"]), self.TARGET)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["title"], "T")
+        self.assertEqual(
+            out["web_url"],
+            "https://dev.azure.com/contoso/_workitems/edit/1234")
+
+    def test_the_fresh_reresolve_is_issued_for_the_targets_own_id(self):
+        with self._lane() as (resolve, _post):
+            ac.run_comment_lane(
+                self.TARGET, [entry("understanding", MARKER_A)], False)
+        resolve.assert_called_once_with("1234")
+
+    def test_an_already_posted_marker_is_reported_not_posted_again(self):
+        fresh = ado_record()
+        fresh["comments"] = [{"id": "5", "author": "a", "created": "",
+                              "modified": "", "text": "<div>%s</div>" % MARKER_A}]
+        with self._lane(fresh=fresh) as (_resolve, post):
+            out = ac.run_comment_lane(
+                self.TARGET, [entry("understanding", MARKER_A)], True)
+        post.assert_not_called()
+        self.assertEqual(out["already_posted_count"], 1)
+        self.assertEqual(out["posted_count"], 0)
+        self.assertEqual(out["results"][0]["status"], "already-posted")
+        self.assertIsNone(out["results"][0]["comment_id"])
+
+    def test_only_the_pending_entries_are_posted_from_a_mixed_batch(self):
+        fresh = ado_record()
+        fresh["comments"] = [{"id": "5", "author": "a", "created": "",
+                              "modified": "", "text": MARKER_B}]
+        with self._lane(fresh=fresh) as (_resolve, post):
+            post.return_value = b'{"id": 88}'
+            out = ac.run_comment_lane(
+                self.TARGET,
+                [entry("understanding", MARKER_A), entry("decision", MARKER_B)],
+                True)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual([r["status"] for r in out["results"]],
+                         ["posted", "already-posted"])
+        self.assertEqual([r["comment_id"] for r in out["results"]],
+                         ["88", None])
+        self.assertEqual(out["posted_count"], 1)
+        self.assertEqual(out["already_posted_count"], 1)
+
+    def test_an_invalid_batch_is_refused_before_any_credential_is_read(self):
+        with mock.patch.dict(ac.os.environ, {}, clear=True), \
+             mock.patch.object(ac, "credentials") as creds, \
+             mock.patch.object(ac, "resolve_work_item") as resolve:
+            with self.assertRaises(ac.AdoError):
+                ac.run_comment_lane(
+                    self.TARGET, [entry("understanding", MARKER_A)] * 2, True)
+        creds.assert_not_called()
+        resolve.assert_not_called()
+
+    def test_validation_precedes_the_credential_read_in_the_source(self):
+        source = inspect.getsource(ac.run_comment_lane)
+        self.assertLess(source.index("validate_comment_entries"),
+                        source.index("credentials()"))
+
+    def test_a_target_drift_between_preview_and_post_refuses_before_any_write(self):
+        with self._lane(fresh=ado_record(org="fabrikam")) as (_resolve, post):
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac.run_comment_lane(
+                    self.TARGET, [entry("understanding", MARKER_A)], True)
+        post.assert_not_called()
+        self.assertIn("freshly resolved", str(ctx.exception))
+
+    def test_an_org_change_in_the_environment_refuses_before_any_write(self):
+        """The org is the residual environment input: a different shell tab or
+        a re-sourced .env between the preview and the armed post would
+        otherwise post item A's refinement onto item B.
+
+        The record check above catches the usual shape of that drift, because
+        the fresh read follows the drifted org and comes back naming it. THIS
+        pins the second, belt-and-braces check -- the one on ADO_ORG_URL
+        itself -- which is the only one that can fire when the resolved record
+        still agrees with the target but the environment no longer does."""
+        env = {"ADO_ORG_URL": "https://dev.azure.com/fabrikam", "ADO_PAT": "t"}
+        with self._lane(env=env) as (_resolve, post):
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac.run_comment_lane(
+                    self.TARGET, [entry("understanding", MARKER_A)], True)
+        post.assert_not_called()
+        self.assertIn("ADO_ORG_URL", str(ctx.exception))
+        self.assertIn("fabrikam", str(ctx.exception))
+
+    def test_a_comment_history_missing_its_text_fails_closed(self):
+        """A haystack that silently shrinks double-posts on every run, so a
+        text-less comment raises instead of planning the entry as pending."""
+        fresh = ado_record()
+        fresh["comments"] = [{"id": "5", "text": ""}]
+        with self._lane(fresh=fresh) as (_resolve, post):
+            with self.assertRaises(ac.AdoError):
+                ac.run_comment_lane(
+                    self.TARGET, [entry("understanding", MARKER_A)], True)
+        post.assert_not_called()
+
+    def test_the_armed_lane_posts_each_pending_comment_once(self):
+        with self._lane() as (_resolve, post):
+            post.return_value = b'{"id": 77}'
+            out = ac.run_comment_lane(
+                self.TARGET,
+                [entry("understanding", MARKER_A), entry("decision", MARKER_B)],
+                True)
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(out["posted_count"], 2)
+        self.assertTrue(out["armed"])
+        self.assertEqual([r["status"] for r in out["results"]],
+                         ["posted", "posted"])
+        self.assertEqual([r["comment_id"] for r in out["results"]], ["77", "77"])
+
+    def test_the_armed_lane_posts_on_the_api_root_route_not_the_web_url(self):
+        with self._lane() as (_resolve, post):
+            post.return_value = b'{"id": 1}'
+            ac.run_comment_lane(
+                self.TARGET, [entry("understanding", MARKER_A)], True)
+        url = post.call_args.args[0]
+        self.assertEqual(
+            url,
+            "https://dev.azure.com/contoso/My%20Team/_apis/wit/workItems/1234"
+            "/comments?api-version=" + ac.API_VERSION_COMMENT_ADD)
+
+    def test_the_marker_rides_inside_the_posted_body(self):
+        """The marker lives INSIDE the posted body, so the one call that
+        writes the comment writes the marker: no local file is ever the
+        dedupe gate, and a fresh clone cannot double-post."""
+        with self._lane() as (_resolve, post):
+            post.return_value = b'{"id": 1}'
+            ac.run_comment_lane(
+                self.TARGET, [entry("understanding", MARKER_A)], True)
+        payload = post.call_args.args[2]
+        self.assertIn(MARKER_A, payload["text"])
+        self.assertEqual(payload["text"].splitlines()[0], MARKER_A)
+
+    def test_the_lane_never_claims_it_rereads_before_every_write(self):
+        """Hazard 3: prose that overstates a safety property is a defect on a
+        mutating lane. The item is read ONCE per invocation, and the armed
+        batch posts from that one snapshot."""
+        source = inspect.getsource(ac.run_comment_lane)
+        for overclaim in ("before every write", "before each write",
+                          "re-read before every"):
+            self.assertNotIn(overclaim, source)
+        self.assertIn("READ ONCE PER INVOCATION", source)
+
+
+class TestTheArmedLaneDisclosesAPartialBatch(unittest.TestCase):
+    """The batch is NOT atomic -- only each individual comment is -- so a
+    failure after N comments have landed must say so: there is no
+    comment-delete lane to retract them."""
+
+    ROUTE = ("https://dev.azure.com/contoso", "My Team", "1234")
+
+    def test_every_pending_comment_is_posted_in_order(self):
+        pending = [entry("understanding", MARKER_A), entry("decision", MARKER_B)]
+        with mock.patch.object(ac, "post_comment",
+                               side_effect=["7", "8"]) as post:
+            results = ac.execute_comment_plan(self.ROUTE, "tok", pending)
+        self.assertEqual([r["marker"] for r in results], [MARKER_A, MARKER_B])
+        self.assertEqual([r["comment_id"] for r in results], ["7", "8"])
+        self.assertEqual([r["status"] for r in results], ["posted", "posted"])
+        self.assertEqual([call.args[2] for call in post.call_args_list],
+                         [pending[0]["body"], pending[1]["body"]])
+
+    def test_an_empty_pending_list_issues_no_write(self):
+        with mock.patch.object(ac, "post_comment") as post:
+            self.assertEqual(ac.execute_comment_plan(self.ROUTE, "tok", []), [])
+        post.assert_not_called()
+
+    def test_the_first_failure_stops_the_batch(self):
+        pending = [entry("understanding", MARKER_A), entry("decision", MARKER_B)]
+        with mock.patch.object(ac, "post_comment",
+                               side_effect=ac.AdoError("HTTP 500")) as post:
+            with self.assertRaises(ac.AdoError):
+                ac.execute_comment_plan(self.ROUTE, "tok", pending)
+        self.assertEqual(post.call_count, 1)
+
+    def test_a_failure_after_a_landed_write_names_what_already_posted(self):
+        pending = [entry("understanding", MARKER_A), entry("decision", MARKER_B)]
+        with mock.patch.object(ac, "post_comment",
+                               side_effect=["7", ac.AdoError("HTTP 500")]):
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac.execute_comment_plan(self.ROUTE, "tok", pending)
+        message = str(ctx.exception)
+        self.assertIn("HTTP 500", message)
+        self.assertIn(MARKER_A, message)
+        self.assertIn("1 comment(s) already posted", message)
+        self.assertIn("1234", message)
+
+    def test_a_failure_before_any_write_is_reported_unchanged(self):
+        with mock.patch.object(ac, "post_comment",
+                               side_effect=ac.AdoError("HTTP 403")):
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac.execute_comment_plan(
+                    self.ROUTE, "tok", [entry("understanding", MARKER_A)])
+        self.assertEqual(str(ctx.exception), "HTTP 403")
+
+    def test_the_disclosure_never_leaks_the_credential(self):
+        error = ac._partial_batch_error(
+            "1234", [{"kind": "decision", "marker": MARKER_B}],
+            ac.AdoError("HTTP 500 posting to https://dev.azure.com/o/x"))
+        self.assertNotIn("sekrit", str(error))
+        self.assertIn(MARKER_B, str(error))
+
+    def test_the_disclosure_never_claims_a_rerun_recovers_the_batch(self):
+        """Measured on the Jira twin: dropping one period from a refinement
+        changes the marker, so 're-run this command' is NOT a safe
+        partial-failure recovery. The disclosure must not say it."""
+        source = inspect.getsource(ac._partial_batch_error)
+        for overclaim in ("re-run this command", "Re-running is a no-op",
+                          "simply re-run"):
+            self.assertNotIn(overclaim, source)
+
+
+class TestTheResultsMergePreservesTheRequestedOrder(unittest.TestCase):
+    def test_one_result_per_requested_entry_in_the_requested_order(self):
+        entries = [entry("understanding", MARKER_A), entry("decision", MARKER_B)]
+        plan = ac.plan_comments(entries, {MARKER_B})
+        results = ac._comment_results(entries, plan, [])
+        self.assertEqual([r["marker"] for r in results], [MARKER_A, MARKER_B])
+        self.assertEqual([r["status"] for r in results],
+                         ["would-post", "already-posted"])
+        self.assertEqual([r["kind"] for r in results],
+                         ["understanding", "decision"])
+
+    def test_a_posted_result_replaces_its_preview(self):
+        entries = [entry("understanding", MARKER_A)]
+        plan = ac.plan_comments(entries, set())
+        posted = [{"kind": "understanding", "marker": MARKER_A,
+                   "status": "posted", "comment_id": "9"}]
+        results = ac._comment_results(entries, plan, posted)
+        self.assertEqual(results, posted)
+
+
 class TestMain(unittest.TestCase):
     ENV = {"ADO_ORG_URL": "https://dev.azure.com/contoso", "ADO_PAT": "tok"}
 

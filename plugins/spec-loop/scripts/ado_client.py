@@ -1231,6 +1231,166 @@ def agreed_target(record, payload):
     return target
 
 
+# THE COMMENT LANE. Posting is OFF BY DEFAULT: without `arm` the lane issues
+# GETs only and reports what it WOULD post. The order below IS the safety
+# design -- pure entry validation first, then ONE fresh re-resolve that proves
+# the target and supplies the dedupe haystack at once, then the refusal, and
+# only then the single bounded write.
+_INVALID_PLAN_MSG = "refusing to post from an invalid comment plan: %s"
+_PARTIAL_BATCH_MSG = (
+    "%s; %d comment(s) already posted to work item %s before the failure: "
+    "%s. Those comments are on the work item now and this connector has no "
+    "lane to delete them. A later run suppresses exactly those markers, and "
+    "only while the refinement still renders byte-identically.")
+
+
+def _partial_batch_error(work_item_id, posted, exc):
+    """The AdoError raised when a batch POST fails part-way through.
+
+    The BATCH is not atomic -- only each individual comment is (see
+    execute_comment_plan) -- so a failure after N comments have already
+    landed must SAY SO: the work item has been mutated even though the whole
+    operation is being reported as failed, and there is no comment-delete
+    lane to retract it. Every already-posted marker is named, so the operator
+    can tell exactly what happened from the refusal alone.
+
+    DELIBERATELY NOT A RECOVERY INSTRUCTION. A later run suppresses a landed
+    comment only while the refinement still renders byte-identically:
+    measured on the Jira twin of this lane, dropping a single period from the
+    refinement changed the marker, so a second pass over an edited refinement
+    would post NEW comments beside the landed ones. The disclosure states
+    what happened and names the markers; what to do next is the operator's
+    call, with the work item in front of them.
+
+    The message carries the underlying AdoError, which names only a URL, plus
+    markers this module never invents -- so no credential can ride out in
+    it."""
+    if not posted:
+        return AdoError(str(exc))
+    markers = ", ".join(item["marker"] for item in posted)
+    return AdoError(
+        _PARTIAL_BATCH_MSG % (exc, len(posted), work_item_id, markers))
+
+
+def _posted_result(item, comment_id):
+    """One result row for a comment that LANDED. (PURE)"""
+    return {
+        "kind": item["kind"], "marker": item["marker"],
+        "status": "posted", "comment_id": comment_id}
+
+
+def execute_comment_plan(route, pat, pending):
+    """POST each pending comment in order and return one result each.
+
+    Fail closed and ATOMIC PER COMMENT: every entry was shape-validated
+    before any request was issued, and the FIRST failure propagates
+    immediately, so no later comment is posted. One comment is written whole
+    by one POST or not at all -- there is no partial body.
+
+    The BATCH is not atomic, and that partial mutation is DISCLOSED rather
+    than swallowed (see _partial_batch_error): this is the only irreversible
+    external call in this module."""
+    posted = []
+    for item in pending:
+        try:
+            comment_id = post_comment(route, pat, item["body"])
+        except AdoError as exc:
+            raise _partial_batch_error(route[2], posted, exc) from exc
+        posted.append(_posted_result(item, comment_id))
+    return posted
+
+
+def _preview_result(item, planned):
+    """One result row for a comment that was NOT posted on this invocation:
+    either already on the work item, or awaiting an armed run. (PURE)"""
+    status = "already-posted" if planned["already_posted"] else "would-post"
+    return {
+        "kind": item["kind"], "marker": planned["marker"],
+        "status": status, "comment_id": None}
+
+
+def _comment_results(entries, plan, posted):
+    """Merge the dedupe plan and the POST results into one ordered result per
+    REQUESTED comment, in the requested order. (PURE)
+
+    Keyed by marker, which is safe ONLY because validate_comment_entries
+    already refused an in-batch duplicate: two entries sharing a marker would
+    collapse onto one row here and both report the same comment id -- the
+    exact collapse measured on the Jira twin of this lane."""
+    by_marker = {item["marker"]: item for item in posted}
+    return [
+        by_marker.get(planned["marker"]) or _preview_result(item, planned)
+        for item, planned in zip(entries, plan)
+    ]
+
+
+def _assert_target_unchanged(target, fresh, org):
+    """Refuse unless `target` still names BOTH the work item the fresh read
+    just returned AND the organization the current ADO_ORG_URL points at.
+
+    Two checks because there are two ways to drift. The record check catches
+    a comments payload rendered for a different item; the environment check
+    catches the org moving between the preview invocation and the armed one
+    -- a different shell tab, a re-sourced .env, a mistyped re-export. Both
+    land one item's refinement on another, and the read-back dedupe gate
+    SUCCEEDS on the wrong item (it carries no such marker), so the operator
+    would otherwise see a clean success."""
+    assert_same_target(target, record_triple(fresh),
+                       "the freshly resolved work item")
+    assert_same_target(target, (org, target[1], target[2]),
+                       "the organization named by the current ADO_ORG_URL")
+    return None
+
+
+def run_comment_lane(target, entries, arm):
+    """Preview -- or, when armed, post -- the intake comments for ONE work
+    item, target-checked and dedupe-gated. `target` is the agreed
+    (org, project, id) triple; `arm` alone decides whether a write happens.
+
+    POSTING IS OFF BY DEFAULT: with `arm` false this issues GETs only and
+    reports what it WOULD post, so the default path performs zero writes.
+
+    THE ORDER IS THE SAFETY DESIGN:
+      1. Every entry is shape-validated -- marker shape, marker alone on line
+         1 of the body, an inert body, and no in-batch duplicate -- BEFORE
+         any credential is read and BEFORE the first request, so a refusal
+         leaves nothing partial on the work item.
+      2. The work item is RE-RESOLVED fresh. That one read serves both
+         purposes at once: it proves the target and it supplies the comment
+         history, so the lane issues no extra request. The preview and the
+         armed post are separate invocations, so the target is re-proved here
+         rather than trusted from the payload.
+      3. The write REFUSES unless `target` equals the freshly resolved
+         (org, project, id) triple AND the org derived from the current
+         ADO_ORG_URL.
+      4. Only then, and only when armed, is a POST issued -- one per pending
+         comment, on a route composed from the validated api_root.
+
+    THE WORK ITEM IS READ ONCE PER INVOCATION, not before every individual
+    write: within one armed batch every comment is posted from the single
+    snapshot taken in step 2. A comment added by someone else mid-batch is
+    invisible to this run."""
+    errors = validate_comment_entries(entries)
+    if errors:
+        raise AdoError(_INVALID_PLAN_MSG % "; ".join(errors))
+    api_root, org, pat = credentials()
+    fresh = resolve_work_item(target[2])
+    _assert_target_unchanged(target, fresh, org)
+    plan = plan_comments(entries, comment_haystack_tokens(fresh["comments"]))
+    done = [bool(item["already_posted"]) for item in plan]
+    pending = [item for item, seen in zip(entries, done) if not seen]
+    posted = []
+    if arm:
+        posted = execute_comment_plan(
+            (api_root, target[1], target[2]), pat, pending)
+    return {
+        "ok": True, "org": target[0], "project": target[1],
+        "work_item_id": target[2], "title": fresh["title"],
+        "web_url": fresh["web_url"], "armed": bool(arm),
+        "posted_count": len(posted), "already_posted_count": done.count(True),
+        "results": _comment_results(entries, plan, posted)}
+
+
 # A rendered heading is either html_to_text's HEADING_PREFIX (from an <h1>-<h6>
 # tag) or a bare 'Acceptance Criteria:' line, which is how the section is
 # commonly styled with <b>. KNOWN LOSSINESS, stated rather than claimed away: a
