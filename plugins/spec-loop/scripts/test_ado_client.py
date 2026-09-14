@@ -757,16 +757,18 @@ class TestAcceptanceCriteriaResolveInAFixedOrder(unittest.TestCase):
             ac.resolve_acceptance_criteria({}, "just prose"), ("", ""))
 
     def test_the_section_stops_at_the_next_heading(self):
-        rendered = ("## Acceptance Criteria\n\n- it spins\n\n"
-                    "## Notes\n\nnot criteria")
+        rendered = (
+            "## Acceptance Criteria\n\n- it spins\n\n"
+            "## Notes\n\nnot criteria")
         criteria, source = ac.resolve_acceptance_criteria({}, rendered)
         self.assertEqual(criteria, "- it spins")
         self.assertEqual(source, "description")
         self.assertNotIn("not criteria", criteria)
 
     def test_the_heading_match_is_case_and_colon_insensitive(self):
-        headings = ("## acceptance criteria", "## ACCEPTANCE CRITERIA:",
-                    "Acceptance Criteria:", "acceptance  criteria")
+        headings = (
+            "## acceptance criteria", "## ACCEPTANCE CRITERIA:",
+            "Acceptance Criteria:", "acceptance  criteria")
         for heading in headings:
             resolved = ac.resolve_acceptance_criteria(
                 {}, f"{heading}\n\n- it spins")
@@ -868,8 +870,11 @@ class TestResolveWorkItem(unittest.TestCase):
         self.assertEqual(record["description"], "")
 
     def test_the_resolved_comments_are_the_swept_comments(self):
-        comments = [{"id": "1", "author": "Ada", "created": "", "modified": "",
-                     "text": "hello"}]
+        comment = {
+            "id": "1", "author": "Ada", "created": "", "modified": "",
+            "text": "hello",
+        }
+        comments = [comment]
         record = self._resolve(work_item(), comments=comments)
         self.assertEqual(record["comments"], comments)
 
