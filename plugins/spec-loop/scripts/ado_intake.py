@@ -819,9 +819,75 @@ def render_artifact(record, refinement, ts):
     return "\n".join(lines) + "\n"
 
 
+def _load_json(path, what):
+    """Read one JSON file, mapping any read/parse failure to usage error."""
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        message = "error: cannot read the %s file %s: %s" % (what, path, exc)
+        raise IntakeUsageError(message) from exc
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        message = "error: the %s file %s is not valid JSON: %s" % (
+            what, path, exc)
+        raise IntakeUsageError(message) from exc
+
+
+def build_parser():
+    """The argparse parser: one `render` subcommand."""
+    description = (
+        "Render the ADO intake artifact and the comment bodies it would "
+        "post. Posts nothing.")
+    parser = argparse.ArgumentParser(description=description)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    render = subparsers.add_parser(
+        "render", help="render the intake artifact and comment bodies")
+    render.add_argument(
+        "--record", required=True,
+        help="path to ado_client.py resolve output (JSON)")
+    render.add_argument(
+        "--refinement", required=True, help="path to the refinement JSON")
+    render.add_argument(
+        "--ts", required=True, help="ISO-8601 timestamp supplied by the caller")
+    render.add_argument(
+        "--artifact-root", default=ARTIFACT_ROOT,
+        help="relative artifact root (default: %s)" % ARTIFACT_ROOT)
+    return parser
+
+
+def _render_payload(args):
+    """Build the success payload for `render`. Writes nothing."""
+    record = _load_json(args.record, "record")
+    refinement = _load_json(args.refinement, "refinement")
+    _require_valid_record(record)
+    org, project, work_item_id = record_triple(record)
+    return {"ok": True,
+            "work_item_org": org,
+            "work_item_project": project,
+            "work_item_id": work_item_id,
+            "artifact_path": artifact_path(
+                (org, project, work_item_id), args.artifact_root),
+            "artifact": render_artifact(record, refinement, args.ts),
+            "comments": build_comment_bodies(record, refinement, args.ts),
+            "ranked_gaps": rank_gaps(refinement["gaps"]),
+            "posted": False}
+
+
 def main(argv=None):
-    """Placeholder until the render subcommand lands (slice a3, task 8)."""
-    raise NotImplementedError
+    """Entry point: 0 = ok, 1 = contract failure, 2 = usage."""
+    args = build_parser().parse_args(argv)
+    try:
+        payload = _render_payload(args)
+    except IntakeUsageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except IntakeError as exc:
+        contract_failure = {"ok": False, "errors": [str(exc)]}
+        print(json.dumps(contract_failure, ensure_ascii=False, indent=2))
+        return 1
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover

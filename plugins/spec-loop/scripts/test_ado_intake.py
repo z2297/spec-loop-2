@@ -604,5 +604,87 @@ class TestArtifactRendering(unittest.TestCase):
             self.artifact(refinement=make_refinement(gaps="all of them"))
 
 
+class TestMain(unittest.TestCase):
+    """Behaviour through the public CLI: exit codes and printed JSON."""
+
+    def run_main(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            code = intake.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def write_inputs(self, record=None, refinement=None):
+        import tempfile
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        (tmp / "record.json").write_text(
+            json.dumps(record or make_record()), encoding="utf-8")
+        (tmp / "refinement.json").write_text(
+            json.dumps(refinement or make_refinement()), encoding="utf-8")
+        return tmp
+
+    def argv_for(self, tmp):
+        return ["render", "--record", str(tmp / "record.json"),
+                "--refinement", str(tmp / "refinement.json"), "--ts", TS]
+
+    def test_a_good_render_exits_zero_with_the_pinned_payload_keys(self):
+        code, out, _ = self.run_main(self.argv_for(self.write_inputs()))
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(
+            set(payload),
+            {"ok", "work_item_org", "work_item_project", "work_item_id",
+             "artifact_path", "artifact", "comments", "ranked_gaps",
+             "posted"})
+        self.assertTrue(payload["ok"])
+        self.assertIs(payload["posted"], False)
+        self.assertTrue(
+            payload["artifact_path"].startswith(intake.ARTIFACT_ROOT + "/"))
+        self.assertEqual(payload["work_item_id"], "1234")
+        self.assertEqual([g["id"] for g in payload["ranked_gaps"]], ["G1"])
+
+    def test_a_contract_failure_exits_one_with_the_refusal_shape(self):
+        tmp = self.write_inputs(refinement=make_refinement(description=""))
+        code, out, _ = self.run_main(self.argv_for(tmp))
+        self.assertEqual(code, 1)
+        payload = json.loads(out)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["errors"])
+
+    def test_an_unreadable_record_exits_two_on_stderr(self):
+        tmp = self.write_inputs()
+        code, _, err = self.run_main(
+            ["render", "--record", str(tmp / "missing.json"),
+             "--refinement", str(tmp / "refinement.json"), "--ts", TS])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read the record file", err)
+
+    def test_malformed_json_exits_two(self):
+        tmp = self.write_inputs()
+        (tmp / "record.json").write_text("{oops", encoding="utf-8")
+        code, _, err = self.run_main(self.argv_for(tmp))
+        self.assertEqual(code, 2)
+        self.assertIn("not valid JSON", err)
+
+    def test_a_bad_work_item_id_exits_two_before_any_render(self):
+        tmp = self.write_inputs(record=make_record(id="../1"))
+        code, out, err = self.run_main(self.argv_for(tmp))
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertIn("invalid Azure DevOps work item id", err)
+
+    def test_an_escaping_artifact_root_exits_two(self):
+        tmp = self.write_inputs()
+        code, _, err = self.run_main(
+            self.argv_for(tmp) + ["--artifact-root", "/etc"])
+        self.assertEqual(code, 2)
+        self.assertIn("artifact root", err)
+
+    def test_the_render_subcommand_is_required(self):
+        with self.assertRaises(SystemExit):
+            intake.build_parser().parse_args([])
+
+
 if __name__ == "__main__":
     unittest.main()
