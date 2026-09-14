@@ -94,9 +94,12 @@ class TestTheAdoWriteIsBoundedToComments(unittest.TestCase):
     def test_the_write_is_bounded_to_adding_a_comment(self):
         self.assertIn(
             "comments only, never transitions or field edits", self.text)
-        for forbidden in ("never a created or closed work item",
-                          "never a sub-task",
-                          "never an edit or deletion of any comment"):
+        forbidden_claims = (
+            "never a created or closed work item",
+            "never a sub-task",
+            "never an edit or deletion of any comment",
+        )
+        for forbidden in forbidden_claims:
             with self.subTest(forbidden=forbidden):
                 self.assertIn(forbidden, self.text)
 
@@ -197,12 +200,12 @@ class TestTheFiveClaimsThisLaneCannotOverstate(unittest.TestCase):
         self.assertNotIn(
             "guarantees only that the body contains no active markup",
             self.text)
-        self.assertNotIn("reads correctly under either interpretation",
-                         self.text)
+        self.assertNotIn(
+            "reads correctly under either interpretation", self.text)
 
     def test_the_marker_round_trip_is_stated_as_unverified(self):
-        self.assertIn("has not been verified against a live organization",
-                      self.text)
+        self.assertIn(
+            "has not been verified against a live organization", self.text)
         self.assertIn("7.0-preview.3", self.text)
         self.assertIn("7.1-preview.4", self.text)
 

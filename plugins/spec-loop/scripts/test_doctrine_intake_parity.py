@@ -83,10 +83,13 @@ class TestTheBoundedWriteClaimSetIsIdenticalAcrossProviders(
 
     def test_every_command_makes_every_bounded_write_claim(self):
         for name in INTAKE_COMMANDS:
-            text = prose(name)
-            for claim, pattern in BOUNDED_WRITE_CLAIMS:
-                with self.subTest(command=name, claim=claim):
-                    self.assertRegex(text, pattern)
+            self._assert_all_claims_present(name)
+
+    def _assert_all_claims_present(self, name):
+        text = prose(name)
+        for claim, pattern in BOUNDED_WRITE_CLAIMS:
+            with self.subTest(command=name, claim=claim):
+                self.assertRegex(text, pattern)
 
     def test_no_command_offers_re_running_itself_as_recovery(self):
         """Measured on the Jira twin: the marker hashes the regenerated
@@ -98,11 +101,14 @@ class TestTheBoundedWriteClaimSetIsIdenticalAcrossProviders(
 
     def test_every_command_scopes_recovery_to_the_posting_step(self):
         for name in INTAKE_COMMANDS:
-            with self.subTest(command=name):
-                self.assertRegex(
-                    prose(name),
-                    r"re-run the POSTING step with the same rendered "
-                    r"(?:comments|payload) file")
+            self._assert_recovery_scoped_to_posting_step(name)
+
+    def _assert_recovery_scoped_to_posting_step(self, name):
+        pattern = (
+            r"re-run the POSTING step with the same rendered "
+            r"(?:comments|payload) file")
+        with self.subTest(command=name):
+            self.assertRegex(prose(name), pattern)
 
 
 if __name__ == "__main__":  # pragma: no cover

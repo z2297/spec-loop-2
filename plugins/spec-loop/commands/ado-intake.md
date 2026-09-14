@@ -94,8 +94,11 @@ the tool set and this section exact.
   `7.1-preview.4`, and whether the stored bytes survive that pair **has not been verified
   against a live organization**. The marker deliberately contains no character an HTML or
   markdown renderer is known to rewrite, and it sits alone on line 1, but that is construction,
-  not evidence. The bounded worst case is one duplicate comment on one work item on the first
-  armed post; after one confirmed round trip every later run carries its own proof in hand.
+  not evidence. The first armed post against a work item cannot duplicate anything — nothing
+  spec-loop posted is on the item yet — so the exposure is entirely on a LATER armed run: if the
+  marker did not survive the round trip, that later run re-posts the whole batch it re-sends,
+  not one comment. After one confirmed round trip on a given organization, every later run
+  carries its own proof in hand.
 - **Known limitation: deleting a posted comment re-arms it.** The sweep leaves ADO's
   `includeDeleted` at its default, so **deleting a spec-loop comment in the Azure DevOps web UI
   re-arms it** — the sweep **excludes deleted comments by default**, so the next armed run sees
@@ -264,11 +267,14 @@ the tool set and this section exact.
    transport failure left one comment's outcome genuinely unknown it names that one as
    indeterminate rather than omitting it.
    **The correct recovery is to re-run the POSTING step with the same rendered payload file** —
-   the same `<tmp>/payload.json`, re-armed with `--post` — which the marker dedupe makes safe:
-   the already-live comments come back as `already-posted` and only the remaining ones are
-   written. **Do NOT re-run the refinement**, and so do not re-run this whole slash command to
-   recover: a regenerated refinement produces new markers that will not dedupe against what is
-   already on the work item, because the marker hashes the refinement payload and a single
+   the same `<tmp>/payload.json`, re-armed with `--post`. This is safe only if the posted
+   markers survive the read-back round trip described in the known limitation above, which has
+   **not** been verified against a live organization: if they do, the already-live comments come
+   back as `already-posted` and only the remaining ones are written; if they do not, this re-run
+   re-posts the whole batch beside the ones already landed. **Do NOT re-run the refinement**,
+   and so do not re-run this whole slash command to recover: a regenerated refinement produces
+   new markers that will not dedupe against what is already on the work item, because the
+   marker hashes the refinement payload and a single
    character of drift — one dropped period was measured to do it on the Jira twin of this lane —
    yields a different marker and a second near-identical comment. Do not post the remaining
    comments by hand either. On success print each result's `kind`, `marker` and `status`. Never
