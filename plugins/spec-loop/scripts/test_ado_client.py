@@ -566,13 +566,21 @@ def comment_page(comments, total, token=None):
 
 
 class TestTheCommentSweepIsFailClosed(unittest.TestCase):
+    API_ROOT = "https://dev.azure.com/contoso"
+    SWEEP_ARGS = (API_ROOT, "tok", "Contoso Platform", "1234")
+
     def _sweep(self, pages):
         bodies = [json.dumps(p).encode("utf-8") for p in pages]
         with mock.patch.object(ac, "_http_get", side_effect=bodies) as get:
-            result = ac.fetch_comments(
-                "https://dev.azure.com/contoso", "tok", "Contoso Platform",
-                "1234")
+            result = ac.fetch_comments(*self.SWEEP_ARGS)
         return result, get
+
+    def _assert_sweep_refuses(self, page):
+        """Sweep one fail-closed page and require the refusal. Extracted so
+        each integrity rule below reads `for case -> subTest -> assert` at
+        three levels of nesting instead of four."""
+        with self.assertRaises(ac.AdoError):
+            self._sweep([page])
 
     def test_a_single_page_sweep_normalizes_every_comment(self):
         raws = [raw_comment(1, "hello"), raw_comment(2, "world")]
@@ -621,8 +629,7 @@ class TestTheCommentSweepIsFailClosed(unittest.TestCase):
         )
         for broken in broken_comments:
             with self.subTest(broken=broken):
-                with self.assertRaises(ac.AdoError):
-                    self._sweep([comment_page([broken], 1)])
+                self._assert_sweep_refuses(comment_page([broken], 1))
 
     def test_a_missing_or_non_numeric_total_count_raises(self):
         pages = (
@@ -632,8 +639,7 @@ class TestTheCommentSweepIsFailClosed(unittest.TestCase):
         )
         for page in pages:
             with self.subTest(page=page):
-                with self.assertRaises(ac.AdoError):
-                    self._sweep([page])
+                self._assert_sweep_refuses(page)
 
     def test_a_page_missing_the_comments_list_raises(self):
         pages = (
@@ -643,8 +649,7 @@ class TestTheCommentSweepIsFailClosed(unittest.TestCase):
         )
         for page in pages:
             with self.subTest(page=page):
-                with self.assertRaises(ac.AdoError):
-                    self._sweep([page])
+                self._assert_sweep_refuses(page)
 
     def test_terminating_with_fewer_comments_than_total_count_raises(self):
         with self.assertRaises(ac.AdoError) as ctx:
@@ -655,8 +660,7 @@ class TestTheCommentSweepIsFailClosed(unittest.TestCase):
         for bad in ("tok en", "tok\n", "a" * 513, "tok&x=1", 42, []):
             with self.subTest(bad=bad):
                 page = comment_page([raw_comment(1, "a")], 2, token=bad)
-                with self.assertRaises(ac.AdoError):
-                    self._sweep([page])
+                self._assert_sweep_refuses(page)
 
     def test_a_traversal_shaped_token_is_neutralised_by_percent_encoding(self):
         """CONTINUATION_TOKEN_RE is pinned verbatim by conventions §31 and it
@@ -676,9 +680,7 @@ class TestTheCommentSweepIsFailClosed(unittest.TestCase):
         bodies = [json.dumps(page).encode("utf-8")] * (ac.MAX_COMMENT_PAGES + 1)
         with mock.patch.object(ac, "_http_get", side_effect=bodies):
             with self.assertRaises(ac.AdoError) as ctx:
-                ac.fetch_comments(
-                    "https://dev.azure.com/contoso", "tok",
-                    "Contoso Platform", "1234")
+                ac.fetch_comments(*self.SWEEP_ARGS)
         self.assertIn(str(ac.MAX_COMMENT_PAGES), str(ctx.exception))
 
     def test_deleted_comments_stay_excluded(self):
