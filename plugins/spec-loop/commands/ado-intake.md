@@ -74,11 +74,14 @@ the tool set and this section exact.
   own `.gitignore`, and Step 8's confirmed comment POST. It is otherwise read-only against
   Azure DevOps and against the repo. The only bytes this command writes anywhere other than
   into the repository and into Azure DevOps are the three scratch files listed above, inside
-  the `mktemp -d` directory. It runs exactly three bundled script invocations —
-  `ado_client.py resolve`, `ado_intake.py render`, and `ado_client.py comment` (with
-  `--post` only after Step 8's confirmation) — plus `mktemp -d`
-  and that one `printf ... >> .gitignore` append, whose entire argument is a fixed literal with
-  nothing provider-derived in it. Every argument derived from the work item goes in as a
+  the `mktemp -d` directory. It runs three distinct bundled script commands —
+  `ado_client.py resolve`, `ado_intake.py render`, and `ado_client.py comment` — which is
+  **three invocations on the default path and four on the armed one**, because
+  `ado_client.py comment` runs twice: once in Step 7 as a preview with no flag and zero
+  writes, and once more in Step 8 with `--post` after the confirmation. Nothing else is
+  invoked except `mktemp -d` and that one `printf ... >> .gitignore` append, whose entire
+  argument is a fixed literal with nothing provider-derived in it. Every argument derived
+  from the work item goes in as a
   **separate argv token** to the bundled scripts; nothing from Azure DevOps is ever spliced
   into a shell string, and nothing from Azure DevOps ever reaches the `.gitignore` append.
 - **Untrusted input.** The title, description, acceptance criteria, repro steps, project name,
