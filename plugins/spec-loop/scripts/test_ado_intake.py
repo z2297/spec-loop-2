@@ -458,3 +458,79 @@ class TestCommentBodyIsBlankLineSeparatedBlocks(unittest.TestCase):
         self.assertEqual(
             set(intake.MARKER_RE.findall(wrapped)),
             set(intake.MARKER_RE.findall(body)))
+
+
+class TestCommentBodiesAreBuiltNotPosted(unittest.TestCase):
+    def test_the_understanding_comment_comes_first(self):
+        built = intake.build_comment_bodies(
+            make_record(), make_refinement(), TS)
+        self.assertEqual(built[0]["kind"], "understanding")
+        self.assertIsNone(built[0]["gap_id"])
+
+    def test_each_entry_has_exactly_the_pinned_keys(self):
+        for entry in intake.build_comment_bodies(
+                make_record(), make_refinement(), TS):
+            self.assertEqual(set(entry),
+                             {"kind", "gap_id", "marker", "body"})
+            self.assertTrue(entry["body"].startswith(entry["marker"]))
+
+    def test_an_answered_gap_is_a_decision(self):
+        built = intake.build_comment_bodies(
+            make_record(), make_refinement(), TS)
+        gap_entry = built[1]
+        self.assertEqual(gap_entry["kind"], "decision")
+        self.assertEqual(gap_entry["gap_id"], "G1")
+        self.assertIn("Admins only.", gap_entry["body"])
+
+    def test_an_unanswered_gap_is_an_open_question(self):
+        refinement = make_refinement(
+            answers={"G1": {"answer": None,
+                            "logged_as": "open-question"}})
+        built = intake.build_comment_bodies(make_record(), refinement, TS)
+        self.assertEqual(built[1]["kind"], "open-question")
+        self.assertIn("Open question (G1", built[1]["body"])
+
+    def test_a_decision_logged_as_with_no_answer_degrades_to_open_question(self):
+        refinement = make_refinement(
+            answers={"G1": {"answer": None, "logged_as": "decision"}})
+        built = intake.build_comment_bodies(make_record(), refinement, TS)
+        self.assertEqual(built[1]["kind"], "open-question")
+
+    def test_untrusted_work_item_text_reaches_the_body_escaped(self):
+        refinement = make_refinement(description="<b>hi</b> & bye")
+        built = intake.build_comment_bodies(make_record(), refinement, TS)
+        self.assertNotIn("<b>", built[0]["body"])
+        self.assertIn("&lt;b&gt;hi&lt;/b&gt; &amp; bye", built[0]["body"])
+
+    def test_an_invalid_refinement_refuses_a_partial_render(self):
+        with self.assertRaises(intake.IntakeError):
+            intake.build_comment_bodies(
+                make_record(), make_refinement(description=""), TS)
+
+    def test_an_invalid_record_refuses_a_partial_render(self):
+        with self.assertRaises(intake.IntakeError):
+            intake.build_comment_bodies(
+                make_record(project=""), make_refinement(), TS)
+
+    def test_every_marker_in_one_batch_is_distinct(self):
+        refinement = make_refinement(
+            gaps=[{"id": "G1", "question": "same?", "impact": "low",
+                   "blocking": False},
+                  {"id": "G2", "question": "same?", "impact": "low",
+                   "blocking": False}],
+            answers={})
+        built = intake.build_comment_bodies(make_record(), refinement, TS)
+        markers = [e["marker"] for e in built]
+        self.assertEqual(len(markers), len(set(markers)))
+
+    def test_a_duplicate_marker_batch_is_refused_before_anything_is_returned(self):
+        entry = {"kind": "decision", "gap_id": "G1", "marker": "[m]",
+                 "body": "b"}
+        self.assertEqual(intake._duplicate_marker_errors([entry]), [])
+        self.assertEqual(
+            intake._duplicate_marker_errors([entry, dict(entry)]),
+            ["two comments share the dedupe marker [m]"])
+
+
+if __name__ == "__main__":
+    unittest.main()

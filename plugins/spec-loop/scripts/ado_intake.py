@@ -601,6 +601,91 @@ def render_comment(triple, kind, payload, ts):
     ])
 
 
+def _understanding_payload(refinement):
+    """The confirmed-understanding comment's payload, escaped. (PURE)"""
+    criteria = "\n".join("- %s" % escape_for_comment(item)
+                         for item in refinement["acceptance_criteria"])
+    risks = "\n".join(
+        "- [%s] %s: %s" % (escape_for_comment(risk["severity"]),
+                           escape_for_comment(risk["id"]),
+                           escape_for_comment(risk["risk"]))
+        for risk in refinement["risks"])
+    blocks = ["Description", escape_for_comment(refinement["description"]),
+              "Acceptance criteria", criteria or "- (none stated)",
+              "Risks", risks or "- (none identified)"]
+    return "\n\n".join(blocks)
+
+
+def _gap_payload(gap, answer):
+    """The decision or open-question payload for one gap, escaped. (PURE)"""
+    gap_id = escape_for_comment(gap["id"])
+    question = escape_for_comment(gap["question"])
+    if answer is None:
+        return "Open question (%s, impact %s)\n\n%s" % (
+            gap_id, escape_for_comment(gap["impact"]), question)
+    return "Question (%s)\n\n%s\n\nDecision\n\n%s" % (
+        gap_id, question, escape_for_comment(answer))
+
+
+def _gap_comment(triple, gap, answers, ts):
+    """Render ONE gap's comment entry. (PURE)"""
+    entry = answers.get(gap["id"]) or {}
+    answer = entry.get("answer")
+    kind = ("decision"
+            if entry.get("logged_as") == "decision" and answer
+            else "open-question")
+    payload = _gap_payload(gap, answer if kind == "decision" else None)
+    return {"kind": kind, "gap_id": gap["id"],
+            "marker": comment_marker(triple, kind, payload),
+            "body": render_comment(triple, kind, payload, ts)}
+
+
+def _duplicate_marker_errors(entries):
+    """Error strings for a marker used by two entries in one batch. (PURE)
+
+    Hazard 1: the posting lane's read-back dedupe gate is blind to two
+    identical entries inside the batch it is gating -- both plan against
+    one pre-write snapshot, both get written, and a results map keyed by
+    marker collapses them. Refuse the batch here, before the first
+    request."""
+    seen = set()
+    errors = []
+    for entry in entries:
+        if entry["marker"] in seen:
+            errors.append("two comments share the dedupe marker %s"
+                          % entry["marker"])
+        seen.add(entry["marker"])
+    return errors
+
+
+def build_comment_bodies(record, refinement, ts):
+    """Every comment this intake WOULD post, in order. Posts nothing. (PURE)
+
+    Refuses a partial render: an invalid record or refinement raises rather
+    than emitting some comments, mirroring the connector's
+    no-half-resolve rule."""
+    _require_valid_record(record)
+    errors = validate_refinement(refinement)
+    if errors:
+        raise IntakeError(
+            "refusing to render comments from an invalid refinement: "
+            + "; ".join(errors))
+    triple = record_triple(record)
+    payload = _understanding_payload(refinement)
+    built = [{"kind": "understanding", "gap_id": None,
+              "marker": comment_marker(triple, "understanding", payload),
+              "body": render_comment(triple, "understanding", payload, ts)}]
+    answers = refinement["answers"]
+    for gap in rank_gaps(refinement["gaps"]):
+        built.append(_gap_comment(triple, gap, answers, ts))
+    duplicates = _duplicate_marker_errors(built)
+    if duplicates:
+        raise IntakeError(
+            "refusing to render a batch with duplicate markers: "
+            + "; ".join(duplicates))
+    return built
+
+
 def main(argv=None):
     """Placeholder until the render subcommand lands (slice a3, task 8)."""
     raise NotImplementedError
