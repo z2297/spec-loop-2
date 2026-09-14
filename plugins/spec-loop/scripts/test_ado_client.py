@@ -107,6 +107,14 @@ class TestOrgUrlValidation(unittest.TestCase):
         with self.assertRaises(ac.AdoUsageError):
             ac.validate_org_url("https://[oops/contoso")
 
+    def test_an_unparsable_port_is_a_usage_error_not_a_traceback(self):
+        """urlsplit() itself does not raise on 'https://dev.azure.com:abc/x'
+        -- parts.port is computed LAZILY, so the ValueError only surfaces on
+        attribute access. _split_org_url forces that access; without it, this
+        would propagate as an uncaught ValueError instead of AdoUsageError."""
+        with self.assertRaises(ac.AdoUsageError):
+            ac.validate_org_url("https://dev.azure.com:abc/contoso")
+
     def test_a_modern_url_with_no_org_segment_is_rejected(self):
         with self.assertRaises(ac.AdoUsageError):
             ac.validate_org_url("https://dev.azure.com")
@@ -899,6 +907,18 @@ class TestResolveWorkItem(unittest.TestCase):
         item = work_item(**{ac.FIELD_TITLE: ""})
         with self.assertRaises(ac.AdoError):
             self._resolve(item)
+
+    def test_a_non_string_title_type_or_state_is_a_half_resolve_not_a_crash(self):
+        """A malformed or malicious tenant response could return a dict, list
+        or number for a field the API contract promises is a string. Each
+        must degrade to '' and hit the REQUIRED_FIELDS half-resolve path as
+        an AdoError, never an unhandled AttributeError from a bare
+        .strip()."""
+        for field in (ac.FIELD_TITLE, ac.FIELD_TYPE, ac.FIELD_STATE):
+            with self.subTest(field=field):
+                item = work_item(**{field: {"unexpected": "shape"}})
+                with self.assertRaises(ac.AdoError):
+                    self._resolve(item)
 
     def test_the_id_is_validated_before_any_request(self):
         stack, read, _sweep = self._patched(work_item())

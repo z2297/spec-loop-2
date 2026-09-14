@@ -894,6 +894,19 @@ def _normalized(values):
     return record
 
 
+def _text_field(fields, key):
+    """Read a plain-string field (System.Title, System.WorkItemType or
+    System.State) the same way resolve_project reads System.TeamProject: a
+    non-string value (a malformed or malicious tenant response returning a
+    dict, list or number where the API contract promises a string) degrades
+    to '' rather than crashing .strip() with an unhandled AttributeError. The
+    empty result still flows through _normalized's REQUIRED_FIELDS check, so
+    a genuinely missing/wrong-shaped field still fails closed as an AdoError,
+    never a raw traceback. (PURE)"""
+    raw = fields.get(key)
+    return raw.strip() if isinstance(raw, str) else ""
+
+
 def resolve_work_item(work_item_id):
     """Resolve one Azure DevOps work-item id READ-ONLY to the normalized
     record. Credentials come from the environment (see credentials()); every
@@ -923,9 +936,9 @@ def resolve_work_item(work_item_id):
         "project": project,
         "id": resolved_id,
         "web_url": validate_web_url(href, api_root),
-        "title": (fields.get(FIELD_TITLE) or "").strip(),
-        "work_item_type": (fields.get(FIELD_TYPE) or "").strip(),
-        "state": (fields.get(FIELD_STATE) or "").strip(),
+        "title": _text_field(fields, FIELD_TITLE),
+        "work_item_type": _text_field(fields, FIELD_TYPE),
+        "state": _text_field(fields, FIELD_STATE),
         "description": description,
         "acceptance_criteria": criteria,
         "acceptance_criteria_source": source,
