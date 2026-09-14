@@ -58,16 +58,25 @@ the tool set and this section exact.
   argv, and never quote a credential into the artifact or into a rendered comment body. Azure
   DevOps still supports PATs but now recommends Microsoft Entra tokens where possible; an
   OAuth flow is deliberately out of scope for this connector.
-- **`Write` is for this intake's artifact only** — the `artifact_path` the renderer returns,
-  under `.spec-loop-ado/`. Nothing else is ever written: not a source file, not a plugin file,
-  not a run's state, and not `.gitignore` (Step 1's containment is a constant-string `Bash`
-  append, never a `Write` — see below). Step 6's guard asserts the `.spec-loop-ado/` prefix
-  before the artifact write.
-- **`Bash` makes exactly two sanctioned writes and no others**: Step 1's constant-string
-  containment append to the invoking repo's own `.gitignore`, and Step 8's confirmed comment
-  POST. It is otherwise read-only against Azure DevOps and against the repo. It runs exactly
-  three bundled script invocations — `ado_client.py resolve`, `ado_intake.py render`, and
-  `ado_client.py comment` (with `--post` only after Step 8's confirmation) — plus `mktemp -d`
+- **`Write` writes this intake's artifact, plus three scratch files inside the temporary
+  directory, and nothing else.** The artifact goes to the `artifact_path` the renderer
+  returns, under `.spec-loop-ado/`, and Step 6's guard asserts that prefix before the
+  write. The three others are this run's own working files inside the `mktemp -d`
+  directory: `<tmp>/record.json` (Step 2), `<tmp>/refinement.json` and `<tmp>/payload.json`
+  (Step 5). They are **inputs to the bundled scripts, never a dedupe gate and never
+  authority for anything** — the dedupe gate is always the work item's own comment list —
+  and the temporary directory's retained copy of the work item is disclosed below. Nothing
+  outside those four paths is ever written by `Write`: not a source file, not a plugin
+  file, not a run's state, and not `.gitignore` (Step 1's containment is a constant-string
+  `Bash` append, never a `Write` — see below).
+- **`Bash` makes exactly two sanctioned writes and no others** — one into the repository and
+  one into Azure DevOps: Step 1's constant-string containment append to the invoking repo's
+  own `.gitignore`, and Step 8's confirmed comment POST. It is otherwise read-only against
+  Azure DevOps and against the repo. The only bytes this command writes anywhere other than
+  into the repository and into Azure DevOps are the three scratch files listed above, inside
+  the `mktemp -d` directory. It runs exactly three bundled script invocations —
+  `ado_client.py resolve`, `ado_intake.py render`, and `ado_client.py comment` (with
+  `--post` only after Step 8's confirmation) — plus `mktemp -d`
   and that one `printf ... >> .gitignore` append, whose entire argument is a fixed literal with
   nothing provider-derived in it. Every argument derived from the work item goes in as a
   **separate argv token** to the bundled scripts; nothing from Azure DevOps is ever spliced
