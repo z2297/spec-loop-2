@@ -130,9 +130,11 @@ class TestApiVersionsAreThreeDistinctConstants(unittest.TestCase):
     either the comment sweep or the write."""
 
     def test_the_three_api_versions_are_not_all_equal(self):
-        versions = {ac.API_VERSION_WORK_ITEM,
-                    ac.API_VERSION_COMMENTS_READ,
-                    ac.API_VERSION_COMMENT_ADD}
+        versions = {
+            ac.API_VERSION_WORK_ITEM,
+            ac.API_VERSION_COMMENTS_READ,
+            ac.API_VERSION_COMMENT_ADD,
+        }
         self.assertEqual(len(versions), 3)
 
     def test_each_api_version_is_the_documented_literal(self):
@@ -200,8 +202,11 @@ class TestHttpGetIsStructurallyIncapableOfWriting(unittest.TestCase):
         writer to this module; that must not be able to loosen THIS
         guarantee, and this test must not have to be deleted to allow it."""
         source = inspect.getsource(ac._http_get)
-        for verb in ('"POST"', '"PUT"', '"PATCH"', '"DELETE"',
-                     "'POST'", "'PUT'", "'PATCH'", "'DELETE'"):
+        verbs = (
+            '"POST"', '"PUT"', '"PATCH"', '"DELETE"',
+            "'POST'", "'PUT'", "'PATCH'", "'DELETE'",
+        )
+        for verb in verbs:
             self.assertNotIn(verb, source, verb)
 
     def test_the_get_helper_sets_no_body_and_pins_get(self):
@@ -257,8 +262,8 @@ class TestRedirectsAreRefused(unittest.TestCase):
             None, None, 302, "Found", {}, "https://evil.example.com/"))
 
     def test_the_module_opener_installs_the_no_redirect_handler(self):
-        self.assertTrue(any(isinstance(h, ac._NoRedirect)
-                            for h in ac._OPENER.handlers))
+        handlers = ac._OPENER.handlers
+        self.assertTrue(any(isinstance(h, ac._NoRedirect) for h in handlers))
 
 
 class TestTheSecretNeverLeaks(unittest.TestCase):
@@ -285,8 +290,8 @@ class TestTheSecretNeverLeaks(unittest.TestCase):
                 ac._http_get("https://dev.azure.com/x", "tok")
 
     def test_a_bare_oserror_while_reading_is_also_an_ado_error(self):
-        with mock.patch.object(ac._OPENER, "open",
-                               side_effect=OSError("connection reset")):
+        reset = OSError("connection reset")
+        with mock.patch.object(ac._OPENER, "open", side_effect=reset):
             with self.assertRaises(ac.AdoError) as ctx:
                 ac._http_get("https://dev.azure.com/x", "sekrit-pat")
         self.assertNotIn("sekrit-pat", str(ctx.exception))
