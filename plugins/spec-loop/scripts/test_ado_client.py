@@ -1080,6 +1080,111 @@ class TestPostOneComment(unittest.TestCase):
                 ac.post_comment(self.ROUTE, "tok", "b")
 
 
+def entry(kind, marker, body=None):
+    """One comment entry in ado_intake render's shape, marker on line 1."""
+    return {"kind": kind, "gap_id": None, "marker": marker,
+            "body": body if body is not None else "%s\n\nheading" % marker}
+
+
+MARKER_A = "[spec-loop-intake:understanding:0123456789ab]"
+MARKER_B = "[spec-loop-intake:decision:ba9876543210]"
+
+
+class TestADuplicateBatchIsRefusedBeforeAnyPost(unittest.TestCase):
+    """Hazard 1 from run 20260908-jira-intake, measured on the Jira twin: the
+    read-back dedupe gate compares each entry to the work item and never to
+    its siblings, so two identical entries in ONE batch both plan as
+    not-already-posted, both POST, and a results map keyed by marker collapses
+    them onto one comment id. Refuse the batch at validation, before the first
+    request, which is the only point at which it is still a no-op."""
+
+    def test_two_entries_sharing_a_marker_are_refused(self):
+        errors = ac.validate_comment_entries(
+            [entry("understanding", MARKER_A), entry("decision", MARKER_A)])
+        self.assertEqual(len(errors), 1)
+        self.assertIn(MARKER_A, errors[0])
+        self.assertIn("comments[1]", errors[0])
+        self.assertIn("comments[0]", errors[0])
+
+    def test_distinct_markers_are_accepted(self):
+        self.assertEqual(
+            ac.validate_comment_entries(
+                [entry("understanding", MARKER_A), entry("decision", MARKER_B)]),
+            [])
+
+    def test_a_third_copy_is_reported_too(self):
+        errors = ac.validate_comment_entries([entry("understanding", MARKER_A)] * 3)
+        self.assertEqual(len(errors), 2)
+
+
+class TestAPostedBodyMustBeInertAndCarryItsMarker(unittest.TestCase):
+    def test_an_empty_batch_is_refused(self):
+        for bad in ([], None, {}, "nope"):
+            with self.subTest(value=bad):
+                self.assertTrue(ac.validate_comment_entries(bad))
+
+    def test_a_missing_key_is_reported_with_its_index(self):
+        errors = ac.validate_comment_entries([{"kind": "decision"}])
+        self.assertTrue(any("comments[0]" in e and "marker" in e for e in errors))
+
+    def test_a_non_object_entry_is_reported(self):
+        self.assertTrue(any("comments[0]" in e
+                            for e in ac.validate_comment_entries(["x"])))
+
+    def test_a_marker_outside_the_marker_shape_is_refused(self):
+        errors = ac.validate_comment_entries([entry("decision", "[nope]")])
+        self.assertTrue(any("marker" in e for e in errors))
+
+    def test_a_body_that_lost_its_marker_is_refused(self):
+        errors = ac.validate_comment_entries(
+            [entry("decision", MARKER_B, body="heading only")])
+        self.assertTrue(any("body" in e for e in errors))
+
+    def test_the_marker_must_be_on_line_one(self):
+        errors = ac.validate_comment_entries(
+            [entry("decision", MARKER_B, body="heading\n\n%s" % MARKER_B)])
+        self.assertTrue(any("line 1" in e for e in errors))
+
+    def test_a_body_carrying_active_markup_is_refused(self):
+        for bad in ("<b>x</b>", "a > b", "<script>"):
+            with self.subTest(body=bad):
+                errors = ac.validate_comment_entries(
+                    [entry("decision", MARKER_B, body="%s\n\n%s" % (MARKER_B, bad))])
+                self.assertTrue(any("inert" in e for e in errors), errors)
+
+    def test_an_escaped_body_is_accepted(self):
+        body = "%s\n\nRisks\n\n- Tom &amp; Jerry &lt;br&gt;" % MARKER_B
+        self.assertEqual(
+            ac.validate_comment_entries([entry("decision", MARKER_B, body=body)]),
+            [])
+
+    def test_escaping_leaves_the_marker_byte_identical(self):
+        """The posted body is escaped (&, <, > -- in that order) because ADO's
+        Add body cannot declare its format. The marker contains none of those
+        characters, so dedupe is provably unaffected: asserted here rather
+        than reasoned about."""
+        body = "%s\n\nTom & Jerry <b>x</b> a > b" % MARKER_A
+        escaped = body
+        for needle, replacement in (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;")):
+            escaped = escaped.replace(needle, replacement)
+        self.assertEqual(ac.MARKER_RE.findall(escaped), [MARKER_A])
+        self.assertEqual(escaped.splitlines()[0], MARKER_A)
+        self.assertIn(MARKER_A, escaped)
+
+    def test_a_bad_kind_is_refused(self):
+        errors = ac.validate_comment_entries([entry("transition", MARKER_A)])
+        self.assertTrue(any("kind" in e for e in errors))
+
+    def test_shape_errors_short_circuit_the_duplicate_scan(self):
+        """A batch with a malformed entry reports the shape error only: the
+        duplicate scan indexes entry['marker'] and must not run on an entry
+        that has no marker."""
+        errors = ac.validate_comment_entries(
+            [{"kind": "decision"}, entry("decision", MARKER_A)])
+        self.assertTrue(errors)
+        self.assertFalse(any("duplicates" in e for e in errors))
+
+
 class TestMain(unittest.TestCase):
     ENV = {"ADO_ORG_URL": "https://dev.azure.com/contoso", "ADO_PAT": "tok"}
 

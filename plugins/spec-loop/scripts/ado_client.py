@@ -909,6 +909,123 @@ def post_comment(route, pat, body):
     return comment_id
 
 
+COMMENT_KINDS = ("understanding", "decision", "open-question")
+COMMENT_ENTRY_KEYS = ("kind", "marker", "body")
+
+# THIS MODULE'S OWN COPIES, on purpose: ado_intake.py builds the markers and
+# exports the same two patterns, and there is deliberately no shared runtime
+# module between them (duplication over coupling), so neither module's change
+# can loosen the other's gate. ado_intake's own tests pin the shape both have
+# to agree on.
+MARKER_RE = re.compile(
+    r"\[spec-loop-intake:(?:understanding|decision|open-question):"
+    r"[0-9a-f]{12}\]")
+# The bare digest, for the dedupe gate's second tier: a round trip that
+# rewrote the wrapper but kept the digest must still SUPPRESS a re-post,
+# because a false suppression only skips a write while a false miss
+# duplicates a comment on a live work item with no delete lane to retract it.
+MARKER_DIGEST_RE = re.compile(r"\b[0-9a-f]{12}\b")
+
+# The only two characters that can open active markup. The rendered body was
+# escaped at render time (& -> &amp;, < -> &lt;, > -> &gt;), so a body still
+# carrying one of these did not come through that escaping and is REFUSED
+# rather than posted. It is deliberately not re-escaped here: re-applying the
+# transform would double-encode every legitimate '&amp;' and corrupt the body
+# the operator previewed. '&' alone cannot activate markup, so it is left
+# alone -- the marker contains none of the three characters either way, which
+# test_escaping_leaves_the_marker_byte_identical pins.
+ACTIVE_MARKUP_CHARS = ("<", ">")
+
+
+def _errors_for_comment_entry(item, index):
+    """Error strings for ONE comment entry; [] means valid. (PURE)
+
+    Entries come from ado_intake.py render's payload
+    ({"kind", "gap_id", "marker", "body"}); this module NEVER builds a marker
+    of its own. Three properties are load-bearing:
+
+      - the marker must match MARKER_RE, because the dedupe gate extracts
+        markers by regex rather than by substring;
+      - the marker must appear inside the body AND on line 1, because the
+        body is what the POST writes -- the marker being inside the posted
+        body is exactly what makes it written by, and only by, the call that
+        performs the write, and line 1 maximizes its survival under
+        truncation or a rendering change;
+      - the body must carry no active markup, so it is inert whether Azure
+        DevOps stores it as markdown or as HTML.
+    """
+    where = "comments[%d]" % index
+    if not isinstance(item, dict):
+        return ["%s must be an object with the keys %s"
+                % (where, ", ".join(COMMENT_ENTRY_KEYS))]
+    errors = [
+        "%s.%s is missing or not a string" % (where, key)
+        for key in COMMENT_ENTRY_KEYS
+        if not isinstance(item.get(key), str) or not item.get(key)
+    ]
+    if errors:
+        return errors
+    if item["kind"] not in COMMENT_KINDS:
+        errors.append("%s.kind %r is not one of %s"
+                      % (where, item["kind"], ", ".join(COMMENT_KINDS)))
+    marker, body = item["marker"], item["body"]
+    if not MARKER_RE.fullmatch(marker):
+        errors.append("%s.marker %r does not match %s"
+                      % (where, marker, MARKER_RE.pattern))
+    elif body.splitlines()[0].strip() != marker:
+        errors.append(
+            "%s.body must carry its marker %s alone on line 1; a comment "
+            "whose body lost its marker could never be deduped by a later "
+            "run" % (where, marker))
+    found = [c for c in ACTIVE_MARKUP_CHARS if c in body]
+    if found:
+        errors.append(
+            "%s.body is not inert: it still contains %s. Azure DevOps' Add "
+            "body cannot declare its format, so a body is posted only when "
+            "'&', '<' and '>' were escaped at render time."
+            % (where, " and ".join(repr(c) for c in found)))
+    return errors
+
+
+def _duplicate_marker_errors(entries):
+    """Error strings for a marker used by two entries in ONE batch. (PURE)
+
+    plan_comments dedupes each entry against the WORK ITEM's comment list; it
+    cannot see an entry's siblings, so two identical entries in one batch
+    would both plan as not-already-posted and both POST, and _comment_results'
+    by-marker map would then collapse the two writes onto one comment id.
+    Measured on the Jira twin of this lane in run 20260908-jira-intake.
+    Refusing the batch here means the duplicate is caught before the first
+    request, so nothing partial is left on the work item."""
+    first_seen = {}
+    errors = []
+    for index, item in enumerate(entries):
+        marker = item["marker"]
+        if marker not in first_seen:
+            first_seen[marker] = index
+            continue
+        errors.append(
+            "comments[%d].marker duplicates comments[%d].marker (%s)"
+            % (index, first_seen[marker], marker))
+    return errors
+
+
+def validate_comment_entries(entries):
+    """Error strings for the batch to post; [] means valid. (PURE)
+
+    Runs BEFORE any credential is read and BEFORE the first request, so a
+    refusal leaves nothing partial on the work item. Shape errors
+    short-circuit the duplicate scan, which indexes entry['marker']."""
+    if not isinstance(entries, list) or not entries:
+        return ["comments must be a non-empty list of comment entries"]
+    errors = []
+    for index, item in enumerate(entries):
+        errors += _errors_for_comment_entry(item, index)
+    if errors:
+        return errors
+    return _duplicate_marker_errors(entries)
+
+
 # A rendered heading is either html_to_text's HEADING_PREFIX (from an <h1>-<h6>
 # tag) or a bare 'Acceptance Criteria:' line, which is how the section is
 # commonly styled with <b>. KNOWN LOSSINESS, stated rather than claimed away: a
