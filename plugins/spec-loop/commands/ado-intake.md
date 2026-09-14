@@ -64,8 +64,11 @@ the tool set and this section exact.
   write. The three others are this run's own working files inside the `mktemp -d`
   directory: `<tmp>/record.json` (Step 2), `<tmp>/refinement.json` and `<tmp>/payload.json`
   (Step 5). They are **inputs to the bundled scripts, never a dedupe gate and never
-  authority for anything** — the dedupe gate is always the work item's own comment list —
-  and the temporary directory's retained copy of the work item is disclosed below. Nothing
+  authority for *whether* a write happens** — the dedupe gate is always the work item's own
+  comment list, and the target is re-proved against a fresh read before any POST — though
+  `<tmp>/payload.json` does carry the comment bodies Step 8 posts, so a stale or tampered copy
+  of that one file changes *what* gets written even though it cannot change *whether* the
+  write is gated. The temporary directory's retained copy of the work item is disclosed below. Nothing
   outside those four paths is ever written by `Write`: not a source file, not a plugin
   file, not a run's state, and not `.gitignore` (Step 1's containment is a constant-string
   `Bash` append, never a `Write` — see below).
