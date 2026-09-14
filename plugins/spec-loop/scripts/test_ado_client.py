@@ -943,3 +943,99 @@ class TestTheReadLaneStaysReadOnly(unittest.TestCase):
         for fn in (ac.fetch_work_item, ac.fetch_comments):
             with self.subTest(fn=fn.__name__):
                 self.assertIn("_http_get(", inspect.getsource(fn))
+
+
+class TestMain(unittest.TestCase):
+    ENV = {"ADO_ORG_URL": "https://dev.azure.com/contoso", "ADO_PAT": "tok"}
+
+    def test_resolve_prints_the_record_as_json_and_exits_zero(self):
+        record = {"org": "contoso", "project": "P", "id": "1234"}
+        with mock.patch.object(ac, "resolve_work_item", return_value=record), \
+             mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            code = ac.main(["resolve", "--id", "1234"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue()), record)
+
+    def test_a_contract_failure_prints_the_refusal_object_to_stdout_and_exits_one(self):
+        with mock.patch.object(ac, "resolve_work_item",
+                               side_effect=ac.AdoError("boom")), \
+             mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            code = ac.main(["resolve", "--id", "1234"])
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out.getvalue()),
+                         {"ok": False, "errors": ["boom"]})
+
+    def test_a_usage_failure_prints_to_stderr_and_exits_two(self):
+        with mock.patch.object(ac, "resolve_work_item",
+                               side_effect=ac.AdoUsageError("nope")), \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            code = ac.main(["resolve", "--id", "1234"])
+        self.assertEqual(code, 2)
+        self.assertEqual(err.getvalue().strip(), "error: nope")
+
+    def test_a_usage_error_is_caught_before_the_contract_error(self):
+        """AdoUsageError subclasses AdoError, so the reverse except order
+        would collapse exit 2 into exit 1."""
+        source = inspect.getsource(ac.main)
+        self.assertLess(source.index("AdoUsageError"), source.index("AdoError as"))
+
+    def test_a_bad_id_never_reaches_the_network(self):
+        with mock.patch.dict(ac.os.environ, self.ENV, clear=True), \
+             mock.patch.object(ac, "_http_get") as get, \
+             mock.patch("sys.stderr", new_callable=io.StringIO):
+            code = ac.main(["resolve", "--id", "-1"])
+        self.assertEqual(code, 2)
+        get.assert_not_called()
+
+    def test_the_resolve_subcommand_exists_and_issues_no_write(self):
+        """Asserts the read subcommand is present and that dispatching it
+        touches no writer -- NOT that the choices list is exactly
+        ['resolve']. A later slice adds a bounded comment subcommand to this
+        same module; that must not require deleting this test, and pinning
+        the list would."""
+        parser = ac.build_parser()
+        actions = [a for a in parser._actions
+                   if isinstance(a, argparse._SubParsersAction)]
+        self.assertIn("resolve", actions[0].choices)
+        dispatch = inspect.getsource(ac._dispatch)
+        for writer in ("_http_post", "_http_patch", "_http_put", "_http_delete"):
+            self.assertNotIn(writer, dispatch, writer)
+
+    def test_no_flag_on_any_subcommand_can_supply_a_credential(self):
+        """Credentials are environment-only: never argv, which `ps` can see.
+        Asserted against the parser's real option strings, not the source
+        text, so the docstring stays free to explain the rule."""
+        parser = ac.build_parser()
+        actions = [a for a in parser._actions
+                   if isinstance(a, argparse._SubParsersAction)]
+        for name, subparser in actions[0].choices.items():
+            options = {opt for action in subparser._actions
+                       for opt in action.option_strings}
+            with self.subTest(subcommand=name):
+                for forbidden in ("--pat", "--token", "--password",
+                                  "--org-url", "--org"):
+                    self.assertNotIn(forbidden, options)
+
+    def test_there_is_no_project_flag_on_any_subcommand(self):
+        """The project is READ from the work item (System.TeamProject), so a
+        flag could only disagree with it. Asserted against the parser's
+        option strings, because build_parser's docstring says the words
+        '--project' on purpose."""
+        parser = ac.build_parser()
+        actions = [a for a in parser._actions
+                   if isinstance(a, argparse._SubParsersAction)]
+        for name, subparser in actions[0].choices.items():
+            options = {opt for action in subparser._actions
+                       for opt in action.option_strings}
+            with self.subTest(subcommand=name):
+                self.assertNotIn("--project", options)
+
+    def test_a_missing_subcommand_is_an_argparse_exit_two(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO):
+            with self.assertRaises(SystemExit) as ctx:
+                ac.main([])
+        self.assertEqual(ctx.exception.code, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -936,9 +936,55 @@ def resolve_work_item(work_item_id):
     return record
 
 
+def build_parser():
+    """Build the CLI parser. The read lane exposes exactly one subcommand,
+    `resolve --id`, and it issues no write.
+
+    There is deliberately NO credential flag and NO --project flag on any
+    subcommand: credentials are read from the environment only, so they
+    cannot appear on a command line that `ps` can see, and the project is
+    read from the work item's own System.TeamProject, so a flag could only
+    disagree with it."""
+    parser = argparse.ArgumentParser(
+        description="Azure DevOps Services work-item reader (read-only).")
+    sub = parser.add_subparsers(dest="command", required=True)
+    resolve = sub.add_parser(
+        "resolve",
+        help="Resolve one work-item id to a normalized JSON record.")
+    resolve.add_argument(
+        "--id", required=True, dest="work_item_id",
+        help="Azure DevOps work-item id, e.g. 1234.")
+    return parser
+
+
+def _dispatch(args):
+    """Run the requested subcommand and return the object to print."""
+    return resolve_work_item(args.work_item_id)
+
+
 def main(argv=None):
-    """Placeholder completed in the CLI task; see build_parser/_dispatch."""
-    raise NotImplementedError
+    """Parse args, dispatch, print one JSON object. Exit 0 ok, 1 contract
+    failure, 2 usage / unreadable input. AdoUsageError is caught BEFORE
+    AdoError: it subclasses AdoError, so the reverse order would collapse
+    exit 2 into exit 1.
+
+    The two refusal shapes match this repo's established idiom, so downstream
+    tooling can tell them apart by stream: a contract failure (exit 1) prints
+    the {"ok": false, "errors": [...]} JSON to STDOUT; a usage failure
+    (exit 2) prints plain 'error: %s' text to STDERR. Neither ever carries a
+    credential -- every message in this module names only a URL."""
+    args = build_parser().parse_args(argv)
+    try:
+        payload = _dispatch(args)
+    except AdoUsageError as exc:
+        print("error: %s" % exc, file=sys.stderr)
+        return 2
+    except AdoError as exc:
+        refusal = {"ok": False, "errors": [str(exc)]}
+        print(json.dumps(refusal, ensure_ascii=False, indent=2))
+        return 1
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
 
 
 if __name__ == "__main__":
