@@ -302,3 +302,62 @@ class TestJsonParseFailsClosed(unittest.TestCase):
         with self.assertRaises(ac.AdoError) as ctx:
             ac._parse_json("{not json", "work item")
         self.assertIn("work item", str(ctx.exception))
+
+
+class TestHtmlToTextIsLossyButFaithful(unittest.TestCase):
+    def test_none_and_a_non_string_render_empty(self):
+        for raw in (None, "", 17, [], {}):
+            self.assertEqual(ac.html_to_text(raw), "")
+
+    def test_plain_text_survives(self):
+        self.assertEqual(ac.html_to_text("hello world"), "hello world")
+
+    def test_divs_and_paragraphs_become_blank_line_separated_blocks(self):
+        self.assertEqual(
+            ac.html_to_text("<div>one</div><div>two</div>"), "one\n\ntwo")
+        self.assertEqual(
+            ac.html_to_text("<p>one</p><p>two</p>"), "one\n\ntwo")
+
+    def test_a_br_is_a_single_line_break(self):
+        self.assertEqual(ac.html_to_text("one<br>two"), "one\ntwo")
+        self.assertEqual(ac.html_to_text("one<br/>two"), "one\ntwo")
+
+    def test_list_items_render_as_dash_bullets(self):
+        self.assertEqual(
+            ac.html_to_text("<ul><li>a</li><li>b</li></ul>"), "- a\n- b")
+
+    def test_nested_lists_still_render_every_item(self):
+        rendered = ac.html_to_text(
+            "<ul><li>a<ul><li>b</li></ul></li></ul>")
+        self.assertIn("- a", rendered)
+        self.assertIn("- b", rendered)
+
+    def test_headings_get_the_heading_prefix(self):
+        self.assertEqual(ac.html_to_text("<h3>Details</h3><p>x</p>"),
+                         "## Details\n\nx")
+
+    def test_entities_are_unescaped(self):
+        self.assertEqual(ac.html_to_text("a &amp; b &lt;c&gt; &nbsp;d"),
+                         "a & b <c>  d")
+
+    def test_script_and_style_content_is_dropped(self):
+        self.assertEqual(
+            ac.html_to_text("<p>keep</p><script>alert(1)</script>"), "keep")
+        self.assertEqual(
+            ac.html_to_text("<style>p{color:red}</style><p>keep</p>"), "keep")
+
+    def test_an_html_comment_is_dropped(self):
+        self.assertEqual(ac.html_to_text("<p>keep</p><!-- hidden -->"), "keep")
+
+    def test_runs_of_blank_lines_collapse_to_one(self):
+        self.assertEqual(
+            ac.html_to_text("<div>a</div><div></div><div></div><div>b</div>"),
+            "a\n\nb")
+
+    def test_unclosed_and_unknown_tags_do_not_lose_their_text(self):
+        self.assertEqual(ac.html_to_text("<div><span>a<div>b"), "a\n\nb")
+        self.assertIn("a", ac.html_to_text("<marquee>a</marquee>"))
+
+    def test_malformed_tag_soup_never_raises(self):
+        for raw in ("<<<>>>", "<div", "a < b", "</p></p>", "<br" * 200):
+            ac.html_to_text(raw)

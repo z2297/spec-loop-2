@@ -378,6 +378,112 @@ def _parse_json(raw, what):
             f"({exc})") from exc
 
 
+HEADING_PREFIX = "## "
+
+# Tags whose boundaries are a paragraph break in the rendered text.
+_BLOCK_TAGS = frozenset({
+    "p", "div", "section", "article", "blockquote", "pre", "table", "tr",
+    "ul", "ol", "dl", "dt", "dd", "h1", "h2", "h3", "h4", "h5", "h6",
+})
+_HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+# Tags whose text content is markup, not prose, and is dropped entirely.
+_DROP_TAGS = frozenset({"script", "style"})
+_BLANK_RUN_RE = re.compile(r"\n{3,}")
+_TRAILING_SPACE_RE = re.compile(r"[ \t]+\n")
+
+
+class _HtmlToText(HTMLParser):
+    """Collect an HTML fragment's prose into blank-line-separated blocks.
+
+    Deliberately small and forgiving: html.parser never raises on tag soup
+    (convert_charrefs handles entities for us), an unrecognized tag
+    contributes its text rather than vanishing, and an unclosed tag just
+    leaves the block open. HTML COMMENTS ARE DROPPED -- handle_comment is not
+    implemented -- which is why the comment lane's dedupe haystack also
+    searches the raw stored text: a marker hidden inside an HTML comment is
+    invisible to this walker and visible there."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self._dropping = 0
+
+    def handle_starttag(self, tag, attrs):
+        """Open a tag: suppress markup-only content, break blocks, bullet a
+        list item, and treat <br> as a single newline."""
+        if tag in _DROP_TAGS:
+            self._dropping += 1
+        elif tag == "br":
+            self.parts.append("\n")
+        elif tag == "li":
+            self.parts.append("\n- ")
+        elif tag in _BLOCK_TAGS:
+            self.parts.append("\n\n")
+            if tag in _HEADING_TAGS:
+                self.parts.append(HEADING_PREFIX)
+
+    def handle_startendtag(self, tag, attrs):
+        """A self-closing tag (<br/>) opens and closes in one token; only the
+        open side has any effect here."""
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        """Close a tag: stop suppressing, or end the current block."""
+        if tag in _DROP_TAGS:
+            self._dropping = max(0, self._dropping - 1)
+        elif tag == "li":
+            # DELIBERATELY NOTHING. handle_starttag already opens every list
+            # item with "\n- ", so appending anything here doubles the break
+            # and renders consecutive items as "- a\n\n- b" instead of the
+            # contracted "- a\n- b". The enclosing </ul>/</ol> is a _BLOCK_TAG
+            # and supplies the paragraph break that closes the list.
+            # Verified against the prescribed _tidy_text: "- a\n- b" for
+            # <ul><li>a</li><li>b</li></ul>, "- a\n\nafter" for a list
+            # followed by <p>after</p>.
+            return
+        elif tag in _BLOCK_TAGS:
+            self.parts.append("\n\n")
+
+    def handle_data(self, data):
+        """Append literal text unless inside a markup-only element."""
+        if not self._dropping:
+            self.parts.append(data)
+
+    def text(self):
+        """The collected parts as one string."""
+        return "".join(self.parts)
+
+
+def _tidy_text(raw):
+    """Normalize a walked fragment: unescape any entity html.parser left
+    behind, drop trailing spaces before a newline, collapse a run of three or
+    more newlines to one blank line, and strip the ends."""
+    text = html.unescape(raw).replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\xa0", " ")
+    text = _TRAILING_SPACE_RE.sub("\n", text)
+    return _BLANK_RUN_RE.sub("\n\n", text).strip()
+
+
+def html_to_text(raw):
+    """Render an Azure DevOps HTML field (System.Description,
+    Microsoft.VSTS.Common.AcceptanceCriteria, Microsoft.VSTS.TCM.ReproSteps,
+    or a comment's stored text) to plain, review-readable text. (PURE)
+
+    LOSSY BY DESIGN, in exactly the way jira_client.adf_to_text is: it
+    produces text for humans to read, not a document that round-trips back
+    into HTML. Headings of every level render with the same HEADING_PREFIX --
+    the level is discarded, and that prefix is what lets
+    acceptance_criteria_from_description find a section boundary. Anything
+    that is not a string (None, a number, a list) renders as '' rather than
+    raising, because a field of an unexpected shape is not prose."""
+    if not isinstance(raw, str) or not raw:
+        return ""
+    parser = _HtmlToText()
+    parser.feed(raw)
+    parser.close()
+    return _tidy_text(parser.text())
+
+
 def main(argv=None):
     """Placeholder completed in the CLI task; see build_parser/_dispatch."""
     raise NotImplementedError
