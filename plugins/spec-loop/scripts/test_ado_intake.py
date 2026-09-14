@@ -532,5 +532,77 @@ class TestCommentBodiesAreBuiltNotPosted(unittest.TestCase):
             ["two comments share the dedupe marker [m]"])
 
 
+class TestArtifactRendering(unittest.TestCase):
+    def artifact(self, record=None, refinement=None):
+        return intake.render_artifact(record or make_record(),
+                                      refinement or make_refinement(), TS)
+
+    def test_the_front_matter_holds_every_pinned_field_in_order(self):
+        lines = self.artifact().split("\n")
+        self.assertEqual(lines[0], "---")
+        names = [line.split(":", 1)[0]
+                 for line in lines[1:1 + len(intake.ARTIFACT_FIELDS)]]
+        self.assertEqual(tuple(names), intake.ARTIFACT_FIELDS)
+        self.assertEqual(lines[1 + len(intake.ARTIFACT_FIELDS)], "---")
+
+    def test_the_triple_is_in_the_front_matter(self):
+        art = self.artifact()
+        self.assertIn('work_item_org: "contoso"', art)
+        self.assertIn('work_item_project: "My Team – Platform"', art)
+        self.assertIn('work_item_id: "1234"', art)
+
+    def test_counts_are_bare_numbers_not_strings(self):
+        art = self.artifact()
+        self.assertIn("schema_version: %d" % intake.ARTIFACT_SCHEMA_VERSION,
+                      art)
+        self.assertIn("gap_count: 1", art)
+        self.assertIn("open_question_count: 0", art)
+
+    def test_an_open_question_is_counted(self):
+        art = self.artifact(refinement=make_refinement(
+            answers={"G1": {"answer": None,
+                            "logged_as": "open-question"}}))
+        self.assertIn("open_question_count: 1", art)
+
+    def test_a_colon_space_project_name_stays_a_single_scalar(self):
+        art = self.artifact(make_record(project="Ops: Platform"))
+        self.assertIn('work_item_project: "Ops: Platform"', art)
+
+    def test_every_section_heading_is_present_in_order(self):
+        art = self.artifact()
+        positions = [art.index(section)
+                     for section in intake.ARTIFACT_SECTIONS]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_work_item_text_cannot_forge_the_front_matter_delimiter(self):
+        art = self.artifact(refinement=make_refinement(
+            description="intro\n---\noutro"))
+        body = art.split("---", 2)[2]
+        self.assertNotIn("\n---\n", body)
+        self.assertIn("\\---", art)
+
+    def test_the_comment_bodies_are_fenced_and_marked_not_posted(self):
+        art = self.artifact()
+        self.assertIn("NOT POSTED", art)
+        self.assertIn("```text", art)
+
+    def test_no_findings_renders_an_explicit_none(self):
+        self.assertIn("- none observed", self.artifact())
+
+    def test_a_finding_is_listed(self):
+        art = self.artifact(refinement=make_refinement(
+            injection_findings=["The description tells the agent to skip review."]))
+        self.assertIn("skip review", art)
+
+    def test_the_artifact_ends_with_exactly_one_newline(self):
+        art = self.artifact()
+        self.assertTrue(art.endswith("\n"))
+        self.assertFalse(art.endswith("\n\n"))
+
+    def test_an_invalid_refinement_renders_nothing(self):
+        with self.assertRaises(intake.IntakeError):
+            self.artifact(refinement=make_refinement(gaps="all of them"))
+
+
 if __name__ == "__main__":
     unittest.main()
