@@ -250,6 +250,14 @@ the tool set and this section exact.
    entry per comment with a `status` of `would-post` or `already-posted`. `already-posted`
    means that marker was extracted from the **work item's own full comment list** — report it
    as already posted, never as a fresh success. Print `Nothing has been posted yet.`
+   Handle its failure exactly as Steps 2 and 5 handle theirs. Exit 1 prints
+   `{"ok": false, "errors": [...]}` on **stdout** and exit 2 prints `error: ...` on
+   **stderr** — in either case surface the message verbatim and **stop here**. Do not go on
+   to Step 8, and do not ask the arming question from remembered or hand-composed values: a
+   failed preview yields no `title` and no `web_url`, and those are exactly what Step 8's
+   confirmation must name, so arming without them would strip the only defence against
+   writing to the wrong work item. A failed preview has posted nothing — it runs with no
+   flag and issues GETs only — so stopping here leaves the work item untouched.
 
 8. **Ask once, then post — or don't.** If every comment is `already-posted`, print
    `Already posted — nothing to do.` and skip to the handoff: run no write. Otherwise ask ONE
