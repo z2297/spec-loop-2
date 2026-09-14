@@ -531,6 +531,76 @@ def record_triple(record):
     return validate_triple(record)
 
 
+COMMENT_KINDS = ("understanding", "decision", "open-question")
+COMMENT_HEADINGS = {
+    "understanding": "spec-loop intake - refined understanding",
+    "decision": "spec-loop intake - decision",
+    "open-question": "spec-loop intake - open question",
+}
+MARKER_RE = re.compile(
+    r"\[spec-loop-intake:(?:understanding|decision|open-question):"
+    r"[0-9a-f]{12}\]")
+# The bare digest, for the write lane's second-tier match: a round trip that
+# rewrote the wrapper but kept the digest must still suppress a re-post,
+# because a false suppression skips a write while a false miss duplicates a
+# comment on a live work item. Slice a2's client keeps its OWN copies of both
+# regexes -- duplication over coupling; these are exported so this module's
+# tests can pin the shape they both have to agree on.
+MARKER_DIGEST_RE = re.compile(r"\b[0-9a-f]{12}\b")
+
+
+def escape_for_comment(text):
+    """Work-item-derived text, inert under either body interpretation. (PURE)
+
+    The ADO Add-comment body is an undeclared-format string, so the ADF
+    text-node escaping the Jira lane gets by construction is gone and the
+    posted payload -- derived from untrusted HTML fields -- could otherwise
+    carry active markup into a live work item with no delete lane to
+    retract it. '&' MUST be replaced first or the later replacements are
+    double-escaped. The marker contains none of these characters, so dedupe
+    is provably unaffected (pinned by
+    TestMarkerIsScopedToTheTriple.test_the_marker_contains_no_escapable_character)."""
+    out = str(text)
+    for needle, replacement in (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;")):
+        out = out.replace(needle, replacement)
+    return out
+
+
+def comment_marker(triple, kind, payload):
+    """The visible dedupe marker the comment lane matches on. (PURE)
+
+    Hashes org + project + id + kind + payload. The org and project are in
+    the hash because an ADO id is a bare integer: work item 1234 exists in
+    every org. The timestamp is deliberately NOT hashed -- the caller owns
+    the clock, and hashing it would make a re-run look like a new comment.
+    `payload` is the ALREADY-ESCAPED text, so the digest covers the exact
+    bytes the write lane posts."""
+    org, project, work_item_id = validate_triple(triple)
+    if kind not in COMMENT_KINDS:
+        raise IntakeUsageError(
+            "error: unknown comment kind %r; expected one of %s"
+            % (kind, ", ".join(COMMENT_KINDS)))
+    joined = "\n".join([org, project, work_item_id, kind, payload])
+    digest = hashlib.sha256(joined.encode("utf-8"))
+    return "[spec-loop-intake:%s:%s]" % (kind, digest.hexdigest()[:12])
+
+
+def render_comment(triple, kind, payload, ts):
+    """One ADO comment body: marker, heading, timestamp, payload. (PURE)
+
+    Blocks are separated by a BLANK LINE so the body reads correctly
+    whether ADO interprets it as markdown or as plain text, and the marker
+    sits alone on line 1 -- maximal survival under truncation or a
+    rendering change, and never adjacent to an escapable character."""
+    marker = comment_marker(triple, kind, payload)
+    return "\n\n".join([
+        marker,
+        COMMENT_HEADINGS[kind],
+        "Recorded %s by /spec-loop:ado-intake." % ts,
+        payload,
+    ])
+
+
 def main(argv=None):
     """Placeholder until the render subcommand lands (slice a3, task 8)."""
     raise NotImplementedError

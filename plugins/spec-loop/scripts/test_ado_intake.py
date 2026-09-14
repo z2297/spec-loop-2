@@ -347,3 +347,114 @@ class TestRecordValidation(unittest.TestCase):
     def test_record_triple_is_the_validated_target(self):
         self.assertEqual(intake.record_triple(make_record()),
                          ("contoso", "My Team – Platform", "1234"))
+
+
+class TestTheBodyCarriesNoActiveMarkup(unittest.TestCase):
+    """BLOCKING: the ADO Add-comment body has no declarable format, so the
+    ADF-text-node inertness the Jira lane got for free is gone. The body is
+    escaped so it is inert under either interpretation. This module claims
+    only that -- never that it controls how ADO stores or renders it."""
+
+    def test_the_three_html_active_characters_are_escaped(self):
+        escaped = intake.escape_for_comment("a & b < c > d")
+        self.assertEqual(escaped, "a &amp; b &lt; c &gt; d")
+
+    def test_escaping_is_ampersand_first_so_it_is_not_double_applied(self):
+        self.assertEqual(intake.escape_for_comment("<x>"), "&lt;x&gt;")
+        self.assertEqual(intake.escape_for_comment("&lt;"), "&amp;lt;")
+
+    def test_a_script_tag_from_the_work_item_cannot_stay_active(self):
+        body = intake.render_comment(
+            TRIPLE, "understanding",
+            intake.escape_for_comment("<script>alert(1)</script>"), TS)
+        self.assertNotIn("<script>", body)
+        self.assertIn("&lt;script&gt;", body)
+
+
+class TestMarkerIsScopedToTheTriple(unittest.TestCase):
+    """A marker over the bare id is identical for work item 1234 in two
+    different orgs."""
+
+    def test_the_marker_matches_the_pinned_shape(self):
+        marker = intake.comment_marker(TRIPLE, "understanding", "p")
+        self.assertRegex(marker, r"^" + intake.MARKER_RE.pattern + r"$")
+
+    def test_the_bare_digest_is_extractable_for_the_two_tier_match(self):
+        marker = intake.comment_marker(TRIPLE, "understanding", "p")
+        digests = intake.MARKER_DIGEST_RE.findall(marker)
+        self.assertEqual(len(digests), 1)
+        self.assertIn(digests[0], marker)
+
+    def test_the_marker_contains_no_escapable_character(self):
+        marker = intake.comment_marker(TRIPLE, "decision", "p")
+        for char in "&<>\"'*_`":
+            with self.subTest(char=char):
+                self.assertNotIn(char, marker)
+        self.assertEqual(intake.escape_for_comment(marker), marker)
+
+    def test_a_different_org_yields_a_different_marker(self):
+        a = intake.comment_marker(("orga", "P", "1234"), "decision", "p")
+        b = intake.comment_marker(("orgb", "P", "1234"), "decision", "p")
+        self.assertNotEqual(a, b)
+
+    def test_a_different_project_yields_a_different_marker(self):
+        a = intake.comment_marker(("org", "PA", "1234"), "decision", "p")
+        b = intake.comment_marker(("org", "PB", "1234"), "decision", "p")
+        self.assertNotEqual(a, b)
+
+    def test_the_timestamp_is_not_hashed(self):
+        early = intake.render_comment(
+            TRIPLE, "decision", "p", "2026-01-01T00:00:00Z")
+        late = intake.render_comment(
+            TRIPLE, "decision", "p", "2027-01-01T00:00:00Z")
+        self.assertNotEqual(early, late)
+        self.assertEqual(
+            intake.MARKER_RE.findall(early),
+            intake.MARKER_RE.findall(late))
+
+    def test_the_payload_is_hashed(self):
+        a = intake.comment_marker(TRIPLE, "decision", "Ship it.")
+        b = intake.comment_marker(TRIPLE, "decision", "Ship it")
+        self.assertNotEqual(a, b)
+
+    def test_an_unknown_kind_is_refused(self):
+        with self.assertRaises(intake.IntakeUsageError):
+            intake.comment_marker(TRIPLE, "gossip", "p")
+
+    def test_a_bad_triple_never_yields_a_marker(self):
+        with self.assertRaises(intake.IntakeUsageError):
+            intake.comment_marker(("contoso", "P", "../1"), "decision", "p")
+
+
+class TestCommentBodyIsBlankLineSeparatedBlocks(unittest.TestCase):
+    """BLOCKING: ADO cannot be told the body's format. Under markdown a
+    single newline is not a line break, so a '\\n'-joined body collapses to
+    one run-on paragraph."""
+
+    def test_the_marker_is_alone_on_line_one(self):
+        body = intake.render_comment(TRIPLE, "understanding", "p", TS)
+        first = body.split("\n")[0]
+        self.assertRegex(first, r"^" + intake.MARKER_RE.pattern + r"$")
+
+    def test_every_block_is_separated_by_a_blank_line(self):
+        body = intake.render_comment(
+            TRIPLE, "understanding", "alpha\n\nbeta", TS)
+        blocks = body.split("\n\n")
+        self.assertGreaterEqual(len(blocks), 4)
+        for block in blocks:
+            with self.subTest(block=block):
+                self.assertTrue(block.strip())
+
+    def test_the_body_names_the_heading_the_timestamp_and_the_payload(self):
+        body = intake.render_comment(TRIPLE, "decision", "the payload", TS)
+        self.assertIn(intake.COMMENT_HEADINGS["decision"], body)
+        self.assertIn(TS, body)
+        self.assertIn("the payload", body)
+        self.assertIn("/spec-loop:ado-intake", body)
+
+    def test_a_marker_extracted_from_a_wrapped_body_still_matches(self):
+        body = intake.render_comment(TRIPLE, "decision", "p", TS)
+        wrapped = "<div>%s</div>" % body.replace("\n", "<br>\n")
+        self.assertEqual(
+            set(intake.MARKER_RE.findall(wrapped)),
+            set(intake.MARKER_RE.findall(body)))
