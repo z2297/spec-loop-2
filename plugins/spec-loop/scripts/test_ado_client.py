@@ -1022,14 +1022,14 @@ class TestHttpPostIsTheOnlyWriter(unittest.TestCase):
         self.assertNotIn(base64.b64encode(b":sekrit").decode("ascii"), message)
 
     def test_a_url_error_on_the_write_is_an_ado_error(self):
-        with mock.patch.object(ac._OPENER, "open",
-                               side_effect=urllib.error.URLError("down")):
+        error = urllib.error.URLError("down")
+        with mock.patch.object(ac._OPENER, "open", side_effect=error):
             with self.assertRaises(ac.AdoError):
                 ac._http_post("https://dev.azure.com/o/x", "tok", {"text": "x"})
 
     def test_a_bare_oserror_while_reading_the_write_response_is_an_ado_error(self):
-        with mock.patch.object(ac._OPENER, "open",
-                               side_effect=OSError("connection reset")):
+        error = OSError("connection reset")
+        with mock.patch.object(ac._OPENER, "open", side_effect=error):
             with self.assertRaises(ac.AdoError) as ctx:
                 ac._http_post("https://dev.azure.com/o/x", "sekrit", {"text": "x"})
         self.assertNotIn("sekrit", str(ctx.exception))
@@ -1055,8 +1055,7 @@ class TestPostOneComment(unittest.TestCase):
             ac.comment_add_url(("https://dev.azure.com/contoso", "P", "../x"))
 
     def test_post_comment_returns_the_created_comment_id(self):
-        with mock.patch.object(ac, "_http_post",
-                               return_value=b'{"id": 42}') as post:
+        with mock.patch.object(ac, "_http_post", return_value=b'{"id": 42}') as post:
             comment_id = ac.post_comment(self.ROUTE, "tok", "body")
         self.assertEqual(comment_id, "42")
         url, pat, payload = post.call_args.args
@@ -1236,24 +1235,25 @@ class TestTheDedupeGateExtractsMarkersIntoASet(unittest.TestCase):
                 self.assertNotIn("renderedText", inspect.getsource(fn))
 
     def test_a_comment_without_text_fails_closed_rather_than_shrink_the_haystack(self):
-        for bad in ({"id": "1"}, {"id": "1", "text": ""},
-                    {"id": "1", "text": None}, "not a comment"):
+        bad_comments = [
+            {"id": "1"}, {"id": "1", "text": ""},
+            {"id": "1", "text": None}, "not a comment"]
+        for bad in bad_comments:
             with self.subTest(comment=bad):
-                with self.assertRaises(ac.AdoError):
-                    ac.comment_haystack_tokens([bad])
+                self.assertRaises(ac.AdoError, ac.comment_haystack_tokens, [bad])
 
     def test_an_empty_history_yields_an_empty_token_set(self):
         self.assertEqual(ac.comment_haystack_tokens([]), set())
 
     def test_plan_preserves_order_and_reports_each_entry(self):
         tokens = ac.comment_haystack_tokens([self._comment(MARKER_B)])
-        plan = ac.plan_comments(
-            [entry("understanding", MARKER_A), entry("decision", MARKER_B)],
-            tokens)
+        entries = [
+            entry("understanding", MARKER_A), entry("decision", MARKER_B)]
+        plan = ac.plan_comments(entries, tokens)
         self.assertEqual([p["marker"] for p in plan], [MARKER_A, MARKER_B])
         self.assertEqual([p["already_posted"] for p in plan], [False, True])
-        self.assertEqual([p["kind"] for p in plan],
-                         ["understanding", "decision"])
+        kinds = [p["kind"] for p in plan]
+        self.assertEqual(kinds, ["understanding", "decision"])
 
 
 def ado_record(org="contoso", project="My Team", work_item_id="1234"):
@@ -1600,6 +1600,49 @@ class TestTheArmedLaneDisclosesAPartialBatch(unittest.TestCase):
                 ac.execute_comment_plan(self.ROUTE, "tok", batch)
         self.assertEqual(str(ctx.exception), "HTTP 403")
 
+    def test_a_transport_failure_names_the_in_flight_comment_as_indeterminate(self):
+        """r0-AC-01: a URLError/OSError from _http_post means Azure DevOps
+        could not confirm whether the in-flight comment landed -- it must be
+        named explicitly, not silently excluded the way a clean HTTPError
+        status (nothing sent) is."""
+        pending = [
+            entry("understanding", MARKER_A), entry("decision", MARKER_B)]
+        with mock.patch.object(ac, "post_comment") as post:
+            post.side_effect = [
+                "7", ac._IndeterminateWriteError("timed out")]
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac.execute_comment_plan(self.ROUTE, "tok", pending)
+        message = str(ctx.exception)
+        self.assertIn("timed out", message)
+        self.assertIn(MARKER_B, message)
+        self.assertIn("in flight", message)
+        self.assertIn("MAY be on work item", message)
+        self.assertIn("1234", message)
+        self.assertIn(MARKER_A, message)
+        self.assertIn("1 earlier comment(s)", message)
+
+    def test_a_transport_failure_on_the_first_comment_names_it_with_no_landed_clause(self):
+        pending = [entry("understanding", MARKER_A)]
+        with mock.patch.object(ac, "post_comment") as post:
+            post.side_effect = ac._IndeterminateWriteError("timed out")
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac.execute_comment_plan(self.ROUTE, "tok", pending)
+        message = str(ctx.exception)
+        self.assertIn(MARKER_A, message)
+        self.assertIn("in flight", message)
+        self.assertNotIn("earlier comment(s)", message)
+
+    def test_a_clean_http_status_before_any_write_stays_unchanged(self):
+        """A plain AdoError (an HTTPError status, e.g. a 403 or 500) means
+        the server rejected the write before anything landed; this disclosure
+        must stay exactly as it was, with no in-flight claim."""
+        batch = [entry("understanding", MARKER_A)]
+        with mock.patch.object(ac, "post_comment") as post:
+            post.side_effect = ac.AdoError("HTTP 500")
+            with self.assertRaises(ac.AdoError) as ctx:
+                ac.execute_comment_plan(self.ROUTE, "tok", batch)
+        self.assertEqual(str(ctx.exception), "HTTP 500")
+
     def test_the_disclosure_never_leaks_the_credential(self):
         landed = [{"kind": "decision", "marker": MARKER_B}]
         cause = ac.AdoError("HTTP 500 posting to https://dev.azure.com/o/x")
@@ -1657,33 +1700,40 @@ class TestTheCommentSubcommandIsOffByDefault(unittest.TestCase):
             ["comment", "--record", "r.json", "--comments", "c.json", "--post"])
         self.assertTrue(armed.post)
 
-    def test_the_comment_subcommand_takes_exactly_three_options(self):
+    def _comment_options(self):
+        """The option strings registered on the `comment` subparser."""
         parser = ac.build_parser()
         actions = [a for a in parser._actions
                    if isinstance(a, argparse._SubParsersAction)]
-        options = {opt for action in actions[0].choices["comment"]._actions
-                   for opt in action.option_strings}
-        self.assertEqual(options - {"-h", "--help"},
-                         {"--record", "--comments", "--post"})
+        comment_actions = actions[0].choices["comment"]._actions
+        options = set()
+        for action in comment_actions:
+            options |= set(action.option_strings)
+        return options
+
+    def test_the_comment_subcommand_takes_exactly_three_options(self):
+        options = self._comment_options() - {"-h", "--help"}
+        self.assertEqual(options, {"--record", "--comments", "--post"})
 
     def test_there_is_no_id_flag_so_the_target_comes_from_the_record(self):
-        parser = ac.build_parser()
-        actions = [a for a in parser._actions
-                   if isinstance(a, argparse._SubParsersAction)]
-        options = {opt for action in actions[0].choices["comment"]._actions
-                   for opt in action.option_strings}
-        self.assertNotIn("--id", options)
+        self.assertNotIn("--id", self._comment_options())
 
     def test_the_lane_runs_unarmed_through_the_cli(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             record_path, comments_path = self._files(
                 tmp, ado_record(), render_payload())
-            with mock.patch.object(ac, "run_comment_lane",
-                                   return_value={"ok": True}) as lane, \
-                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-                code = ac.main(["comment", "--record", record_path,
-                                "--comments", comments_path])
+            argv = [
+                "comment", "--record", record_path,
+                "--comments", comments_path,
+            ]
+            lane_patch = mock.patch.object(
+                ac, "run_comment_lane", return_value={"ok": True})
+            stdout_patch = mock.patch("sys.stdout", new_callable=io.StringIO)
+            with contextlib.ExitStack() as stack:
+                lane = stack.enter_context(lane_patch)
+                out = stack.enter_context(stdout_patch)
+                code = ac.main(argv)
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out.getvalue()), {"ok": True})
         target, entries, arm = lane.call_args.args
@@ -1696,19 +1746,28 @@ class TestTheCommentSubcommandIsOffByDefault(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             record_path, comments_path = self._files(
                 tmp, ado_record(), render_payload())
-            with mock.patch.object(ac, "run_comment_lane",
-                                   return_value={"ok": True}) as lane, \
-                 mock.patch("sys.stdout", new_callable=io.StringIO):
-                ac.main(["comment", "--record", record_path,
-                         "--comments", comments_path, "--post"])
+            argv = [
+                "comment", "--record", record_path,
+                "--comments", comments_path, "--post",
+            ]
+            lane_patch = mock.patch.object(
+                ac, "run_comment_lane", return_value={"ok": True})
+            stdout_patch = mock.patch("sys.stdout", new_callable=io.StringIO)
+            with contextlib.ExitStack() as stack:
+                lane = stack.enter_context(lane_patch)
+                stack.enter_context(stdout_patch)
+                ac.main(argv)
         self.assertTrue(lane.call_args.args[2])
 
     def test_an_unreadable_file_is_exit_two_and_never_reaches_the_network(self):
-        with mock.patch.object(ac, "_http_post") as post, \
-             mock.patch.object(ac, "_http_get") as get, \
-             mock.patch("sys.stderr", new_callable=io.StringIO) as err:
-            code = ac.main(["comment", "--record", "/nonexistent/r.json",
-                            "--comments", "/nonexistent/c.json"])
+        argv = ["comment", "--record", "/nonexistent/r.json",
+                "--comments", "/nonexistent/c.json"]
+        with contextlib.ExitStack() as stack:
+            post = stack.enter_context(mock.patch.object(ac, "_http_post"))
+            get = stack.enter_context(mock.patch.object(ac, "_http_get"))
+            err = stack.enter_context(
+                mock.patch("sys.stderr", new_callable=io.StringIO))
+            code = ac.main(argv)
         self.assertEqual(code, 2)
         self.assertIn("cannot read", err.getvalue())
         post.assert_not_called()
@@ -1719,9 +1778,9 @@ class TestTheCommentSubcommandIsOffByDefault(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "r.json"
             path.write_text("{not json", encoding="utf-8")
+            argv = ["comment", "--record", str(path), "--comments", str(path)]
             with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
-                code = ac.main(["comment", "--record", str(path),
-                                "--comments", str(path)])
+                code = ac.main(argv)
         self.assertEqual(code, 2)
         self.assertIn("not valid JSON", err.getvalue())
 
@@ -1730,11 +1789,14 @@ class TestTheCommentSubcommandIsOffByDefault(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             record_path, comments_path = self._files(
                 tmp, ado_record(), render_payload(org="fabrikam"))
-            with mock.patch.object(ac, "credentials") as creds, \
-                 mock.patch.object(ac, "_http_get") as get, \
-                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-                code = ac.main(["comment", "--record", record_path,
-                                "--comments", comments_path, "--post"])
+            argv = ["comment", "--record", record_path,
+                    "--comments", comments_path, "--post"]
+            with contextlib.ExitStack() as stack:
+                creds = stack.enter_context(mock.patch.object(ac, "credentials"))
+                get = stack.enter_context(mock.patch.object(ac, "_http_get"))
+                out = stack.enter_context(
+                    mock.patch("sys.stdout", new_callable=io.StringIO))
+                code = ac.main(argv)
         self.assertEqual(code, 1)
         self.assertFalse(json.loads(out.getvalue())["ok"])
         creds.assert_not_called()
@@ -1752,9 +1814,11 @@ class TestTheDocstringStatesTheWriteBoundary(unittest.TestCase):
 
     def test_it_does_not_overclaim_the_round_trip(self):
         doc = ac.__doc__.lower()
-        for overclaim in ("guarantees the marker survives",
-                          "re-run this command to recover",
-                          "verified against a live"):
+        overclaims = (
+            "guarantees the marker survives",
+            "re-run this command to recover",
+            "verified against a live")
+        for overclaim in overclaims:
             self.assertNotIn(overclaim, doc)
 
     def test_it_still_states_the_read_lanes_structural_guarantee(self):

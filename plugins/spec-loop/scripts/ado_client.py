@@ -202,6 +202,18 @@ class AdoUsageError(AdoError):
     environment. Maps to exit code 2."""
 
 
+class _IndeterminateWriteError(AdoError):
+    """A write whose outcome Azure DevOps could not confirm: the transport
+    failed (a timeout or a connection error) either before the request left
+    the client or while reading the response to a POST that may already have
+    landed. Raised ONLY from _http_post's URLError/OSError branches, where
+    landing is genuinely unknowable -- never from the HTTPError branch, where
+    a clean 4xx/5xx status means the server rejected the write and nothing
+    landed. execute_comment_plan uses this distinction to name the in-flight
+    comment as indeterminate rather than silently excluding it from the
+    partial-batch disclosure."""
+
+
 WORK_ITEM_ID_RE = re.compile(r"^[0-9]{1,10}$")
 ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 ALLOWED_HOST_RE = re.compile(
@@ -914,7 +926,13 @@ def _http_post(url, pat, payload):
         raise AdoError(
             f"HTTP {exc.code} posting to {url}: {exc.reason}") from exc
     except urllib.error.URLError as exc:
-        raise AdoError(
+        # A URLError here means the request may never have reached the
+        # server, OR it may have landed and only the response was lost --
+        # urllib cannot distinguish the two. Raised as _IndeterminateWriteError
+        # (never plain AdoError) so execute_comment_plan can disclose the
+        # in-flight comment as INDETERMINATE rather than silently excluding
+        # it, unlike a clean HTTPError status below.
+        raise _IndeterminateWriteError(
             f"network error posting to {url}: {exc.reason}") from exc
     except OSError as exc:
         # urllib only wraps an OSError raised by h.request() into a URLError
@@ -924,10 +942,13 @@ def _http_post(url, pat, payload):
         # propagates unwrapped and would otherwise slip past the AdoError
         # handling above, past execute_comment_plan's `except AdoError`, and
         # past main()'s exit-1 JSON contract as a raw traceback. Caught here,
-        # terminally, so every write-path transport failure is an AdoError and
-        # can still be turned into a partial-batch disclosure. The message
-        # names only the URL, so no credential can ride out in it.
-        raise AdoError(f"network error posting to {url}: {exc}") from exc
+        # terminally, as _IndeterminateWriteError, so every write-path
+        # transport failure becomes a partial-batch disclosure that names the
+        # in-flight comment as indeterminate rather than implying it did not
+        # land. The message names only the URL, so no credential can ride out
+        # in it.
+        raise _IndeterminateWriteError(
+            f"network error posting to {url}: {exc}") from exc
 
 
 def post_comment(route, pat, body):
@@ -950,17 +971,17 @@ def post_comment(route, pat, body):
     payload, so both spellings are read. A response carrying neither is
     refused rather than reported as a confirmed write."""
     url = comment_add_url(route)
-    created = _parse_json(_http_post(url, pat, {"text": body}).decode("utf-8"),
-                          "created comment")
+    raw = _http_post(url, pat, {"text": body}).decode("utf-8")
+    created = _parse_json(raw, "created comment")
     if not isinstance(created, dict):
         created = {}
     comment_id = _comment_id(created)
-    if not comment_id:
-        raise AdoError(
-            "Azure DevOps accepted the comment POST for work item "
-            f"{route[2]} but returned no comment id; refusing to report a "
-            "write that cannot be confirmed")
-    return comment_id
+    if comment_id:
+        return comment_id
+    raise AdoError(
+        "Azure DevOps accepted the comment POST for work item "
+        f"{route[2]} but returned no comment id; refusing to report a "
+        "write that cannot be confirmed")
 
 
 COMMENT_KINDS = ("understanding", "decision", "open-question")
@@ -1296,9 +1317,24 @@ _PARTIAL_BATCH_MSG = (
     "%s. Those comments are on the work item now and this connector has no "
     "lane to delete them. A later run suppresses exactly those markers, and "
     "only while the refinement still renders byte-identically.")
+_INDETERMINATE_MSG = (
+    "%s; comment %s was in flight when the transport failed and MAY be on "
+    "work item %s -- Azure DevOps was not able to confirm it%s. There is no "
+    "comment-delete lane to retract it.")
+_INDETERMINATE_LANDED_CLAUSE = (
+    "; %d earlier comment(s) are confirmed on the work item: %s")
 
 
-def _partial_batch_error(work_item_id, posted, exc):
+def _landed_clause(posted):
+    """The '; N earlier comment(s) are confirmed...' clause, or '' when
+    nothing landed before the in-flight comment. (PURE)"""
+    if not posted:
+        return ""
+    markers = ", ".join(item["marker"] for item in posted)
+    return _INDETERMINATE_LANDED_CLAUSE % (len(posted), markers)
+
+
+def _partial_batch_error(work_item_id, posted, exc, in_flight=None):
     """The AdoError raised when a batch POST fails part-way through.
 
     The BATCH is not atomic -- only each individual comment is (see
@@ -1307,6 +1343,16 @@ def _partial_batch_error(work_item_id, posted, exc):
     operation is being reported as failed, and there is no comment-delete
     lane to retract it. Every already-posted marker is named, so the operator
     can tell exactly what happened from the refusal alone.
+
+    `in_flight`, when given, is the entry that was being POSTed when a
+    _IndeterminateWriteError was raised (a transport failure, not a clean
+    HTTP status): Azure DevOps could not confirm whether that particular
+    comment landed, so it is named EXPLICITLY as indeterminate rather than
+    silently excluded from the disclosure the way a clean HTTPError status
+    (nothing sent, nothing landed) is. Without this, an operator reading a
+    plain 'network error' message could reasonably conclude nothing was
+    written and post the comment by hand, producing the exact duplicate this
+    slice exists to prevent.
 
     DELIBERATELY NOT A RECOVERY INSTRUCTION. A later run suppresses a landed
     comment only while the refinement still renders byte-identically:
@@ -1319,6 +1365,11 @@ def _partial_batch_error(work_item_id, posted, exc):
     The message carries the underlying AdoError, which names only a URL, plus
     markers this module never invents -- so no credential can ride out in
     it."""
+    if in_flight is not None:
+        landed_clause = _landed_clause(posted)
+        return AdoError(
+            _INDETERMINATE_MSG
+            % (exc, in_flight["marker"], work_item_id, landed_clause))
     if not posted:
         return AdoError(str(exc))
     markers = ", ".join(item["marker"] for item in posted)
@@ -1349,9 +1400,16 @@ def execute_comment_plan(route, pat, pending):
         try:
             comment_id = post_comment(route, pat, item["body"])
         except AdoError as exc:
-            raise _partial_batch_error(route[2], posted, exc) from exc
+            raise _write_failure(route[2], posted, item, exc) from exc
         posted.append(_posted_result(item, comment_id))
     return posted
+
+
+def _write_failure(work_item_id, posted, item, exc):
+    """The AdoError to raise for one failed POST in a batch: names `item` as
+    in-flight only when the failure was transport-indeterminate. (PURE)"""
+    in_flight = item if isinstance(exc, _IndeterminateWriteError) else None
+    return _partial_batch_error(work_item_id, posted, exc, in_flight)
 
 
 def _preview_result(item, planned):
