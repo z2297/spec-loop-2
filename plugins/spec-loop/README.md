@@ -157,8 +157,8 @@ sidecar closed rather than reading as clean.
 
 ## Components
 
-- **Commands (8)**: spec-loop, review-pr, peer-review, quality-gate,
-  knowledge-graph, dashboard, dashboard-serve, jira-intake.
+- **Commands (9)**: spec-loop, review-pr, peer-review, quality-gate,
+  knowledge-graph, dashboard, dashboard-serve, jira-intake, ado-intake.
 - **Workflow (1)**: slice-wave.
 - **Agents (13)**: slice-planner, plan-critic, guardian, skeptic,
   implementer, pr-reviewer, finding-verifier, re-reviewer, simplifier,
